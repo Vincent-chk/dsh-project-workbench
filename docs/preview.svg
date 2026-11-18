@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="300" viewBox="0 0 640 300" role="img" aria-label="Project workbench with project navigation and a six-column requirement board">
+  <rect x="20" y="20" width="600" height="260" rx="14" fill="#f7f8fa" stroke="#d9dee7" stroke-width="1.5"/>
+  <rect x="40" y="40" width="150" height="14" rx="7" fill="#b9c2d0"/>
+  <circle cx="560" cy="47" r="7" fill="#dde3ec"/>
+  <circle cx="582" cy="47" r="7" fill="#dde3ec"/>
+  <rect x="40" y="76" width="60" height="164" rx="9" fill="#edf0f4"/>
+  <rect x="50" y="90" width="40" height="9" rx="4.5" fill="#9db8e8"/>
+  <rect x="50" y="112" width="34" height="8" rx="4" fill="#c2cad6"/>
+  <rect x="50" y="132" width="38" height="8" rx="4" fill="#c2cad6"/>
+  <rect x="50" y="152" width="30" height="8" rx="4" fill="#c2cad6"/>
+  <rect x="50" y="184" width="38" height="8" rx="4" fill="#c2cad6"/>
+  <rect x="50" y="204" width="32" height="8" rx="4" fill="#c2cad6"/>
+  <rect x="120" y="70" width="472" height="10" rx="5" fill="#e2e7ee"/>
+  <g>
+    <rect x="120" y="92" width="72" height="168" rx="8" fill="#edf0f4"/>
+    <circle cx="132" cy="106" r="4" fill="#94a3b8"/><rect x="142" y="102" width="38" height="8" rx="4" fill="#c2cad6"/>
+    <rect x="128" y="122" width="56" height="52" rx="7" fill="#fff" stroke="#e2e7ee"/><rect x="136" y="134" width="40" height="7" rx="3.5" fill="#cbd3de"/><rect x="136" y="150" width="34" height="6" rx="3" fill="#e4e9f0"/>
+    <rect x="128" y="184" width="56" height="52" rx="7" fill="#fff" stroke="#e2e7ee"/><rect x="136" y="196" width="36" height="7" rx="3.5" fill="#cbd3de"/><rect x="136" y="212" width="40" height="6" rx="3" fill="#e4e9f0"/>
+  </g>
+  <g>
+    <rect x="200" y="92" width="72" height="168" rx="8" fill="#edf0f4"/>
+    <circle cx="212" cy="106" r="4" fill="#3b82f6"/><rect x="222" y="102" width="38" height="8" rx="4" fill="#c2cad6"/>
+    <rect x="208" y="122" width="56" height="52" rx="7" fill="#fff" stroke="#e2e7ee"/><rect x="216" y="134" width="40" height="7" rx="3.5" fill="#cbd3de"/><rect x="216" y="150" width="32" height="6" rx="3" fill="#e4e9f0"/>
+  </g>
+  <g>
+    <rect x="280" y="92" width="72" height="168" rx="8" fill="#edf0f4"/>
+    <circle cx="292" cy="106" r="4" fill="#64748b"/><rect x="302" y="102" width="38" height="8" rx="4" fill="#c2cad6"/>
+    <rect x="288" y="122" width="56" height="52" rx="7" fill="#fff" stroke="#e2e7ee"/><rect x="296" y="134" width="38" height="7" rx="3.5" fill="#cbd3de"/><rect x="296" y="150" width="40" height="6" rx="3" fill="#e4e9f0"/>
+  </g>
+  <g>
+    <rect x="360" y="92" width="72" height="168" rx="8" fill="#edf0f4"/>
+    <circle cx="372" cy="106" r="4" fill="#f59e0b"/><rect x="382" y="102" width="38" height="8" rx="4" fill="#c2cad6"/>
+    <rect x="368" y="122" width="56" height="52" rx="7" fill="#fff" stroke="#e2e7ee"/><rect x="376" y="134" width="40" height="7" rx="3.5" fill="#cbd3de"/><rect x="376" y="150" width="30" height="6" rx="3" fill="#e4e9f0"/>
+    <rect x="368" y="184" width="56" height="52" rx="7" fill="#fff" stroke="#e2e7ee"/><rect x="376" y="196" width="34" height="7" rx="3.5" fill="#cbd3de"/><rect x="376" y="212" width="40" height="6" rx="3" fill="#e4e9f0"/>
+  </g>
+  <g>
+    <rect x="440" y="92" width="72" height="168" rx="8" fill="#edf0f4"/>
+    <circle cx="452" cy="106" r="4" fill="#8b5cf6"/><rect x="462" y="102" width="38" height="8" rx="4" fill="#c2cad6"/>
+    <rect x="448" y="122" width="56" height="52" rx="7" fill="#fff" stroke="#e2e7ee"/><rect x="456" y="134" width="40" height="7" rx="3.5" fill="#cbd3de"/><rect x="456" y="150" width="34" height="6" rx="3" fill="#e4e9f0"/>
+  </g>
+  <g>
+    <rect x="520" y="92" width="72" height="168" rx="8" fill="#edf0f4"/>
+    <circle cx="532" cy="106" r="4" fill="#22c55e"/><rect x="542" y="102" width="38" height="8" rx="4" fill="#c2cad6"/>
+    <rect x="528" y="122" width="56" height="52" rx="7" fill="#fff" stroke="#e2e7ee"/><rect x="536" y="134" width="38" height="7" rx="3.5" fill="#cbd3de"/><rect x="536" y="150" width="40" height="6" rx="3" fill="#e4e9f0"/>
+  </g>
+</svg>

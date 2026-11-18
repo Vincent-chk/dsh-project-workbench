@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Project workbench",
+    "description": "Manage requirements, a six-column board, tasks, reviews and acceptance from the left sidebar, and process one linked task in the conversation's right pane. Markdown data stays in .project/, with automatic progress and objective verification records. Only your explicit UI decisions confirm tasks, cancel work, approve reviews or accept delivery; eligible deliveries can be summarized and submitted for acceptance automatically. Includes project Wiki generation, source-based architecture diagrams, evidence-backed progress suggestions, and one-click commits of .project/ only. AI operations use model tokens. All data stays local; disabling or removing the plugin never deletes project files.",
+    "detail": "docs/DETAIL.md"
+  }
+}

@@ -1,0 +1,4 @@
+- insert:
+    - id: project-workbench
+      name: 'dsh-project-workbench'
+      config: {}

@@ -1,0 +1,14 @@
+# Dependencies and local packages
+node_modules/
+*.tgz
+
+# Local project data and generated output
+.project/
+output/
+
+# Logs
+*.log
+
+# macOS metadata
+.DS_Store
+._*

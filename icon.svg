@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" fill="none">
+  <rect x="6" y="8" width="7" height="17" rx="2" fill="#7CB7FF" fill-opacity="0.65"/>
+  <rect x="14.5" y="8" width="7" height="22" rx="2" fill="url(#project-workbench-board)"/>
+  <rect x="23" y="8" width="7" height="13" rx="2" fill="#6FA8DC"/>
+  <path d="M16.5 18L18 19.5L20.5 16.5" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <defs>
+    <linearGradient id="project-workbench-board" x1="18" y1="8" x2="18" y2="30" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6FB2EE"/>
+      <stop offset="1" stop-color="#3E58D6"/>
+    </linearGradient>
+  </defs>
+</svg>
