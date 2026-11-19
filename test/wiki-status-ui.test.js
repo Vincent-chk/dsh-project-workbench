@@ -214,7 +214,7 @@ test('interrupted wiki shows the last completed date without masking an active H
   host.unmount()
 })
 
-test('architecture generation shows source errors in a banner and keeps the previous diagram', async t => {
+test('architecture generation shows the reason in a banner and keeps the previous diagram', async t => {
   const host = hookHost()
   const originalReact = globalThis.__wikiReact
   globalThis.__wikiReact = host.api
@@ -238,7 +238,13 @@ test('architecture generation shows source errors in a banner and keeps the prev
   render()
   await host.mount()
   t.after(() => host.unmount())
-  for (const [code, message] of [['ARCH_SOURCE_REQUIRED', 'archSourceRequired'], ['ARCH_SOURCE_INVALID', 'archSourceInvalid']]) {
+  for (const [code, message] of [
+    ['ARCH_SOURCE_REQUIRED', 'archSourceRequired'],
+    ['ARCH_SOURCE_INVALID', 'archSourceInvalid'],
+    ['ARCHIFY_LAYOUT_FAILED', 'archLayoutFailed'],
+    ['ARCHIFY_RENDER_FAILED', 'archRenderFailed'],
+    ['ARCHIFY_NO_SVG', 'archRenderFailed'],
+  ]) {
     const button = all(render(), node => node.type === 'button' && textOf(node) === 'archRegenerate')[0]
     assert.equal(Boolean(button.props.disabled), false)
     await button.props.onClick()

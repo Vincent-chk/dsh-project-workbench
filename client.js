@@ -217,8 +217,15 @@ var __projectWorkbenchModule = (() => {
       previousCancelImpact: hasCancelled && impactCurrent ? "" : cancelImpact
     };
   }
+  var archRenderErrorKeys = /* @__PURE__ */ new Map([
+    ["ARCHIFY_LAYOUT_FAILED", "archLayoutFailed"],
+    ["ARCHIFY_RENDER_FAILED", "archRenderFailed"],
+    ["ARCHIFY_NO_SVG", "archRenderFailed"]
+  ]);
   var workbenchContentLocale = {
     en: {
+      archLayoutFailed: "The diagram did not pass the layout check after automatic repair. Some components or labels may overlap or run out of space. Regenerate to try a fresh layout.",
+      archRenderFailed: "The diagram renderer could not produce a readable diagram. Try generating it again.",
       splitReview: "Task review",
       splitDetails: "Review details",
       splitVerified: "Verified",
@@ -343,6 +350,8 @@ var __projectWorkbenchModule = (() => {
       errExists: "This item already exists."
     },
     zh: {
+      archLayoutFailed: "\u81EA\u52A8\u8C03\u6574\u540E\uFF0C\u67B6\u6784\u56FE\u4ECD\u672A\u901A\u8FC7\u5E03\u5C40\u6821\u9A8C\u3002\u7EC4\u4EF6\u6216\u6807\u7B7E\u53EF\u80FD\u91CD\u53E0\u3001\u8D85\u51FA\u8FB9\u754C\u3002\u8BF7\u91CD\u65B0\u751F\u6210\u4EE5\u5C1D\u8BD5\u65B0\u7684\u5E03\u5C40\u3002",
+      archRenderFailed: "\u67B6\u6784\u56FE\u6E32\u67D3\u5931\u8D25\uFF0C\u672A\u80FD\u4EA7\u51FA\u53EF\u9605\u8BFB\u7684\u56FE\u3002\u8BF7\u91CD\u65B0\u751F\u6210\u3002",
       splitReview: "\u4EFB\u52A1\u6838\u5BF9\u7ED3\u679C",
       splitDetails: "\u67E5\u770B\u6838\u5BF9\u4F9D\u636E",
       splitVerified: "\u5DF2\u9A8C\u8BC1",
@@ -2999,7 +3008,7 @@ ${detail.trim()}` : value);
     if (error?.code === "WIKI_SOURCE_UNSUPPORTED") return t("wikiSourceUnsupported");
     if (error?.code === "ARCH_SOURCE_REQUIRED") return t("archSourceRequired");
     if (error?.code === "ARCH_SOURCE_INVALID") return t("archSourceInvalid");
-    return t(fallback);
+    return t(archRenderErrorKeys.get(error?.code) ?? fallback);
   }
   function wikiJobMessage(error, t) {
     if (error === "stopped by user") return t("wikiStopped");

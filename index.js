@@ -1,5 +1,6 @@
 import { handleRequest } from './core/rpc.js'
 import { installConversation } from './core/conversation.js'
+import { archRenderErrorKeys, workbenchContentLocale } from './client-src/workbench-content.js'
 import { loadOpenWikiSkill } from './core/skill.js'
 import { spawnProbe, spawnWikiProbe, startWikiGeneration, startSyncRun, parseSyncOutput, startArchitectureRun, parseArchOutput, startArchitectureRepair, consumeChildToolAllow } from './core/spawn.js'
 import * as store from './core/store.js'
@@ -627,6 +628,8 @@ export async function apply(ctx) {
   async function statusArchitecture(body) {
     const job = archJobs.get(body?.root)
     if (!job) return Response.json({ ok: true, data: { status: 'idle' } })
-    return Response.json({ ok: true, data: { status: job.status, phase: job.phase, error: job.error, code: job.code, childId: job.childId } })
+    const messageKey = archRenderErrorKeys.get(job.code)
+    return Response.json({ ok: true, data: { status: job.status, phase: job.phase, error: job.error,
+      code: job.code, childId: job.childId, ...(messageKey && { message: workbenchContentLocale.zh[messageKey] }) } })
   }
 }

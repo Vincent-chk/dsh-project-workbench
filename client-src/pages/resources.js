@@ -1,4 +1,5 @@
 import React from 'react'
+import { archRenderErrorKeys } from '../workbench-content.js'
 import { rpc } from '../api.js'
 import { ErrorDetails, Modal } from '../shared/ui.js'
 import { stripFrontmatter, parseEvidenceRef, evidenceLines, wikiLocalDate } from './wiki-source.js'
@@ -139,7 +140,7 @@ export function generationStartMessage(error, fallback, t) {
   if (error?.code === 'WIKI_SOURCE_UNSUPPORTED') return t('wikiSourceUnsupported')
   if (error?.code === 'ARCH_SOURCE_REQUIRED') return t('archSourceRequired')
   if (error?.code === 'ARCH_SOURCE_INVALID') return t('archSourceInvalid')
-  return t(fallback)
+  return t(archRenderErrorKeys.get(error?.code) ?? fallback)
 }
 
 function wikiJobMessage(error, t) {
