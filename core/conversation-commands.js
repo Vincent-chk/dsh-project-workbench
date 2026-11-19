@@ -2,6 +2,7 @@ export const commands = {
   help: { title: '工作台使用帮助', hint: '例如 为什么这个任务不能开始？' },
   requirement: { title: '管理需求', hint: '例如 记一个可切换 AI 风格的聊天网页' },
   task: { title: '处理任务', hint: '例如 验收风格切换任务' },
+  update: { title: '同步本会话进展', hint: '按回车同步，或指定需求、任务或要同步的内容' },
   prd: { title: '编写 PRD', hint: '例如 把刚才的需求整理成首版 PRD' },
   'wiki-update': { title: '生成或更新项目 Wiki', hint: '按回车启动，或输入 查看进度' },
   'architecture-update': { title: '生成或更新架构图', hint: '按回车启动，或输入 查看进度' },

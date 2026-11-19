@@ -305,7 +305,7 @@ function extractActivity(body) {
   const records = []
   for (const line of (end === -1 ? rest : rest.slice(0, end)).split(/\r?\n/)) {
     if (line.startsWith('  > ') && records.length) records[records.length - 1] += '\n' + line.slice(4)
-    else if (line.trim().startsWith('- ')) records.push(line.trim().slice(2))
+    else if (line.trim().startsWith('- ')) records.push(line.trim().slice(2).replace(/ <!-- pwb-update:[0-9a-f]{64} -->$/, ''))
   }
   return records
 }
@@ -638,8 +638,11 @@ export async function updateRequirement(root, id, patch, { fileHash, confirmRevi
   })
 }
 
-function appendActivity(doc, line, detail = '') {
+function appendActivity(doc, line, detail = '', syncKey) {
   const body = doc.body
+  const marker = syncKey ? ` <!-- pwb-update:${syncKey} -->` : ''
+  if (marker && body.includes(marker)) return false
+  line += marker
   const heading = findHeading(body, ACTIVITY_HEAD)
   const lines = detail ? [line, ...detail.split(/\r?\n/).map(text => '  > ' + text)].join(doc.eol) : line
   if (!heading) doc.setBody(body + `${doc.eol}${ACTIVITY_HEAD}${doc.eol}- ${lines}${doc.eol}`)
@@ -647,10 +650,11 @@ function appendActivity(doc, line, detail = '') {
     const after = heading.index + heading[0].length
     doc.setBody(body.slice(0, after) + `${doc.eol}- ${lines}` + body.slice(after))
   }
+  return true
 }
 
 // GitHub-style append-only update log (requirement + issue).
-export async function addRequirementUpdate(root, id, text) {
+export async function addRequirementUpdate(root, id, text, { syncKey } = {}) {
   if (!text || !String(text).trim()) throw new WorkbenchError('EMPTY_UPDATE', 'update text is required')
   return withRequirementLock(root, id, async () => {
     const { file, doc } = await loadReqDoc(root, id)
@@ -660,20 +664,24 @@ export async function addRequirementUpdate(root, id, text) {
     if (status === 'pending' || status === 'completed') {
       throw new WorkbenchError('TERMINAL_READ_ONLY', 'requirement is pending/completed; reopen it before editing')
     }
-    appendActivity(doc, `${nowIso()} ${String(text).trim().replace(/\n+/g, ' ')}`)
+    if (!appendActivity(doc, `${nowIso()} ${String(text).trim().replace(/\n+/g, ' ')}`, '', syncKey)) {
+      return { ok: true, data: { id, reused: true } }
+    }
     doc.setPlain('updated', nowIso())
     await atomicWrite(file, doc.toString())
     return { ok: true, data: { id } }
   })
 }
 
-export async function addIssueUpdate(root, reqId, id, text) {
+export async function addIssueUpdate(root, reqId, id, text, { syncKey } = {}) {
   if (!text || !String(text).trim()) throw new WorkbenchError('EMPTY_UPDATE', 'update text is required')
   return withIssueLock(root, reqId, id, async () => {
     const { file, doc } = await loadIssueDoc(root, reqId, id)
     if (TERMINAL_ISSUE.has(doc.get('status'))) throw new WorkbenchError('TERMINAL_READ_ONLY', 'task is done/cancelled; reopen it before recording progress')
     const [summary, ...details] = String(text).trim().split(/\r?\n/)
-    appendActivity(doc, `${nowIso()} ${summary.trim()}`, details.join('\n'))
+    if (!appendActivity(doc, `${nowIso()} ${summary.trim()}`, details.join('\n'), syncKey)) {
+      return { ok: true, data: { id, reused: true } }
+    }
     doc.setPlain('updated', nowIso())
     await atomicWrite(file, doc.toString())
     return { ok: true, data: { id } }
