@@ -13,7 +13,7 @@ const { useEffect, useState } = React
 
 // 关键操作弹窗：原因收集、送审/验收确认、打回与重开（含部分成功接续）、
 // 人工交付提交、草稿删除。提交中禁止重复操作，失败保留输入与真实状态。
-export function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, reopenState, requirements, newDraft, changeNewDraft, createReq, clearNewDraft }) {
+export function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, reopenState, requirements, newDraft, changeNewDraft, createReq, clearNewDraft, locatePrdLink }) {
   const [value, setValue] = useState('')
   const [checked, setChecked] = useState([])
   const [newTask, setNewTask] = useState(issueDraftFrom)
@@ -70,9 +70,12 @@ export function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, r
       h(TaskForm, { form: taskForm, t, busy, error, onSave: () => run(create), onCancel: cancel }))
   }
   if (modal.kind === 'moveError') {
+    const needsPrd = modal.error?.code === 'REVIEW_PRD_REQUIRED' && !!modal.reqId
     return h(Modal, { title: t('moveRejectedTitle'), onClose: close, actions: [
-      h('button', { className: 'pw-button primary', onClick: close }, t('ok')),
-    ] }, h(ErrorDetails, { error: modal.error ?? { message: modal.message }, t, showRaw: false }))
+      h('button', { key: 'close', className: 'pw-button' + (needsPrd ? '' : ' primary'), onClick: close }, t('ok')),
+      needsPrd && h('button', { key: 'prd', className: 'pw-button primary', onClick: () => { close(); locatePrdLink(modal.reqId) } }, t('prdGoLink')),
+    ] }, needsPrd ? h('p', { role: 'alert' }, t('reviewPrdRequired'))
+      : h(ErrorDetails, { error: modal.error ?? { message: modal.message }, t, showRaw: false }))
   }
   if (modal.kind === 'reason') {
     const submit = () => { if (value.trim()) return run(() => modal.onOk(value.trim())) }

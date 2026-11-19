@@ -5,12 +5,13 @@ import { join } from 'node:path'
 import { parseFrontmatter } from '../core/frontmatter.js'
 import * as store from '../core/store.js'
 import { taskResult } from '../client-src/workbench-content.js'
-import { makeRoot, issueFileHash } from './util.js'
+import { makeRoot, issueFileHash, saveReviewPrd } from './util.js'
 
 async function developingRequirement(root) {
   await store.initProject(root)
   const reqId = (await store.createRequirement(root, '需求')).data.id
   await store.updateRequirement(root, reqId, { goal: '目标', scope: '范围', acceptance: '标准' })
+  await saveReviewPrd(root, reqId)
   for (const state of ['reviewing', 'ready', 'in_progress']) await store.moveRequirement(root, reqId, state)
   return reqId
 }

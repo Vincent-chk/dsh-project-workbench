@@ -13,8 +13,10 @@ import { DevPage, BlockedPage } from '../pages/development.js'
 import { BoardPage } from '../pages/board.js'
 import { PendingPage, RecordsPage } from '../pages/acceptance.js'
 import { WikiView, ArchView } from '../pages/resources.js'
+import { PrdDocuments, PrdManagement, PrdReader, notifyPrdChanged, prdCss } from '../pages/prds.js'
+import { PrdEditor } from '../forms/prd-form.js'
 import { SyncView } from '../pages/sync.js'
-import { DetailPanel, PrdDocuments } from '../detail/requirement-detail.js'
+import { DetailPanel } from '../detail/requirement-detail.js'
 import { IssueDetail } from '../detail/task-detail.js'
 import { DeliveryDetail, RecordDetail } from '../detail/acceptance-detail.js'
 import { requirementFormError } from '../forms/requirement-form.js'
@@ -46,7 +48,7 @@ const diagListView = (diags, t) => {
   return h('ul', { className: 'pw-diaglist' }, Array.from(labels, label => h('li', { key: label }, t(label))))
 }
 const PAGE_COMPONENTS = { home: HomePage, pool: PoolPage, review: ReviewPage, ready: ReadyPage, dev: DevPage, blocked: BlockedPage, board: BoardPage, pending: PendingPage, records: RecordsPage }
-const pageLabel = page => ({ home: 'navHome', pool: 'navPool', review: 'navReview', ready: 'navReady', dev: 'navDev', blocked: 'navBlocked', board: 'navBoard', pending: 'navPending', records: 'navRecords', wiki: 'navWiki', arch: 'navArch', sync: 'viewSync' }[page] ?? 'navHome')
+const pageLabel = page => ({ home: 'navHome', pool: 'navPool', review: 'navReview', ready: 'navReady', dev: 'navDev', blocked: 'navBlocked', board: 'navBoard', pending: 'navPending', records: 'navRecords', wiki: 'navWiki', arch: 'navArch', prds: 'navPrds', sync: 'viewSync' }[page] ?? 'navHome')
 
 // 主工作台：全局入口 + 项目选择 + 内部菜单 + 内容区。入口不检查当前会话、
 // root 或项目初始化；浏览状态保存在插件实例内存，按项目隔离（技术方案 §8）。
@@ -350,8 +352,9 @@ export function MainShell(props) {
       if (navRef.current.page === 'home') await refreshHome({ skipDataRefresh: true })
       if (navRef.current.page === 'blocked') await refreshBlocked()
     } else if (!inlineError) {
-      if (method === 'requirement/move' || method === 'issue/move') setModal({ kind: 'moveError', error: res })
-      else setError(res)
+      if (method === 'requirement/move' || method === 'issue/move') {
+        setModal({ kind: 'moveError', error: res, ...(res.code === 'REVIEW_PRD_REQUIRED' && { reqId: input.id }) })
+      } else setError(res)
     }
     setSaving(false)
     return res
@@ -390,6 +393,12 @@ export function MainShell(props) {
   guardRef.current = guardLeave
   const navigate = page => guardLeave(() => { setEditFocus(null); writeNav({ ...navRef.current, page, params: null, history: [] }) })
   const openDetailAt = (params, page) => guardLeave(() => writeNav(openDetail(navRef.current, params, page ?? navRef.current.page)))
+  const openPrd = prdId => openDetailAt({ prdId }, 'prds')
+  const editPrd = (id, reqId) => setModal({ kind: 'prdEditor', id, reqId })
+  const locatePrdLink = reqId => guardLeave(() => {
+    writeNav(openDetail(navRef.current, { reqId, issueId: null }, 'pool'))
+    setFocusTarget('pw-prd-associations-' + reqId)
+  })
   const back = () => guardLeave(() => {
     const cur = navRef.current
     if (cur.params?.issueId) setFocusTarget('pw-task-' + cur.params.issueId)
@@ -683,7 +692,7 @@ export function MainShell(props) {
       ? h('div', { key: entry.group, className: 'pw-menu-group' },
         h('span', { className: 'pw-menu-grouptitle' }, t(entry.group)),
         entry.items.map(item => h('button', {
-          key: item.page, className: 'pw-menu-item' + (page === item.page && !params ? ' active' : ''),
+          key: item.page, className: 'pw-menu-item' + (page === item.page && (!params || (item.page === 'prds' && params.prdId)) ? ' active' : ''),
           'aria-current': page === item.page ? 'page' : undefined,
           onClick: () => navigate(item.page),
         }, t(item.label))))
@@ -709,7 +718,7 @@ export function MainShell(props) {
     h('button', { className: 'pw-button', style: { marginLeft: 'auto' }, onClick: refresh }, t('retryRead')))
 
   const frame = content => h('main', { className: 'pw-page', 'aria-label': t('title') },
-    h('style', null, css), topBar,
+    h('style', null, css + prdCss), topBar,
     h('div', { className: 'pw-shell-body' }, menu, h('div', { className: 'pw-content' }, content)))
 
   // No selection record yet: offer the registry; never auto-follow the session.
@@ -758,8 +767,18 @@ export function MainShell(props) {
       h('span', { className: 'pw-crumb-sep' }, '/'),
       h('span', { className: 'pw-crumb-current' }, t('recordDetail'))))
 
+  const prdPanel = selected && h(PrdDocuments, {
+    key: projectKey + ':' + selected.id, root, reqId: selected.id, requirements, t, activeId: params?.prdId,
+    onRead: prdId => {
+      const view = navRef.current
+      writeNav({ ...view, params: { ...view.params, prdId } })
+    },
+    onEdit: editPrd, onNew: reqId => editPrd(undefined, reqId),
+  })
   let content
-  if (params?.record) {
+  if (page === 'prds' && params?.prdId) {
+    content = h(PrdReader, { key: projectKey + ':' + params.prdId, root, id: params.prdId, requirements, t, onEdit: editPrd, onBack: back })
+  } else if (params?.record) {
     content = selectedRecord
       ? h('div', { className: 'pw-subpage-stack' }, h(RecordDetail, {
         record: { ...selectedRecord, reqTitle: requirements.find(r => r.id === params.record.reqId)?.title ?? selectedRecord.reqTitle },
@@ -783,7 +802,7 @@ export function MainShell(props) {
   } else if (selected && page === 'pending') {
     content = h('div', { className: 'pw-subpage-stack' }, h(DeliveryDetail, {
       req: selected, t, onMove: doMove, busy: saving || !!pendingReorder || !!modal,
-    }))
+    }), prdPanel)
   } else if (selected) {
     content = h('div', { className: 'pw-subpage-stack' },
       h(DetailPanel, {
@@ -794,7 +813,9 @@ export function MainShell(props) {
         onReorderTask: (id, direction) => reorder('issue', selected.id, sortedTasks(selected.issues), id, direction),
         onStartTask: issueId => startTask(selected.id, issueId),
         onCreateTask: () => setModal({ kind: 'createTask', req: selected, onCreated: id => { if (rootRef.current === root) setFocusTarget('pw-task-' + id) } }),
-      }))
+      }), prdPanel)
+  } else if (page === 'prds') {
+    content = h(PrdManagement, { key: projectKey, wb, onRead: openPrd, onEdit: editPrd })
   } else if (page === 'wiki') {
     content = h(WikiView, { key: root, root, sessionId: sessionRoot === root ? sessionId : undefined, t, uiMemory, target: params?.wikiTarget ?? null,
       onPageChange: path => writeNav({ ...navRef.current, params: path ? { wikiTarget: path } : null }) })
@@ -830,11 +851,16 @@ export function MainShell(props) {
       h('button', { className: 'pw-button', style: { marginLeft: 'auto' }, onClick: doUndo }, t('undo')),
       h('button', { className: 'pw-button', onClick: () => setUndo(null), 'aria-label': t('dismiss') }, '✕')),
     content,
-    selected && !selectedIssue && !selectedRecord && h(PrdDocuments, {
-      key: projectKey + ':' + selected.id + ':' + (params?.prdId ?? ''), root, reqId: selected.id, initialId: params?.prdId, t,
+    modal?.kind === 'prdEditor' && h(PrdEditor, {
+      key: [root, modal.id, modal.reqId].join(':'), root, id: modal.id, reqId: modal.reqId, t, uiMemory,
+      onClose: () => setModal(current => current === modal ? null : current),
+      onSaved: () => {
+        notifyPrdChanged(root)
+        setModal(current => current === modal ? null : current)
+      },
     }),
-    modal && modal.kind !== 'leave' && h(ReasonModal, {
-      key: modal.kind, modal, t, setModal, mutate, root, trashWithUndo, requirements,
+    modal && !['leave', 'prdEditor'].includes(modal.kind) && h(ReasonModal, {
+      key: modal.kind, modal, t, setModal, mutate, root, trashWithUndo, requirements, locatePrdLink,
       newDraft, clearNewDraft,
       changeNewDraft: (name, value) => setNewDraft(draft => ({ ...draft, [name]: value })),
       createReq: () => createReq(true),

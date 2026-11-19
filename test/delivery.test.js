@@ -7,12 +7,13 @@ import { join } from 'node:path'
 import { installDelivery, taskConditions } from '../core/delivery.js'
 import { dispatch } from '../core/rpc.js'
 import * as store from '../core/store.js'
-import { makeRoot, issueFileHash, stubSpawnHost, childReply, waitFor } from './util.js'
+import { makeRoot, issueFileHash, stubSpawnHost, childReply, waitFor, saveReviewPrd } from './util.js'
 
 async function devReq(root, title = '需求') {
   await store.initProject(root)
   const { data } = await store.createRequirement(root, title)
   await store.updateRequirement(root, data.id, { goal: 'g', scope: 's', acceptance: 'a' })
+  await saveReviewPrd(root, data.id)
   await store.moveRequirement(root, data.id, 'reviewing')
   await store.moveRequirement(root, data.id, 'ready')
   await store.moveRequirement(root, data.id, 'in_progress')

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { makeRoot, issueFileHash } from './util.js'
+import { makeRoot, issueFileHash, saveReviewPrd } from './util.js'
 import { scanProject, initProject, createRequirement, updateRequirement, moveRequirement,
   createIssue, updateIssue, moveIssue, submitRequirement, deliveryFingerprint } from '../core/store.js'
 import { deliveryFingerprint as clientFingerprint } from '../client-src/project-state.js'
@@ -22,6 +22,7 @@ async function started(root, title = '需求') {
   const { data } = await createRequirement(root, title)
   const id = data.id
   await updateRequirement(root, id, { goal: '目标', scope: '范围', acceptance: '完成标准' })
+  await saveReviewPrd(root, id)
   await moveRequirement(root, id, 'reviewing')
   await moveRequirement(root, id, 'ready')
   await moveRequirement(root, id, 'in_progress')

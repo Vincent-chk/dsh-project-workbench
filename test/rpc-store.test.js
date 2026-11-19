@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { access, chmod, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { makeRoot } from './util.js'
+import { makeRoot, saveReviewPrd } from './util.js'
 import { dispatch } from '../core/rpc.js'
 import { createRequirement, deliveryFingerprint } from '../core/store.js'
 
@@ -13,6 +13,7 @@ const call = (method, input) => dispatch(method, input, sig)
 async function devReq(root, title = 'x') {
   const { data } = await call('requirement/create', { root, title, fields: { q_pain: '需求概述' } })
   await call('requirement/update', { root, id: data.id, patch: { goal: 'g', scope: 's', acceptance: 'a' } })
+  await saveReviewPrd(root, data.id)
   await call('requirement/review', { root, id: data.id, action: 'submit' })
   await call('requirement/review', { root, id: data.id, action: 'approve' })
   await call('requirement/startDev', { root, id: data.id })
@@ -23,7 +24,7 @@ async function issHash(root, reqId, id) {
   return got.data.issues.find(i => i.id === id).hash
 }
 
-test('requirement creation saves title and overview together and needs no other field for review', async t => {
+test('requirement creation saves title and overview together and can enter review after linking a PRD', async t => {
   const root = await makeRoot(t)
   assert.equal((await call('project/init', { root })).ok, true)
   assert.equal((await call('requirement/create', { root, title: '想法' })).code, 'REVIEW_INFO_REQUIRED')
@@ -43,6 +44,7 @@ test('requirement creation saves title and overview together and needs no other 
   assert.equal(list.data.todaySuggestion, null)
   assert.ok(id.startsWith('req-'))
   assert.equal((await call('requirement/update', { root, id, patch: { q_pain: ' ' } })).code, 'REVIEW_INFO_REQUIRED')
+  await saveReviewPrd(root, id)
   assert.equal((await call('requirement/move', { root, id, to: 'reviewing', fileHash: req.hash })).ok, true)
 })
 
@@ -182,6 +184,13 @@ test('RPC full move journey and illegal move returns structured error', async t 
   assert.equal((await call('requirement/move', { root, id, to: 'in_progress' })).code, 'ILLEGAL_TRANSITION')
   assert.equal((await call('requirement/review', { root, id, action: 'submit' })).code, 'REVIEW_INFO_REQUIRED')
   await call('requirement/update', { root, id, patch: { q_pain: '补齐需求概述' } })
+  const draft = (await call('requirement/get', { root, id })).data
+  assert.equal((await call('requirement/review', { root, id, action: 'submit' })).code, 'REVIEW_PRD_REQUIRED')
+  assert.equal((await call('requirement/move', { root, id, to: 'reviewing', fileHash: draft.hash })).code, 'REVIEW_PRD_REQUIRED')
+  const blocked = (await call('requirement/get', { root, id })).data
+  assert.equal(blocked.status, 'backlog')
+  assert.equal(blocked.hash, draft.hash)
+  await saveReviewPrd(root, id)
   assert.equal((await call('requirement/review', { root, id, action: 'submit' })).ok, true)
   assert.equal((await call('requirement/review', { root, id, action: 'approve' })).ok, true)
   assert.equal((await call('requirement/startDev', { root, id })).ok, true)
@@ -371,6 +380,7 @@ test('CT-17: sync/apply approval reuses the exact move guards (illegal transitio
   assert.equal((await call('requirement/get', { root, id: req.id })).data.status, 'backlog')
   // A LEGAL proposal (reviewing -> ready) applies through the same path.
   await call('requirement/update', { root, id: req.id, patch: { goal: 'g', scope: 's', acceptance: 'a' } })
+  await saveReviewPrd(root, req.id)
   await call('requirement/review', { root, id: req.id, action: 'submit' })
   const ok = await call('sync/submit', { root, proposals: [{
     kind: 'advance', target: { reqId: req.id }, evidence: ['repo://src/x.js#L1-L9'],

@@ -9,10 +9,10 @@ import {
 const req = (id, status, extra = {}) => ({ id, title: '需求' + id, status, issues: [], reviews: [], ...extra })
 const issue = (id, status, extra = {}) => ({ id, title: '任务' + id, status, ...extra })
 
-test('menu covers home + 10 pages; every menu page is a known page', () => {
+test('menu covers home + 11 pages; every menu page is a known page', () => {
   const pages = MENU.flatMap(e => e.group ? e.items.map(i => i.page) : [e.page])
-  assert.equal(pages.length, 11)
-  assert.deepEqual(pages, ['home', 'pool', 'review', 'ready', 'dev', 'blocked', 'board', 'pending', 'records', 'wiki', 'arch'])
+  assert.equal(pages.length, 12)
+  assert.deepEqual(pages, ['home', 'pool', 'review', 'ready', 'dev', 'blocked', 'board', 'pending', 'records', 'wiki', 'arch', 'prds'])
   for (const p of pages) assert.ok(PAGES.includes(p))
   assert.equal(statusPage('backlog'), 'pool')
   assert.equal(statusPage('pending'), 'pending')

@@ -41,10 +41,10 @@ var __projectWorkbenchModule = (() => {
   __export(index_exports, {
     default: () => index_default
   });
-  var import_react22 = __toESM(__require("react"), 1);
+  var import_react24 = __toESM(__require("react"), 1);
 
   // client-src/shell/main-shell.js
-  var import_react19 = __toESM(__require("react"), 1);
+  var import_react21 = __toESM(__require("react"), 1);
 
   // core/state.js
   var TERMINAL_ISSUE = /* @__PURE__ */ new Set(["done", "cancelled"]);
@@ -1597,7 +1597,7 @@ ${detail.trim()}` : value);
   // client-src/shared/modals.js
   var h6 = import_react6.default.createElement;
   var { useEffect: useEffect3, useState: useState4 } = import_react6.default;
-  function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, reopenState, requirements, newDraft, changeNewDraft, createReq, clearNewDraft }) {
+  function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, reopenState, requirements, newDraft, changeNewDraft, createReq, clearNewDraft, locatePrdLink }) {
     const [value, setValue] = useState4("");
     const [checked, setChecked] = useState4([]);
     const [newTask, setNewTask] = useState4(issueDraftFrom);
@@ -1681,9 +1681,14 @@ ${detail.trim()}` : value);
       );
     }
     if (modal.kind === "moveError") {
+      const needsPrd = modal.error?.code === "REVIEW_PRD_REQUIRED" && !!modal.reqId;
       return h6(Modal, { title: t("moveRejectedTitle"), onClose: close, actions: [
-        h6("button", { className: "pw-button primary", onClick: close }, t("ok"))
-      ] }, h6(ErrorDetails, { error: modal.error ?? { message: modal.message }, t, showRaw: false }));
+        h6("button", { key: "close", className: "pw-button" + (needsPrd ? "" : " primary"), onClick: close }, t("ok")),
+        needsPrd && h6("button", { key: "prd", className: "pw-button primary", onClick: () => {
+          close();
+          locatePrdLink(modal.reqId);
+        } }, t("prdGoLink"))
+      ] }, needsPrd ? h6("p", { role: "alert" }, t("reviewPrdRequired")) : h6(ErrorDetails, { error: modal.error ?? { message: modal.message }, t, showRaw: false }));
     }
     if (modal.kind === "reason") {
       const submit = () => {
@@ -1826,13 +1831,13 @@ ${detail.trim()}` : value);
   }
 
   // client-src/shell/nav-state.js
-  var PAGES = ["home", "pool", "review", "ready", "dev", "blocked", "board", "pending", "records", "wiki", "arch", "sync"];
+  var PAGES = ["home", "pool", "review", "ready", "dev", "blocked", "board", "pending", "records", "wiki", "arch", "prds", "sync"];
   var MENU = [
     { page: "home", label: "navHome" },
     { group: "navRequirements", items: [{ page: "pool", label: "navPool" }, { page: "review", label: "navReview" }, { page: "ready", label: "navReady" }] },
     { group: "navDevelopment", items: [{ page: "dev", label: "navDev" }, { page: "blocked", label: "navBlocked" }, { page: "board", label: "navBoard" }] },
     { group: "navAcceptance", items: [{ page: "pending", label: "navPending" }, { page: "records", label: "navRecords" }] },
-    { group: "navResources", items: [{ page: "wiki", label: "navWiki" }, { page: "arch", label: "navArch" }] }
+    { group: "navResources", items: [{ page: "wiki", label: "navWiki" }, { page: "arch", label: "navArch" }, { page: "prds", label: "navPrds" }] }
   ];
   var statusPage = (status) => ({ backlog: "pool", reviewing: "review", ready: "ready", in_progress: "dev", pending: "pending", completed: "board" })[status] ?? "board";
   var COLS = ["backlog", "reviewing", "ready", "in_progress", "pending", "completed"];
@@ -2396,14 +2401,14 @@ ${detail.trim()}` : value);
       return !query || title.toLowerCase().includes(query.toLowerCase());
     });
     const total = blockedList.length + authList.length + failures.length + deliveryFailed.length + risks.length;
-    const item = (key, title, reqTitle, reason, at, actions) => h10(
+    const item = (key, title, reqTitle2, reason, at, actions) => h10(
       "div",
       { className: "pw-row", key },
       h10(
         "div",
         { className: "pw-row-main pw-row-static" },
         h10("strong", { className: "pw-preview" }, title),
-        h10("span", { className: "pw-note" }, reqTitle, " \xB7 ", reason),
+        h10("span", { className: "pw-note" }, reqTitle2, " \xB7 ", reason),
         at ? h10("span", { className: "pw-count" }, dateText(new Date(at).toISOString())) : null
       ),
       h10("div", { className: "pw-row-actions" }, actions)
@@ -2825,7 +2830,7 @@ ${detail.trim()}` : value);
     const nodes = [];
     let rest = text;
     let k = 0;
-    const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\[[^\]]+\]\([^)]+\))/;
+    const re = wiki?.image ? /`[^`]+`|\*\*[^*]+\*\*|!?\[[^\]]*\]\([^)]+\)/ : /`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\)/;
     while (rest.length) {
       const m = rest.match(re);
       if (!m) {
@@ -2836,8 +2841,11 @@ ${detail.trim()}` : value);
       const tok = m[0];
       if (tok.startsWith("`")) nodes.push(h13("code", { key: keyBase + "-" + k++, className: "pw-inline-code" }, tok.slice(1, -1)));
       else if (tok.startsWith("**")) nodes.push(h13("strong", { key: keyBase + "-" + k++ }, tok.slice(2, -2)));
-      else {
-        const lm = tok.match(/\[([^\]]+)\]\(([^)]+)\)/);
+      else if (tok.startsWith("![")) {
+        const [, alt, src] = tok.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+        nodes.push(wiki.image(alt, src, keyBase + "-" + k++));
+      } else {
+        const lm = tok.match(/\[([^\]]*)\]\(([^)]+)\)/);
         const path = wikiLink(lm[2], wiki?.pagePath);
         if (path && wiki?.open) nodes.push(h13("a", { key: keyBase + "-" + k++, href: "#", onClick: (event) => {
           event.preventDefault();
@@ -2928,13 +2936,19 @@ ${detail.trim()}` : value);
         i++;
         continue;
       }
-      if (/^\s*[-*]\s+/.test(line)) {
+      const ordered = wiki?.image && /^\s*(\d+)[.)]\s+/.exec(line);
+      const listItem = ordered ? /^\s*\d+[.)]\s+/ : /^\s*[-*]\s+/;
+      if (listItem.test(line)) {
         const items = [];
-        while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
-          items.push(lines[i].replace(/^\s*[-*]\s+/, ""));
+        while (i < lines.length && listItem.test(lines[i])) {
+          items.push(lines[i].replace(listItem, ""));
           i++;
         }
-        out.push(h13("ul", { key: key++, className: "pw-md-ul" }, items.map((it, j) => h13("li", { key: j }, inline(it, "li" + key + "-" + j, wiki)))));
+        out.push(h13(
+          ordered ? "ol" : "ul",
+          { key: key++, className: "pw-md-ul", ...ordered && { start: Number(ordered[1]) } },
+          items.map((it, j) => h13("li", { key: j }, inline(it, "li" + key + "-" + j, wiki)))
+        ));
         continue;
       }
       if (line.includes("|") && i + 1 < lines.length && lines[i + 1].includes("-") && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1])) {
@@ -3461,18 +3475,641 @@ ${detail.trim()}` : value);
     );
   }
 
-  // client-src/pages/sync.js
+  // client-src/pages/prds.js
   var import_react14 = __toESM(__require("react"), 1);
   var h14 = import_react14.default.createElement;
-  var { useCallback: useCallback2, useEffect: useEffect6, useRef: useRef4, useState: useState7 } = import_react14.default;
+  var { useEffect: useEffect6, useRef: useRef4, useState: useState7 } = import_react14.default;
+  var prdDateFormat = new Intl.DateTimeFormat(void 0, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  });
+  function prdDate(value) {
+    const time = Date.parse(value);
+    return Number.isFinite(time) ? prdDateFormat.format(time) : "";
+  }
+  var prdLocale = {
+    en: {
+      navPrds: "PRD management",
+      prdNew: "New PRD",
+      prdRead: "View PRD",
+      prdCloseRead: "Close PRD",
+      prdTrash: "Trash",
+      prdActive: "Active PRDs",
+      prdEmpty: "No PRDs have been saved in this project.",
+      prdTrashEmpty: "No deleted PRDs.",
+      prdRelatedRequirements: "Related requirements",
+      prdNoRequirements: "No linked requirements",
+      prdLinkPicker: "Choose a PRD",
+      prdSaveLink: "Save link",
+      prdUnlink: "Unlink",
+      prdRestore: "Restore",
+      prdNoLinks: "This requirement has no linked PRDs.",
+      prdNoOptions: "No other PRDs are available to link.",
+      prdLinkSaved: "PRD linked.",
+      prdLinkRemoved: "PRD unlinked.",
+      prdRestored: "PRD restored.",
+      prdDeleted: "PRD moved to Trash.",
+      prdDeleteTitle: "Delete PRD?",
+      prdDeleteHint: "This document will be removed from the following requirements. It can be restored from Trash.",
+      prdDeleteUnlinked: "This document can be restored from Trash.",
+      prdImageMissing: "Image unavailable",
+      prdImageLoading: "Loading image",
+      reviewPrdRequired: "Link a saved PRD before sending this requirement for review.",
+      prdGoLink: "Go to linked PRDs"
+    },
+    zh: {
+      navPrds: "PRD \u7BA1\u7406",
+      prdNew: "\u65B0\u5EFA PRD",
+      prdRead: "\u67E5\u770B PRD",
+      prdCloseRead: "\u6536\u8D77 PRD",
+      prdTrash: "\u56DE\u6536\u7AD9",
+      prdActive: "\u5F53\u524D\u6587\u6863",
+      prdEmpty: "\u5F53\u524D\u9879\u76EE\u8FD8\u6CA1\u6709\u5DF2\u4FDD\u5B58\u7684 PRD\u3002",
+      prdTrashEmpty: "\u56DE\u6536\u7AD9\u4E3A\u7A7A\u3002",
+      prdRelatedRequirements: "\u5173\u8054\u9700\u6C42",
+      prdNoRequirements: "\u672A\u5173\u8054\u9700\u6C42",
+      prdLinkPicker: "\u9009\u62E9 PRD",
+      prdSaveLink: "\u4FDD\u5B58\u5173\u8054",
+      prdUnlink: "\u89E3\u9664\u5173\u8054",
+      prdRestore: "\u6062\u590D",
+      prdNoLinks: "\u5F53\u524D\u9700\u6C42\u8FD8\u6CA1\u6709\u5173\u8054 PRD\u3002",
+      prdNoOptions: "\u6682\u65E0\u5176\u4ED6\u53EF\u5173\u8054\u7684 PRD\u3002",
+      prdLinkSaved: "\u5DF2\u4FDD\u5B58 PRD \u5173\u8054\u3002",
+      prdLinkRemoved: "\u5DF2\u89E3\u9664 PRD \u5173\u8054\u3002",
+      prdRestored: "\u5DF2\u6062\u590D PRD\u3002",
+      prdDeleted: "\u5DF2\u5C06 PRD \u79FB\u5165\u56DE\u6536\u7AD9\u3002",
+      prdDeleteTitle: "\u5220\u9664 PRD\uFF1F",
+      prdDeleteHint: "\u4EE5\u4E0B\u9700\u6C42\u5C06\u5931\u53BB\u6B64\u6587\u6863\u7684\u5173\u8054\u3002\u4E4B\u540E\u53EF\u5728\u56DE\u6536\u7AD9\u6062\u590D\u3002",
+      prdDeleteUnlinked: "\u4E4B\u540E\u53EF\u5728\u56DE\u6536\u7AD9\u6062\u590D\u6B64\u6587\u6863\u3002",
+      prdImageMissing: "\u56FE\u7247\u65E0\u6CD5\u663E\u793A",
+      prdImageLoading: "\u56FE\u7247\u52A0\u8F7D\u4E2D",
+      reviewPrdRequired: "\u8BF7\u5148\u5173\u8054\u4E00\u4EFD PRD\uFF0C\u518D\u63D0\u4EA4\u8BC4\u5BA1\u3002",
+      prdGoLink: "\u53BB\u5173\u8054 PRD"
+    }
+  };
+  function notifyPrdChanged(root) {
+    window.dispatchEvent(new CustomEvent("pw-prd-changed", { detail: { root } }));
+  }
+  function usePrdRead(root, { id, deleted = false } = {}) {
+    const [revision, setRevision] = useState7(0);
+    const [result, setResult] = useState7(null);
+    const reload = () => setRevision((value) => value + 1);
+    useEffect6(() => {
+      const changed = (event) => {
+        if (event.detail?.root === root) reload();
+      };
+      const visible = () => {
+        if (!document.hidden) reload();
+      };
+      window.addEventListener("pw-prd-changed", changed);
+      document.addEventListener("visibilitychange", visible);
+      return () => {
+        window.removeEventListener("pw-prd-changed", changed);
+        document.removeEventListener("visibilitychange", visible);
+      };
+    }, [root]);
+    useEffect6(() => {
+      let active = true;
+      const request = id ? rpc("prd/read", { root, id }) : rpc("prd/list", { root, deleted });
+      request.then((res) => {
+        if (active) setResult({ root, id, deleted, revision, res });
+      });
+      return () => {
+        active = false;
+      };
+    }, [root, id, deleted, revision]);
+    const current = result && result.root === root && result.id === id && result.deleted === deleted ? result : null;
+    return {
+      data: current?.res.ok ? current.res.data : null,
+      error: current?.res.ok === false ? current.res : null,
+      initial: !current,
+      pending: current?.revision !== revision,
+      reload
+    };
+  }
+  function PrdError({ error, t, onRetry }) {
+    if (!error) return null;
+    return h14(
+      "div",
+      { className: "pw-prd-error", role: "alert" },
+      h14("span", { className: "pw-error" }, error.message || t("errGeneric")),
+      onRetry && h14("button", { type: "button", className: "pw-button pw-quiet", onClick: onRetry }, t("retryRead"))
+    );
+  }
+  var reqTitle = (requirements, id) => requirements.find((item) => item.id === id)?.title || id;
+  function PrdManagement({ wb, onRead, onEdit }) {
+    const { root, requirements, t, nav, setFilter } = wb;
+    const deleted = nav.filters.prds?.deleted === true;
+    const { data, error, initial, pending, reload } = usePrdRead(root, { deleted });
+    const [remove, setRemove] = useState7(null);
+    const [busy, setBusy] = useState7(false);
+    const [actionError, setActionError] = useState7(null);
+    const [notice, setNotice] = useState7("");
+    const changeTab = (next) => {
+      setNotice("");
+      setActionError(null);
+      setFilter("prds", { deleted: next, query: "" });
+    };
+    const manage = async (method, item) => {
+      if (busy) return;
+      setBusy(true);
+      setActionError(null);
+      setNotice("");
+      const res = await rpc(method, { root, id: item.id, version: item.version });
+      setBusy(false);
+      if (!res.ok) {
+        setActionError(res);
+        if (res.code === "PRD_CONFLICT") {
+          setRemove(null);
+          reload();
+        }
+        return;
+      }
+      setRemove(null);
+      setNotice(t(method === "prd/delete" ? "prdDeleted" : "prdRestored"));
+      notifyPrdChanged(root);
+    };
+    const query = String(nav.filters.prds?.query ?? "").trim().toLocaleLowerCase();
+    const items = [...data ?? []].filter((item) => !query || item.title.toLocaleLowerCase().includes(query)).sort((a, b) => String(b.updated ?? "").localeCompare(String(a.updated ?? "")) || a.title.localeCompare(b.title));
+    const toolbar = h14(
+      import_react14.default.Fragment,
+      null,
+      h14(
+        "div",
+        { className: "pw-prd-switch", role: "group", "aria-label": t("navPrds") },
+        h14("button", {
+          className: "pw-button" + (!deleted ? " primary" : ""),
+          "aria-pressed": !deleted,
+          onClick: () => changeTab(false)
+        }, t("prdActive")),
+        h14("button", {
+          className: "pw-button" + (deleted ? " primary" : ""),
+          "aria-pressed": deleted,
+          onClick: () => changeTab(true)
+        }, t("prdTrash"))
+      ),
+      !deleted && h14("button", { className: "pw-button", onClick: () => onEdit() }, t("prdNew"))
+    );
+    return h14(
+      import_react14.default.Fragment,
+      null,
+      !remove && h14(PrdError, { error: actionError, t }),
+      h14(PrdError, { error, t, onRetry: reload }),
+      notice && h14("p", { className: "pw-prd-notice", role: "status" }, notice),
+      h14(ListPage, {
+        wb,
+        page: "prds",
+        items,
+        toolbar,
+        emptyText: initial || pending ? t("loading") : error ? "" : t(deleted ? "prdTrashEmpty" : "prdEmpty"),
+        renderRow: (item) => {
+          const metadata = h14(
+            import_react14.default.Fragment,
+            null,
+            h14("strong", { className: "pw-preview" }, item.title),
+            h14("span", { className: "pw-count" }, "v" + item.revision, " \xB7 ", t("updated"), " ", prdDate(item.updated)),
+            h14("span", { className: "pw-preview pw-note" }, item.reqIds.length ? t("prdRelatedRequirements") + " \xB7 " + item.reqIds.map((id) => reqTitle(requirements, id)).join("\u3001") : t("prdNoRequirements"))
+          );
+          return h14(
+            "div",
+            { className: "pw-row pw-prd-row", key: item.id },
+            deleted ? h14("div", { className: "pw-row-main pw-row-static" }, metadata) : h14("button", { className: "pw-row-main", onClick: () => onRead(item.id) }, metadata),
+            h14("div", { className: "pw-row-actions" }, deleted ? h14("button", { className: "pw-button", onClick: () => manage("prd/restore", item), disabled: busy || pending }, t("prdRestore")) : [
+              h14("button", { key: "edit", className: "pw-button", onClick: () => onEdit(item.id), disabled: busy || pending }, t("edit")),
+              h14("button", { key: "delete", className: "pw-button danger", onClick: () => {
+                setRemove(item);
+                setActionError(null);
+              }, disabled: busy || pending }, t("delete"))
+            ])
+          );
+        }
+      }),
+      remove && h14(
+        Modal,
+        { title: t("prdDeleteTitle"), onClose: () => {
+          if (!busy) setRemove(null);
+        }, actions: [
+          h14("button", { key: "cancel", className: "pw-button", disabled: busy, onClick: () => setRemove(null) }, t("cancel")),
+          h14("button", { key: "delete", className: "pw-button danger", disabled: busy, onClick: () => manage("prd/delete", remove) }, t("delete"))
+        ] },
+        h14("strong", null, remove.title),
+        h14("p", { className: "pw-note" }, t(remove.reqIds.length ? "prdDeleteHint" : "prdDeleteUnlinked")),
+        remove.reqIds.length > 0 && h14("ul", { className: "pw-diaglist" }, remove.reqIds.map((id) => h14("li", { key: id }, reqTitle(requirements, id)))),
+        h14(PrdError, { error: actionError, t })
+      )
+    );
+  }
+  function PrdDocuments({ root, reqId, requirements, t, activeId, onRead, onEdit, onNew }) {
+    const { data, error, initial, pending, reload } = usePrdRead(root);
+    const [pick, setPick] = useState7("");
+    const [busy, setBusy] = useState7(false);
+    const [actionError, setActionError] = useState7(null);
+    const [notice, setNotice] = useState7("");
+    const linked = (data ?? []).filter((item) => item.reqIds.includes(reqId));
+    const available = (data ?? []).filter((item) => !item.reqIds.includes(reqId));
+    const candidate = available.find((item) => item.id === pick);
+    const changeLink = async (item, linked2) => {
+      if (busy || pending || !item) return;
+      setBusy(true);
+      setActionError(null);
+      setNotice("");
+      const res = await rpc("prd/link", { root, id: item.id, reqId, linked: linked2, version: item.version });
+      setBusy(false);
+      if (!res.ok) {
+        setActionError(res);
+        if (res.code === "PRD_CONFLICT") reload();
+        return;
+      }
+      setPick("");
+      if (!linked2 && item.id === activeId) onRead(null);
+      setNotice(t(linked2 ? "prdLinkSaved" : "prdLinkRemoved"));
+      notifyPrdChanged(root);
+    };
+    return h14(
+      "section",
+      { id: "pw-prd-associations-" + reqId, tabIndex: -1, className: "pw-subpage pw-prd-associations", "aria-label": t("prds") },
+      h14(
+        "header",
+        { className: "pw-subpage-head" },
+        h14("h2", null, t("prds")),
+        h14("button", { type: "button", className: "pw-button", onClick: () => onNew(reqId) }, t("prdNew"))
+      ),
+      h14(PrdError, { error, t, onRetry: reload }),
+      h14(PrdError, { error: actionError, t }),
+      initial ? h14("p", { className: "pw-note", role: "status" }, t("loading")) : !error && h14(
+        import_react14.default.Fragment,
+        null,
+        linked.length === 0 && h14("p", { className: "pw-note" }, t("prdNoLinks")),
+        linked.length > 0 && h14("ul", { className: "pw-prd-links" }, linked.map((item) => h14(
+          "li",
+          { key: item.id },
+          h14("button", {
+            type: "button",
+            className: "pw-button pw-prd-link",
+            "aria-expanded": item.id === activeId,
+            onClick: () => onRead(activeId === item.id ? null : item.id)
+          }, item.title),
+          h14("span", { className: "pw-count" }, "v" + item.revision),
+          h14("button", {
+            type: "button",
+            className: "pw-button pw-quiet",
+            "aria-label": `${t("prdUnlink")} \xB7 ${item.title}`,
+            disabled: busy || pending,
+            onClick: () => changeLink(item, false)
+          }, t("prdUnlink"))
+        ))),
+        activeId && h14(PrdReader, { key: activeId, root, id: activeId, requirements, t, onEdit, onBack: () => onRead(null), inline: true }),
+        h14(
+          "form",
+          { className: "pw-prd-link-form", onSubmit: (event) => {
+            event.preventDefault();
+            changeLink(candidate, true);
+          } },
+          h14(
+            "label",
+            { className: "pw-field" },
+            h14("span", null, t("prdLinkPicker")),
+            h14(
+              "select",
+              { className: "pw-select", value: candidate?.id ?? "", disabled: busy || pending || !available.length, onChange: (event) => {
+                setPick(event.target.value);
+                setActionError(null);
+              } },
+              h14("option", { value: "" }, t(available.length ? "prdLinkPicker" : "prdNoOptions")),
+              available.map((item) => h14("option", { key: item.id, value: item.id }, `${item.title} \xB7 v${item.revision}`))
+            )
+          ),
+          h14(
+            "div",
+            { className: "pw-actions" },
+            h14("button", { type: "submit", className: "pw-button primary", disabled: busy || pending || !candidate }, t("prdSaveLink")),
+            h14("button", {
+              type: "button",
+              className: "pw-button pw-quiet",
+              disabled: busy || !pick,
+              onClick: () => {
+                setPick("");
+                setActionError(null);
+              }
+            }, t("cancel"))
+          )
+        )
+      ),
+      notice && h14("p", { className: "pw-prd-notice", role: "status" }, notice)
+    );
+  }
+  function PrdImage({ root, id, name, alt, revision, t }) {
+    const [image, setImage] = useState7(null);
+    useEffect6(() => {
+      let active = true;
+      rpc("prd/image", { root, id, name }).then(({ ok, data }) => {
+        if (!active) return;
+        const safe = ok && /^image\/(?:png|jpeg|gif|webp)$/.test(data?.mime) && typeof data.base64 === "string";
+        setImage(safe ? `data:${data.mime};base64,${data.base64}` : "");
+      });
+      return () => {
+        active = false;
+      };
+    }, [root, id, name, revision]);
+    if (image) return h14("img", { className: "pw-prd-image", src: image, alt, loading: "lazy", decoding: "async", onError: () => setImage("") });
+    return h14("span", { className: "pw-note" }, alt || t(image === null ? "prdImageLoading" : "prdImageMissing"));
+  }
+  function PrdReader({ root, id, requirements, t, onEdit, onBack, inline: inline2 = false }) {
+    const { data: prd, error, initial, reload } = usePrdRead(root, { id });
+    const reader = useRef4(null);
+    useEffect6(() => {
+      if (inline2 && !initial) reader.current?.scrollIntoView({ block: "nearest" });
+    }, [inline2, initial]);
+    return h14(
+      "section",
+      { ref: reader, className: "pw-prd-reader" + (inline2 ? " pw-prd-reader-inline" : ""), "aria-label": t("prdRead") },
+      h14(
+        "header",
+        { className: "pw-prd-reader-head" },
+        h14("button", { className: "pw-button", onClick: onBack }, t(inline2 ? "prdCloseRead" : "backToPrevious")),
+        prd && h14("button", { className: "pw-button", onClick: () => onEdit(id) }, t("edit"))
+      ),
+      h14(PrdError, { error, t, onRetry: reload }),
+      initial && h14("p", { className: "pw-note", role: "status" }, t("loading")),
+      prd && h14(
+        "div",
+        { className: "pw-prd-scroll", tabIndex: 0, role: "region", "aria-label": prd.title },
+        h14(
+          "article",
+          { className: "pw-md pw-prd-article" },
+          h14("h1", { className: "pw-md-h" }, prd.title),
+          h14("p", { className: "pw-count" }, "v" + prd.revision, " \xB7 ", t("updated"), " ", prdDate(prd.updated)),
+          prd.reqIds.length > 0 && h14("p", { className: "pw-note" }, t("prdRelatedRequirements"), " \xB7 ", prd.reqIds.map((reqId) => reqTitle(requirements, reqId)).join("\u3001")),
+          renderMarkdown(prd.markdown.replace(/^#[ \t]+[^\r\n]+(?:\r?\n|$)/, ""), t, {
+            image: (alt, path, key) => {
+              const name = /^assets\/([a-z0-9][a-z0-9_.-]*)$/i.exec(path)?.[1];
+              return name ? h14(PrdImage, { key: key + ":" + name + ":" + prd.version, name, alt, root, id, revision: prd.revision, t }) : h14("span", { key, className: "pw-note" }, alt || t("prdImageMissing"));
+            }
+          })
+        )
+      )
+    );
+  }
+  var prdCss = `
+.pw-prd-error{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-block:6px}
+.pw-prd-notice{margin-block:3px;color:var(--dsw-alias-label-secondary)}
+.pw-prd-switch{display:flex;gap:6px}
+.pw-prd-row{flex-wrap:wrap}
+.pw-prd-row .pw-row-main{min-width:min(180px,100%)}
+.pw-prd-associations:focus-visible,.pw-prd-scroll:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
+.pw-prd-associations .pw-subpage-head{align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.pw-prd-associations .pw-subpage-head h2{font-size:16px;margin:0}
+.pw-prd-links{list-style:none;padding:0;margin:0 0 14px}
+.pw-prd-links li{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--dsw-alias-border-l3);padding-block:4px}
+.pw-prd-links li .pw-button:last-child{margin-inline-start:auto}
+.pw-prd-links .pw-prd-link{max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:start}
+.pw-prd-link-form{display:grid;grid-template-columns:minmax(180px,1fr) auto;align-items:end;gap:8px 12px;padding:12px;border-radius:8px;background:var(--dsw-alias-bg-layer-2)}
+.pw-prd-link-form .pw-field{margin:0;min-width:0}
+.pw-prd-link-form select{width:100%;min-height:32px}
+.pw-prd-reader{flex:1;min-height:0;min-width:0;display:flex;flex-direction:column}
+.pw-prd-reader-inline{margin-block:12px 16px}
+.pw-prd-reader-inline .pw-prd-scroll{max-height:60vh}
+.pw-prd-reader-head{display:flex;justify-content:space-between;padding-bottom:8px}
+.pw-prd-scroll{flex:1;min-height:0;overflow:auto;border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-1);border-radius:10px}
+.pw-prd-article{margin:0 auto;padding:clamp(14px,4vw,38px);box-sizing:border-box;overflow-wrap:anywhere}
+.pw-prd-article h1{font-size:clamp(22px,3vw,30px)}
+.pw-prd-article .pw-md-table{min-width:max-content}
+.pw-prd-article .pw-prd-image{display:block;max-width:100%;height:auto;margin-block:8px;border-radius:6px}
+@media(max-width:620px){.pw-prd-link-form{grid-template-columns:1fr}}
+`;
+
+  // client-src/forms/prd-form.js
+  var import_react15 = __toESM(__require("react"), 1);
+  var { createElement: h15, useEffect: useEffect7, useState: useState8 } = import_react15.default;
+  var button = (key, text, props = {}) => h15("button", { key, type: "button", className: "pw-button", ...props }, text);
+  var maxImageBytes = 2 * 1024 * 1024;
+  var imageExtensions = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+    "image/gif": "gif"
+  };
+  var prdEditorLocale = {
+    zh: {
+      prdEditTitle: "\u7F16\u8F91 PRD",
+      prdCreateTitle: "\u65B0\u5EFA PRD",
+      prdTitleField: "\u6587\u6863\u540D\u79F0",
+      prdBodyField: "\u6B63\u6587\uFF08Markdown\uFF09",
+      prdAddImage: "\u63D2\u5165\u672C\u5730\u56FE\u7247",
+      prdImageHelp: "\u652F\u6301 PNG\u3001JPEG\u3001WebP\u3001GIF\uFF0C\u6BCF\u5F20\u6700\u591A 2 MB\u3002",
+      prdImageInvalid: "\u8BF7\u9009\u62E9\u652F\u6301\u7684\u56FE\u7247\u683C\u5F0F\uFF0C\u4E14\u5355\u5F20\u4E0D\u8D85\u8FC7 2 MB\u3002",
+      prdImageReadError: "\u65E0\u6CD5\u8BFB\u53D6\u8FD9\u5F20\u56FE\u7247\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9\u3002",
+      prdTitleRequired: "\u8BF7\u8F93\u5165\u6587\u6863\u540D\u79F0\u3002",
+      prdLoadLatest: "\u8BFB\u53D6\u6700\u65B0\u7248",
+      prdSaveOverwrite: "\u8986\u76D6\u4FDD\u5B58",
+      prdLatestForReview: "\u5F53\u524D\u5DF2\u4FDD\u5B58\u7684\u6B63\u6587",
+      prdDraftPreserved: "\u8349\u7A3F\u5DF2\u4FDD\u7559\u3002\u8BF7\u6838\u5BF9\u5F53\u524D\u6B63\u6587\uFF0C\u518D\u786E\u8BA4\u8986\u76D6\u3002",
+      prdDiscardEditor: "\u653E\u5F03\u8349\u7A3F",
+      prdSaveNew: "\u4FDD\u5B58 PRD",
+      prdCloseEditor: "\u5173\u95ED"
+    },
+    en: {
+      prdEditTitle: "Edit PRD",
+      prdCreateTitle: "New PRD",
+      prdTitleField: "Document name",
+      prdBodyField: "Body (Markdown)",
+      prdAddImage: "Insert a local image",
+      prdImageHelp: "PNG, JPEG, WebP and GIF, up to 2 MB per image.",
+      prdImageInvalid: "Select a supported image of 2 MB or less.",
+      prdImageReadError: "Unable to read this image. Choose it again.",
+      prdTitleRequired: "Enter a document name.",
+      prdLoadLatest: "Load current version",
+      prdSaveOverwrite: "Overwrite",
+      prdLatestForReview: "Current saved text",
+      prdDraftPreserved: "Your draft is still here. Check the saved text before overwriting.",
+      prdDiscardEditor: "Discard draft",
+      prdSaveNew: "Save PRD",
+      prdCloseEditor: "Close"
+    }
+  };
+  function draftFrom(doc) {
+    const heading = /^#[ \t]+([^\r\n]+)(?:\r?\n|$)/.exec(doc.markdown);
+    return {
+      title: doc.title,
+      body: heading ? doc.markdown.slice(heading[0].length).trimStart() : doc.markdown,
+      version: doc.version,
+      images: [],
+      original: doc.markdown
+    };
+  }
+  function imageData(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",", 2)[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+  function PrdEditor({ root, id, reqId, t, onSaved, onClose, uiMemory: uiMemory2 }) {
+    const key = JSON.stringify(["prd-editor", root, id ?? null, reqId ?? null]);
+    const drafts = uiMemory2.drafts;
+    const [draft, setDraft] = useState8(() => drafts[key] ?? (id ? null : { title: "", body: "", images: [] }));
+    const [error, setError] = useState8(null);
+    const [busy, setBusy] = useState8(false);
+    const [latest, setLatest] = useState8(null);
+    const [retry, setRetry] = useState8(0);
+    useEffect7(() => {
+      if (!id || drafts[key]) return;
+      let active = true;
+      rpc("prd/read", { root, id }).then((res) => {
+        if (!active) return;
+        if (res.ok) setDraft(draftFrom(res.data));
+        else setError(res);
+      });
+      return () => {
+        active = false;
+      };
+    }, [root, id, key, drafts, retry]);
+    const remember = (update) => {
+      setDraft((current) => {
+        const next = { ...current, ...update };
+        drafts[key] = next;
+        return next;
+      });
+    };
+    const close = (event) => {
+      if (busy || event?.currentTarget?.classList?.contains("pw-modal-mask")) return;
+      onClose();
+    };
+    const save = async (event) => {
+      event?.preventDefault();
+      if (!draft || busy || error?.code === "PRD_CONFLICT") return;
+      if (!draft.title.trim()) {
+        setError({ message: t("prdTitleRequired") });
+        return;
+      }
+      setBusy(true);
+      const edited = "# " + draft.title.trim() + (draft.body.trim() ? "\n\n" + draft.body.trim() : "");
+      const original = draft.original && draftFrom({ title: /^#[ \t]+([^\r\n]+)/.exec(draft.original)?.[1], markdown: draft.original });
+      const markdown = original && original.title === draft.title && original.body === draft.body ? draft.original : edited;
+      const images = draft.images.filter((image) => markdown.includes(`(assets/${image.name})`));
+      const res = await rpc("prd/save", { root, id, markdown, version: draft.version, images, ...reqId && !id && { reqIds: [reqId] } });
+      setBusy(false);
+      if (res.ok) {
+        delete drafts[key];
+        onSaved(res.data);
+      } else setError(res);
+    };
+    const loadLatest = async () => {
+      setBusy(true);
+      const res = await rpc("prd/read", { root, id });
+      if (res.ok) {
+        setLatest(res.data.markdown);
+        remember({ version: res.data.version });
+        setError(null);
+      } else setError({ ...res, code: "PRD_CONFLICT" });
+      setBusy(false);
+    };
+    const insertImage = async (event) => {
+      const file = event.currentTarget.files[0];
+      event.currentTarget.value = "";
+      if (!file) return;
+      const extension = imageExtensions[file.type];
+      if (!extension || file.size > maxImageBytes) {
+        setError({ message: t("prdImageInvalid") });
+        return;
+      }
+      setBusy(true);
+      try {
+        const name = crypto.randomUUID() + "." + extension;
+        const base64 = await imageData(file);
+        const alt = file.name.replace(/\.[^.]+$/, "").replace(/[\[\]\r\n]/g, "");
+        const syntax = `![${alt}](assets/${name})`;
+        const body = [draft.body.trimEnd(), syntax].filter(Boolean).join("\n\n");
+        remember({ body, images: [...draft.images, { name, base64 }] });
+        setError(null);
+      } catch {
+        setError({ message: t("prdImageReadError") });
+      } finally {
+        setBusy(false);
+      }
+    };
+    const conflicted = error?.code === "PRD_CONFLICT";
+    return h15(
+      Modal,
+      {
+        onClose: close,
+        title: t(id ? "prdEditTitle" : "prdCreateTitle"),
+        wide: true,
+        actions: [
+          draft && drafts[key] && button("discard", t("prdDiscardEditor"), { disabled: busy, onClick: () => {
+            delete drafts[key];
+            onClose();
+          } }),
+          button("close", t("prdCloseEditor"), { disabled: busy, onClick: () => close() }),
+          button("save", t(id ? "prdSaveOverwrite" : "prdSaveNew"), { className: "pw-button primary", disabled: busy || !draft || conflicted, onClick: save })
+        ]
+      },
+      h15("style", null, ".pw-prd-edit-content .pw-textarea{min-height:160px}.pw-prd-edit-content pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:210px;overflow:auto}"),
+      h15(
+        "div",
+        { className: "pw-prd-edit-content" },
+        draft && h15(
+          "form",
+          { onSubmit: save },
+          h15(
+            "label",
+            { className: "pw-field" },
+            h15("span", null, t("prdTitleField")),
+            h15("input", { className: "pw-input", disabled: busy, value: draft.title, onChange: (event) => remember({ title: event.target.value }) })
+          ),
+          h15(
+            "label",
+            { className: "pw-field" },
+            h15("span", null, t("prdBodyField")),
+            h15("textarea", { className: "pw-textarea", rows: 10, disabled: busy, value: draft.body, onChange: (event) => remember({ body: event.target.value }) })
+          ),
+          h15(
+            "label",
+            { className: "pw-field" },
+            h15("span", null, t("prdAddImage")),
+            h15("input", { type: "file", accept: Object.keys(imageExtensions).join(","), disabled: busy || conflicted, onChange: insertImage }),
+            h15("small", { className: "pw-note" }, t("prdImageHelp"))
+          )
+        ),
+        !draft && !error && h15("p", { role: "status" }, t("loading")),
+        error && h15(
+          "p",
+          { role: "alert", className: "pw-error" },
+          error.message,
+          conflicted && button("reload", t("prdLoadLatest"), { disabled: busy, onClick: loadLatest }),
+          !draft && button("retry", t("pwbRetry"), { onClick: () => {
+            setError(null);
+            setRetry((n) => n + 1);
+          } })
+        ),
+        latest && h15(
+          "details",
+          { open: true },
+          h15("summary", null, t("prdLatestForReview")),
+          h15("p", null, t("prdDraftPreserved")),
+          h15("pre", null, latest)
+        )
+      )
+    );
+  }
+
+  // client-src/pages/sync.js
+  var import_react16 = __toESM(__require("react"), 1);
+  var h16 = import_react16.default.createElement;
+  var { useCallback: useCallback2, useEffect: useEffect8, useRef: useRef5, useState: useState9 } = import_react16.default;
   var STATES = ["todo", "doing", "blocked", "in_review", "done", "cancelled", "backlog", "reviewing", "ready", "in_progress", "pending", "completed"];
   function SyncView({ root, sessionId, t, refresh, requirements = [], onLocateProposal }) {
-    const [list, setList] = useState7(null);
-    const [baseline, setBaseline] = useState7(null);
-    const [run, setRun] = useState7(null);
-    const [loadError, setLoadError] = useState7(null);
-    const poll = useRef4(null);
-    const mounted = useRef4(false);
+    const [list, setList] = useState9(null);
+    const [baseline, setBaseline] = useState9(null);
+    const [run, setRun] = useState9(null);
+    const [loadError, setLoadError] = useState9(null);
+    const poll = useRef5(null);
+    const mounted = useRef5(false);
     const load = useCallback2(async () => {
       const res = await rpc("sync/proposals", { root });
       if (!mounted.current) return;
@@ -3482,7 +4119,7 @@ ${detail.trim()}` : value);
         setBaseline(res.data.baseline);
       }
     }, [root]);
-    useEffect6(() => {
+    useEffect8(() => {
       mounted.current = true;
       load();
       return () => {
@@ -3561,64 +4198,64 @@ ${detail.trim()}` : value);
     };
     const total = (baseline?.accepted ?? 0) + (baseline?.dismissed ?? 0);
     const rate = total > 0 ? Math.round((baseline?.accepted ?? 0) / total * 100) : 0;
-    return h14(
+    return h16(
       "div",
       { className: "pw-sync" },
-      h14(
+      h16(
         "div",
         { className: "pw-banner", role: "status" },
-        h14("button", { className: "pw-button primary", onClick: startSync, disabled: run?.busy }, t("syncRun")),
-        content.length > 0 && h14("button", { className: "pw-button", onClick: approveAll, disabled: run?.busy }, t("syncAdoptContent")),
-        list && h14("span", { className: "pw-count", style: { marginLeft: 8 } }, t("syncPending").replace("{n}", String(list.length))),
-        baseline && total > 0 && h14("span", { className: "pw-count", style: { marginLeft: 8 } }, t("syncAcceptRate").replace("{rate}", String(rate)).replace("{accepted}", String(baseline.accepted ?? 0)).replace("{total}", String(total))),
-        run?.message && h14("span", { style: { marginLeft: 10 } }, run.message),
-        run?.error && h14(ErrorDetails, { error: run.error, t, showRaw: false })
+        h16("button", { className: "pw-button primary", onClick: startSync, disabled: run?.busy }, t("syncRun")),
+        content.length > 0 && h16("button", { className: "pw-button", onClick: approveAll, disabled: run?.busy }, t("syncAdoptContent")),
+        list && h16("span", { className: "pw-count", style: { marginLeft: 8 } }, t("syncPending").replace("{n}", String(list.length))),
+        baseline && total > 0 && h16("span", { className: "pw-count", style: { marginLeft: 8 } }, t("syncAcceptRate").replace("{rate}", String(rate)).replace("{accepted}", String(baseline.accepted ?? 0)).replace("{total}", String(total))),
+        run?.message && h16("span", { style: { marginLeft: 10 } }, run.message),
+        run?.error && h16(ErrorDetails, { error: run.error, t, showRaw: false })
       ),
-      loadError && h14(
+      loadError && h16(
         "div",
         { className: "pw-banner pw-error", role: "alert" },
-        h14(ErrorDetails, { error: loadError, t, showRaw: false }),
-        h14("button", { className: "pw-button", onClick: load }, t("retryRead"))
+        h16(ErrorDetails, { error: loadError, t, showRaw: false }),
+        h16("button", { className: "pw-button", onClick: load }, t("retryRead"))
       ),
-      !list ? !loadError && h14("div", { className: "pw-empty" }, t("loading")) : list.length === 0 ? h14("div", { className: "pw-empty" }, t("syncEmpty")) : h14("div", { className: "pw-sync-list" }, list.map((p) => {
+      !list ? !loadError && h16("div", { className: "pw-empty" }, t("loading")) : list.length === 0 ? h16("div", { className: "pw-empty" }, t("syncEmpty")) : h16("div", { className: "pw-sync-list" }, list.map((p) => {
         const req = requirements.find((req2) => req2.id === p.target?.reqId);
         const task = req?.issues?.find((task2) => task2.id === p.target.issueId);
         const state = p.kind === "task_suggestion" && p.suggested_patch?.action === "cancel" ? "cancelled" : p.suggested_patch?.to;
         const stateLabel = (p.target?.issueId ? "st_" : "col_") + state;
         const sources = [...new Set((p.evidence ?? []).map(sourceLabel).filter(Boolean))];
         const split = isRequirementSplit(p);
-        return h14(
+        return h16(
           "div",
           { key: p.id, className: "pw-proposal" },
-          h14(
+          h16(
             "div",
             { className: "pw-proposal-head" },
-            h14("span", { className: "pw-istatus st-doing" }, t("kind_" + p.kind)),
-            h14("strong", null, task?.title ?? req?.title ?? t(p.target?.issueId ? "issueDetail" : "detail")),
-            STATES.includes(state) && h14("span", { className: "pw-count" }, "\u2192 ", t(stateLabel))
+            h16("span", { className: "pw-istatus st-doing" }, t("kind_" + p.kind)),
+            h16("strong", null, task?.title ?? req?.title ?? t(p.target?.issueId ? "issueDetail" : "detail")),
+            STATES.includes(state) && h16("span", { className: "pw-count" }, "\u2192 ", t(stateLabel))
           ),
-          (p.kind !== "new_task" || split) && h14("div", { className: "pw-proposal-reason" }, split ? p.suggested_patch?.title : p.reason),
-          sources.length > 0 && h14(
+          (p.kind !== "new_task" || split) && h16("div", { className: "pw-proposal-reason" }, split ? p.suggested_patch?.title : p.reason),
+          sources.length > 0 && h16(
             "div",
             { className: "pw-proposal-evidence" },
-            h14("span", { className: "pw-label" }, t("syncEvidence")),
-            sources.map((source) => h14("span", { key: source, className: "pw-refchip" }, source))
+            h16("span", { className: "pw-label" }, t("syncEvidence")),
+            sources.map((source) => h16("span", { key: source, className: "pw-refchip" }, source))
           ),
-          p.kind === "new_task" && canApply(p) ? h14(DraftSuggestions, {
+          p.kind === "new_task" && canApply(p) ? h16(DraftSuggestions, {
             proposals: [p],
             root,
             t,
             busy: run?.busy,
             act: (method, input) => decide(p, method === "proposal/adopt", input.patch)
-          }) : h14(
+          }) : h16(
             "div",
             { className: "pw-actions" },
-            canApply(p) ? h14("button", { className: "pw-button primary", onClick: () => decide(p, true), disabled: run?.busy }, t("demoAdopt")) : p.target?.reqId && h14(
+            canApply(p) ? h16("button", { className: "pw-button primary", onClick: () => decide(p, true), disabled: run?.busy }, t("demoAdopt")) : p.target?.reqId && h16(
               "button",
               { className: "pw-button", onClick: () => onLocateProposal({ ...p.target, split }) },
               t(split ? "splitLocate" : p.target.issueId ? "syncLocateTask" : "syncLocateRequirement")
             ),
-            !split && h14("button", { className: "pw-button", onClick: () => decide(p, false), disabled: run?.busy }, t("syncDismiss"))
+            !split && h16("button", { className: "pw-button", onClick: () => decide(p, false), disabled: run?.busy }, t("syncDismiss"))
           )
         );
       }))
@@ -3626,69 +4263,14 @@ ${detail.trim()}` : value);
   }
 
   // client-src/detail/requirement-detail.js
-  var import_react15 = __toESM(__require("react"), 1);
-  var h15 = import_react15.default.createElement;
-  var { useCallback: useCallback3, useEffect: useEffect7, useRef: useRef5, useState: useState8 } = import_react15.default;
-  function PrdDocuments({ root, reqId, initialId, t }) {
-    const [items, setItems] = useState8([]);
-    const [show, setShow] = useState8(initialId ?? null);
-    const [content, setContent] = useState8(null);
-    const [error, setError] = useState8(null);
-    const [retry, setRetry] = useState8(0);
-    useEffect7(() => {
-      let active = true;
-      rpc("prd/list", { root, reqId }).then((res) => {
-        if (!active) return;
-        if (res.ok) setItems(res.data);
-        else setError(res.message);
-      });
-      return () => {
-        active = false;
-      };
-    }, [root, reqId, retry]);
-    useEffect7(() => {
-      let active = true;
-      setContent(null);
-      if (show) rpc("prd/read", { root, id: show }).then((res) => {
-        if (!active) return;
-        if (res.ok) setContent(res.data.markdown);
-        else setError(res.message);
-      });
-      return () => {
-        active = false;
-      };
-    }, [root, show, retry]);
-    if (!items.length && !error) return null;
-    return h15(
-      "section",
-      { className: "pw-result", "aria-label": t("prds") },
-      h15("strong", null, t("prds")),
-      h15("div", { className: "pw-actions" }, items.map((item) => h15("button", {
-        key: item.id,
-        type: "button",
-        className: "pw-button",
-        "aria-expanded": item.id === show,
-        onClick: () => {
-          setError(null);
-          setShow(show === item.id ? null : item.id);
-        }
-      }, item.title))),
-      error && h15("p", { role: "alert" }, error, " ", h15("button", {
-        type: "button",
-        className: "pw-button",
-        onClick: () => {
-          setError(null);
-          setRetry((n) => n + 1);
-        }
-      }, t("pwbRetry"))),
-      show && content && h15("pre", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, content)
-    );
-  }
+  var import_react17 = __toESM(__require("react"), 1);
+  var h17 = import_react17.default.createElement;
+  var { useCallback: useCallback3, useEffect: useEffect9, useRef: useRef6, useState: useState10 } = import_react17.default;
   function useWorkItemDraft(draftKey, item, fieldsOf, onDirty, memory) {
-    const [editing, setEditing] = useState8(() => !!memory.drafts[draftKey]);
-    const [draft, setDraft] = useState8(() => draftOf(memory.drafts, draftKey, fieldsOf(item)));
-    const base = useRef5({ fields: fieldsOf(item), fileHash: item.hash });
-    useEffect7(() => {
+    const [editing, setEditing] = useState10(() => !!memory.drafts[draftKey]);
+    const [draft, setDraft] = useState10(() => draftOf(memory.drafts, draftKey, fieldsOf(item)));
+    const base = useRef6({ fields: fieldsOf(item), fileHash: item.hash });
+    useEffect9(() => {
       onDirty?.(!!memory.drafts[draftKey]);
     }, [draftKey, onDirty]);
     const begin = () => {
@@ -3716,9 +4298,9 @@ ${detail.trim()}` : value);
     const statusText = t("st_" + issue.status);
     const moves = Object.entries(ISSUE_MOVES[issue.status] ?? {});
     if (req.status !== "in_progress" || req.pendingReopen || !moves.length) {
-      return h15("span", { className: "pw-istatus st-" + issue.status }, statusText);
+      return h17("span", { className: "pw-istatus st-" + issue.status }, statusText);
     }
-    return h15(
+    return h17(
       "select",
       {
         className: "pw-select",
@@ -3727,8 +4309,8 @@ ${detail.trim()}` : value);
         "aria-label": `${issue.title} \xB7 ${statusText}`,
         onChange: (e) => moveIssue(req, issue, e.target.value)
       },
-      h15("option", { value: issue.status, disabled: true }, statusText),
-      moves.map(([status, label]) => h15("option", { key: status, value: status }, t(label)))
+      h17("option", { value: issue.status, disabled: true }, statusText),
+      moves.map(([status, label]) => h17("option", { key: status, value: status }, t(label)))
     );
   }
   var splitLabels = { verified: "splitVerified", assigned: "splitAssigned", gap: "splitGap", unknown: "splitUnknown" };
@@ -3741,10 +4323,10 @@ ${detail.trim()}` : value);
     });
     const unresolved = items.find((item) => item.status === "gap") ?? items.find((item) => item.status === "unknown");
     const assigned = items.find((item) => item.status === "assigned" && item.needsWork && item.taskIds?.length) ?? items.find((item) => item.status === "assigned" && item.taskIds?.length);
-    const taskLinks = (item) => h15("div", { className: "pw-actions" }, item.taskIds?.map((id) => {
+    const taskLinks = (item) => h17("div", { className: "pw-actions" }, item.taskIds?.map((id) => {
       const task = req.issues?.find((task2) => task2.id === id);
       if (!task) return null;
-      return h15(
+      return h17(
         "button",
         { key: id, type: "button", className: "pw-button", onClick: () => onOpenIssue(id) },
         task.title,
@@ -3752,61 +4334,61 @@ ${detail.trim()}` : value);
         t("st_" + task.status)
       );
     }));
-    return h15(
+    return h17(
       "section",
       { className: "pw-result", "aria-label": t("splitReview"), "aria-busy": pending },
-      h15("strong", null, t("splitReview")),
-      pending && h15("p", { className: "pw-text", role: "status" }, t("splitWorking")),
-      counts.length > 0 && h15("p", { className: "pw-text" }, counts.join(" \xB7 ")),
-      unresolved && h15(
-        import_react15.default.Fragment,
+      h17("strong", null, t("splitReview")),
+      pending && h17("p", { className: "pw-text", role: "status" }, t("splitWorking")),
+      counts.length > 0 && h17("p", { className: "pw-text" }, counts.join(" \xB7 ")),
+      unresolved && h17(
+        import_react17.default.Fragment,
         null,
-        h15(ReadText, { value: unresolved.detail, preview: true }),
+        h17(ReadText, { value: unresolved.detail, preview: true }),
         unresolved.taskIds?.length > 0 && taskLinks(unresolved)
       ),
-      assigned && h15(
-        import_react15.default.Fragment,
+      assigned && h17(
+        import_react17.default.Fragment,
         null,
-        h15(ReadText, { value: assigned.detail, preview: true }),
+        h17(ReadText, { value: assigned.detail, preview: true }),
         taskLinks(assigned)
       ),
-      review?.question && h15(ReadText, { value: review.question }),
-      review && !hasDrafts && h15(
+      review?.question && h17(ReadText, { value: review.question }),
+      review && !hasDrafts && h17(
         "p",
         { className: "pw-text" },
         t(items.length && !review.question && items.every((item) => ["verified", "assigned"].includes(item.status)) ? "splitNoNew" : "splitNoDrafts")
       ),
-      items.length > 0 && h15(
+      items.length > 0 && h17(
         Disclosure,
         { label: t("splitDetails") },
-        h15("ul", { className: "pw-reading-list" }, items.map((item) => h15(
+        h17("ul", { className: "pw-reading-list" }, items.map((item) => h17(
           "li",
           { key: item.id },
-          h15("strong", null, t(splitLabels[item.status]), " \xB7 ", item.requirement),
-          h15(ReadText, { value: item.detail }),
+          h17("strong", null, t(splitLabels[item.status]), " \xB7 ", item.requirement),
+          h17(ReadText, { value: item.detail }),
           item.taskIds?.length > 0 && taskLinks(item),
-          item.sources?.map((source) => h15(
+          item.sources?.map((source) => h17(
             "div",
             { key: source.path + source.quote, className: "pw-note" },
-            h15("span", null, source.path),
-            h15(ReadText, { value: source.quote })
+            h17("span", null, source.path),
+            h17(ReadText, { value: source.quote })
           ))
         )))
       ),
-      hasLegacy && !review && h15("p", { className: "pw-text" }, t("splitOld")),
-      h15(ErrorDetails, { error: error ?? readError, t, showRaw: false }),
-      readError && h15("button", { type: "button", className: "pw-button pw-quiet", disabled: pending, onClick: reload }, t("retryRead")),
-      refining ? h15(
+      hasLegacy && !review && h17("p", { className: "pw-text" }, t("splitOld")),
+      h17(ErrorDetails, { error: error ?? readError, t, showRaw: false }),
+      readError && h17("button", { type: "button", className: "pw-button pw-quiet", disabled: pending, onClick: reload }, t("retryRead")),
+      refining ? h17(
         "form",
         { className: "pw-progress-form", onSubmit: (event) => {
           event.preventDefault();
           if (!pending && feedback.trim()) onReview(feedback);
         } },
-        h15(
+        h17(
           "label",
           { className: "pw-field" },
-          h15("span", { className: "pw-label" }, t("splitFeedback")),
-          h15("input", {
+          h17("span", { className: "pw-label" }, t("splitFeedback")),
+          h17("input", {
             type: "text",
             className: "pw-input",
             autoFocus: true,
@@ -3816,33 +4398,33 @@ ${detail.trim()}` : value);
             onChange: (event) => changeFeedback(event.target.value)
           })
         ),
-        h15(
+        h17(
           "div",
           { className: "pw-actions" },
-          h15("button", { type: "submit", className: "pw-button", disabled: pending || !feedback.trim() }, t("splitRethink")),
-          h15("button", { type: "button", className: "pw-button pw-quiet", disabled: pending, onClick: () => showFeedback(false) }, t("cancel"))
+          h17("button", { type: "submit", className: "pw-button", disabled: pending || !feedback.trim() }, t("splitRethink")),
+          h17("button", { type: "button", className: "pw-button pw-quiet", disabled: pending, onClick: () => showFeedback(false) }, t("cancel"))
         )
-      ) : h15(
+      ) : h17(
         "div",
         { className: "pw-actions" },
-        (review || hasDrafts) && h15("button", { type: "button", className: "pw-button pw-quiet", disabled: pending, onClick: () => showFeedback(true) }, t("splitRethink")),
-        (hasLegacy || error) && h15("button", { type: "button", className: "pw-button pw-quiet", disabled: pending, onClick: () => onReview() }, t("splitRetry"))
+        (review || hasDrafts) && h17("button", { type: "button", className: "pw-button pw-quiet", disabled: pending, onClick: () => showFeedback(true) }, t("splitRethink")),
+        (hasLegacy || error) && h17("button", { type: "button", className: "pw-button pw-quiet", disabled: pending, onClick: () => onReview() }, t("splitRetry"))
       )
     );
   }
   function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenIssue, onCreateTask, projectKey, rootRef, onDirty, busy, sessionId, setModal, uiMemory: uiMemory2, onReorderTask, onStartTask }) {
     const form = useWorkItemDraft(reqDraftKey(projectKey, req.id), req, reqDraftFrom, onDirty, uiMemory2);
-    const [attempted, setAttempted] = useState8(false);
-    const [proposals, setProposals] = useState8([]);
+    const [attempted, setAttempted] = useState10(false);
+    const [proposals, setProposals] = useState10([]);
     const remembered = uiMemory2.taskReviews[reqDraftKey(projectKey, req.id)] ??= { edits: {} };
-    const [split, setSplit] = useState8(() => remembered.result ?? null);
-    const [feedback, setFeedback] = useState8(() => remembered.feedback ?? "");
-    const [refining, setRefining] = useState8(() => !!remembered.refining);
-    const [splitBusy, setSplitBusy] = useState8(false);
-    const [splitError, setSplitError] = useState8(null);
-    const [readError, setReadError] = useState8(null);
-    const live = useRef5(false);
-    const proposalSeq = useRef5(0);
+    const [split, setSplit] = useState10(() => remembered.result ?? null);
+    const [feedback, setFeedback] = useState10(() => remembered.feedback ?? "");
+    const [refining, setRefining] = useState10(() => !!remembered.refining);
+    const [splitBusy, setSplitBusy] = useState10(false);
+    const [splitError, setSplitError] = useState10(null);
+    const [readError, setReadError] = useState10(null);
+    const live = useRef6(false);
+    const proposalSeq = useRef6(0);
     const mode = req.status === "backlog" ? "organize" : req.status === "in_progress" ? "split" : null;
     const loadProposals = useCallback3(async () => {
       const seq = ++proposalSeq.current;
@@ -3852,7 +4434,7 @@ ${detail.trim()}` : value);
       setReadError(res.ok ? null : res);
       if (res.ok) setProposals(res.data.proposals.filter((p) => p.status === "pending" && p.target.reqId === req.id && p.kind === (mode === "organize" ? "req_draft" : "new_task")));
     }, [root, req.id, mode]);
-    useEffect7(() => {
+    useEffect9(() => {
       live.current = true;
       loadProposals();
       return () => {
@@ -3950,64 +4532,64 @@ ${detail.trim()}` : value);
     const tasks = req.issues ?? [];
     const canDelete = req.status === "backlog" && !tasks.length && !req.devHistory;
     const organize = () => actProposal("requirement/organize", { root, id: req.id, sessionId });
-    const drafts = mode && h15(DraftSuggestions, { proposals: proposals.filter((proposal) => !isRequirementSplit(proposal)), act: actProposal, root, t, busy });
-    return h15(
-      import_react15.default.Fragment,
+    const drafts = mode && h17(DraftSuggestions, { proposals: proposals.filter((proposal) => !isRequirementSplit(proposal)), act: actProposal, root, t, busy });
+    return h17(
+      import_react17.default.Fragment,
       null,
-      h15(
+      h17(
         "section",
         { className: editing ? "pw-subpage" : "pw-subpage pw-read-card", "aria-label": t("detail") },
-        h15(
+        h17(
           "header",
           { className: "pw-subpage-head" },
-          h15(
+          h17(
             "div",
             { className: "pw-read-title" },
-            h15("h2", null, req.title),
-            h15("span", { className: "pw-count pw-read-status", "data-status": req.status }, t("col_" + req.status))
+            h17("h2", null, req.title),
+            h17("span", { className: "pw-count pw-read-status", "data-status": req.status }, t("col_" + req.status))
           ),
-          !form.editing && h15(
+          !form.editing && h17(
             "div",
             { className: "pw-actions" },
-            canEdit && h15("button", { className: "pw-button", onClick: () => {
+            canEdit && h17("button", { className: "pw-button", onClick: () => {
               setAttempted(false);
               form.begin();
             } }, t("edit")),
-            req.status === "backlog" && h15(
+            req.status === "backlog" && h17(
               "details",
               { className: "pw-disclosure pw-detail-more" },
-              h15("summary", null, t("requirementActions")),
-              h15(
+              h17("summary", null, t("requirementActions")),
+              h17(
                 "div",
                 { className: "pw-actions" },
-                h15("button", { className: "pw-button", disabled: busy, onClick: organize }, t("aiOrganize")),
-                canDelete && h15("button", { className: "pw-button danger", disabled: busy, onClick: onDelete }, t("delete"))
+                h17("button", { className: "pw-button", disabled: busy, onClick: organize }, t("aiOrganize")),
+                canDelete && h17("button", { className: "pw-button danger", disabled: busy, onClick: onDelete }, t("delete"))
               )
             )
           )
         ),
-        editing ? h15(
+        editing ? h17(
           "form",
           { noValidate: true, onSubmit: (e) => {
             e.preventDefault();
             saveForm();
           } },
-          h15(RequirementFields, { form, t, busy, req }),
-          attempted && h15(ErrorDetails, { error: requirementFormError(form.draft), t, showRaw: false }),
-          h15(
+          h17(RequirementFields, { form, t, busy, req }),
+          attempted && h17(ErrorDetails, { error: requirementFormError(form.draft), t, showRaw: false }),
+          h17(
             "div",
             { className: "pw-actions" },
-            h15("button", { type: "submit", className: "pw-button primary", disabled: busy }, t("save")),
-            h15("button", { type: "button", className: "pw-button", disabled: busy, onClick: form.finish }, t("cancel"))
+            h17("button", { type: "submit", className: "pw-button primary", disabled: busy }, t("save")),
+            h17("button", { type: "button", className: "pw-button", disabled: busy, onClick: form.finish }, t("cancel"))
           )
-        ) : h15(
-          import_react15.default.Fragment,
+        ) : h17(
+          import_react17.default.Fragment,
           null,
-          h15(RequirementOverview, { req, t }),
+          h17(RequirementOverview, { req, t }),
           mode === "organize" && drafts
         )
       ),
-      h15(
+      h17(
         IssueSidebar,
         {
           req,
@@ -4019,7 +4601,7 @@ ${detail.trim()}` : value);
           onReorderTask,
           onStartTask,
           onSuggest: mode === "split" && !editing ? () => suggestSplit() : void 0,
-          suggestionReview: mode === "split" && !req.pendingReopen && !editing && h15(TaskSuggestionReview, {
+          suggestionReview: mode === "split" && !req.pendingReopen && !editing && h17(TaskSuggestionReview, {
             review: split?.review,
             req,
             t,
@@ -4037,10 +4619,10 @@ ${detail.trim()}` : value);
             showFeedback
           })
         },
-        mode === "split" && !req.pendingReopen && !editing && h15(
-          import_react15.default.Fragment,
+        mode === "split" && !req.pendingReopen && !editing && h17(
+          import_react17.default.Fragment,
           null,
-          h15(DraftSuggestions, {
+          h17(DraftSuggestions, {
             key: split?.proposalIds?.join(",") ?? "",
             proposals: splitDrafts,
             act: actSplit,
@@ -4053,45 +4635,45 @@ ${detail.trim()}` : value);
           drafts
         )
       ),
-      h15(RequirementHistory, { req, t, onAdd: canEdit && !req.pendingReopen ? (text) => mutate("requirement/addUpdate", { root, id: req.id, text }) : void 0 })
+      h17(RequirementHistory, { req, t, onAdd: canEdit && !req.pendingReopen ? (text) => mutate("requirement/addUpdate", { root, id: req.id, text }) : void 0 })
     );
   }
   function IssueSidebar({ req, t, moveIssue, onOpenIssue, onCreateTask, busy, onSuggest, onReorderTask, onStartTask, suggestionReview, children }) {
     const locked = req.status !== "in_progress" || !!req.pendingReopen;
     const tasks = sortedTasks(req.issues);
-    return h15(
+    return h17(
       "section",
       { className: "pw-issues pw-issue-list", "aria-label": t("issues") },
-      h15(
+      h17(
         "div",
         { className: "pw-colhead" },
-        h15("strong", null, t("issues")),
-        h15("span", { className: "pw-count" }, String(tasks.length)),
-        !locked && h15(
+        h17("strong", null, t("issues")),
+        h17("span", { className: "pw-count" }, String(tasks.length)),
+        !locked && h17(
           "div",
           { className: "pw-actions", style: { marginInlineStart: "auto" } },
-          h15("button", { className: "pw-button", disabled: busy, onClick: onCreateTask }, t("newTask")),
-          onSuggest && h15("button", { id: "pw-suggest-" + req.id, className: "pw-button", disabled: busy, onClick: onSuggest }, t("aiSplit"))
+          h17("button", { className: "pw-button", disabled: busy, onClick: onCreateTask }, t("newTask")),
+          onSuggest && h17("button", { id: "pw-suggest-" + req.id, className: "pw-button", disabled: busy, onClick: onSuggest }, t("aiSplit"))
         )
       ),
       suggestionReview,
-      tasks.map((i, index) => h15(
+      tasks.map((i, index) => h17(
         "div",
         { key: i.id, className: "pw-issue" },
-        !locked && h15(
+        !locked && h17(
           "span",
           { className: "pw-order" },
-          h15("button", { className: "pw-orderbtn", disabled: busy || index === 0, "aria-label": t("moveUp"), title: t("moveUp"), onClick: () => onReorderTask(i.id, "up") }, "\u2191"),
-          h15("button", { className: "pw-orderbtn", disabled: busy || index === tasks.length - 1, "aria-label": t("moveDown"), title: t("moveDown"), onClick: () => onReorderTask(i.id, "down") }, "\u2193")
+          h17("button", { className: "pw-orderbtn", disabled: busy || index === 0, "aria-label": t("moveUp"), title: t("moveUp"), onClick: () => onReorderTask(i.id, "up") }, "\u2191"),
+          h17("button", { className: "pw-orderbtn", disabled: busy || index === tasks.length - 1, "aria-label": t("moveDown"), title: t("moveDown"), onClick: () => onReorderTask(i.id, "down") }, "\u2193")
         ),
-        h15(
+        h17(
           "button",
           { id: "pw-task-" + i.id, className: "pw-issue-title", onClick: () => onOpenIssue(i.id), title: i.title },
-          h15("span", { className: "pw-preview" }, i.title),
-          h15("span", { "aria-hidden": true }, "\u203A")
+          h17("span", { className: "pw-preview" }, i.title),
+          h17("span", { "aria-hidden": true }, "\u203A")
         ),
-        h15(IssueStatusSelect, { req, issue: i, t, moveIssue, busy }),
-        !locked && onStartTask && ["todo", "doing", "blocked"].includes(i.status) && h15(
+        h17(IssueStatusSelect, { req, issue: i, t, moveIssue, busy }),
+        !locked && onStartTask && ["todo", "doing", "blocked"].includes(i.status) && h17(
           "button",
           { className: "pw-button pw-quiet pw-startbtn", disabled: busy, onClick: () => onStartTask(i.id) },
           t(i.status === "todo" ? "startTask" : "demoContinue")
@@ -4102,12 +4684,12 @@ ${detail.trim()}` : value);
   }
 
   // client-src/detail/task-detail.js
-  var import_react17 = __toESM(__require("react"), 1);
+  var import_react19 = __toESM(__require("react"), 1);
 
   // client-src/detail/acceptance-assist.js
-  var import_react16 = __toESM(__require("react"), 1);
-  var h16 = import_react16.default.createElement;
-  var { useEffect: useEffect8, useRef: useRef6, useState: useState9 } = import_react16.default;
+  var import_react18 = __toESM(__require("react"), 1);
+  var h18 = import_react18.default.createElement;
+  var { useEffect: useEffect10, useRef: useRef7, useState: useState11 } = import_react18.default;
   var acceptanceAssistLocale = {
     zh: {
       acceptanceHelp: "\u4EFB\u52A1\u9A8C\u6536\u8F85\u52A9",
@@ -4217,15 +4799,15 @@ ${detail.trim()}` : value);
     for (const listener of entry.listeners) listener();
   };
   function AcceptanceAssist({ req, issue, root, sessionId, t, busy = false, onRunningChange, memory, compact = false }) {
-    const localMemory = useRef6({});
+    const localMemory = useRef7({});
     const cache = (memory ?? localMemory.current).acceptanceAssist ??= {};
     const entry = cache[JSON.stringify([root, req.id, issue.id])] ??= { pending: "", results: {}, error: null, listeners: /* @__PURE__ */ new Set() };
-    const [, redraw] = useState9(0);
-    const runningCallback = useRef6(onRunningChange);
+    const [, redraw] = useState11(0);
+    const runningCallback = useRef7(onRunningChange);
     const context = JSON.stringify([req.hash, req.status, issue.hash, issue.status]);
     const reviewable = req.status === "in_progress" && !req.pendingReopen && issue.status === "in_review";
     runningCallback.current = onRunningChange;
-    useEffect8(() => {
+    useEffect10(() => {
       const listener = () => {
         redraw((n) => n + 1);
         runningCallback.current?.(!!entry.pending);
@@ -4261,141 +4843,141 @@ ${detail.trim()}` : value);
       const result = entry.results[kind];
       if (!result) return null;
       const stale = !!result.stale || !!result.outdated || result.context !== context || !!(sessionId && result.sessionId && sessionId !== result.sessionId);
-      const staleNotice = stale && h16("p", { className: "pw-note", role: "status" }, t(result.outdated ? "acceptanceRetryStale" : "acceptanceStale"));
+      const staleNotice = stale && h18("p", { className: "pw-note", role: "status" }, t(result.outdated ? "acceptanceRetryStale" : "acceptanceStale"));
       if (kind === "guide") {
-        if (result.guideStatus !== "steps") return h16(
-          import_react16.default.Fragment,
+        if (result.guideStatus !== "steps") return h18(
+          import_react18.default.Fragment,
           null,
           staleNotice,
-          h16("p", { className: "pw-note", role: "status" }, t(result.guideStatus === "not_needed" ? "acceptanceGuideNotNeeded" : "acceptanceGuideUnknown"))
+          h18("p", { className: "pw-note", role: "status" }, t(result.guideStatus === "not_needed" ? "acceptanceGuideNotNeeded" : "acceptanceGuideUnknown"))
         );
         const sources = result.sources ?? [];
-        return h16(
+        return h18(
           "section",
           { className: "pw-reading-block pw-assist-report", "aria-label": t("acceptanceGuideSteps") },
           staleNotice,
-          h16("h4", null, t("acceptanceGuideSteps")),
-          h16("ol", { className: "pw-reading-list pw-guide-steps" }, result.steps.map(({ action, expected }, index) => h16(
+          h18("h4", null, t("acceptanceGuideSteps")),
+          h18("ol", { className: "pw-reading-list pw-guide-steps" }, result.steps.map(({ action, expected }, index) => h18(
             "li",
             { key: index },
-            h16("span", null, action),
-            h16("p", { className: "pw-note" }, t("acceptanceGuideExpected"), " \xB7 ", expected)
+            h18("span", null, action),
+            h18("p", { className: "pw-note" }, t("acceptanceGuideExpected"), " \xB7 ", expected)
           ))),
-          sources.length < result.sourcesRequested && h16("p", { className: "pw-note" }, t("acceptanceSourcesInsufficient")),
-          h16(
+          sources.length < result.sourcesRequested && h18("p", { className: "pw-note" }, t("acceptanceSourcesInsufficient")),
+          h18(
             "details",
             { className: "pw-disclosure pw-assist-disclosure" },
-            h16("summary", null, t("acceptanceSources")),
-            sources.map((source, index) => h16(
+            h18("summary", null, t("acceptanceSources")),
+            sources.map((source, index) => h18(
               "div",
               { key: index, className: "pw-reading-block" },
-              h16("strong", null, source.path),
-              h16("p", { className: "pw-text" }, source.quote)
+              h18("strong", null, source.path),
+              h18("p", { className: "pw-text" }, source.quote)
             )),
-            h16("p", { className: "pw-note" }, t("acceptanceSourcesScope")),
-            h16("p", { className: "pw-note" }, t("acceptanceSourceLimit")),
-            result.childId && h16("p", { className: "pw-note" }, t("acceptanceSession"), "\uFF1A", result.childId)
+            h18("p", { className: "pw-note" }, t("acceptanceSourcesScope")),
+            h18("p", { className: "pw-note" }, t("acceptanceSourceLimit")),
+            result.childId && h18("p", { className: "pw-note" }, t("acceptanceSession"), "\uFF1A", result.childId)
           )
         );
       }
       const commands = Array.isArray(result.commands) ? result.commands : [];
-      const report = h16(
+      const report = h18(
         "section",
         { className: "pw-reading-block pw-assist-report", "aria-label": t("acceptanceVerify") },
         !compact && staleNotice,
-        h16("p", { className: "pw-note" }, t("acceptanceSourceLimit")),
-        h16("h4", null, t("acceptanceReport")),
-        h16("p", { className: "pw-text", style: { whiteSpace: "pre-wrap" } }, typeof result.report === "string" && result.report.trim() ? result.report : t("acceptanceNoReport")),
-        result.childId && h16("p", { className: "pw-note" }, t("acceptanceSession"), "\uFF1A", result.childId),
-        h16("h4", null, t("acceptanceCommands")),
-        result.commandsUnavailable && h16("p", { className: "pw-note" }, t("acceptanceCommandsUnavailable")),
-        !result.commandsUnavailable && !commands.length && h16("p", { className: "pw-note" }, t("acceptanceNoCommands")),
-        commands.length > 0 && h16("p", { className: "pw-note" }, t("acceptanceOutputLimit")),
-        commands.map((command, index) => h16(
+        h18("p", { className: "pw-note" }, t("acceptanceSourceLimit")),
+        h18("h4", null, t("acceptanceReport")),
+        h18("p", { className: "pw-text", style: { whiteSpace: "pre-wrap" } }, typeof result.report === "string" && result.report.trim() ? result.report : t("acceptanceNoReport")),
+        result.childId && h18("p", { className: "pw-note" }, t("acceptanceSession"), "\uFF1A", result.childId),
+        h18("h4", null, t("acceptanceCommands")),
+        result.commandsUnavailable && h18("p", { className: "pw-note" }, t("acceptanceCommandsUnavailable")),
+        !result.commandsUnavailable && !commands.length && h18("p", { className: "pw-note" }, t("acceptanceNoCommands")),
+        commands.length > 0 && h18("p", { className: "pw-note" }, t("acceptanceOutputLimit")),
+        commands.map((command, index) => h18(
           "div",
           { key: index, className: "pw-reading-block" },
-          h16("strong", null, t("acceptanceCommand")),
-          h16("pre", { className: "pw-text", style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, command?.command || t("acceptanceUnknown")),
-          h16("strong", null, t("acceptanceOutcome")),
-          h16("p", { className: "pw-text" }, outcomeText(command?.outcome, t)),
-          h16("strong", null, t("acceptanceTestConclusion")),
-          h16(
+          h18("strong", null, t("acceptanceCommand")),
+          h18("pre", { className: "pw-text", style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, command?.command || t("acceptanceUnknown")),
+          h18("strong", null, t("acceptanceOutcome")),
+          h18("p", { className: "pw-text" }, outcomeText(command?.outcome, t)),
+          h18("strong", null, t("acceptanceTestConclusion")),
+          h18(
             "p",
             { className: "pw-text" },
             t(command?.testConclusion === "passed" ? "acceptanceTestPassed" : command?.testConclusion === "failed" ? "acceptanceTestFailed" : "acceptanceTestUnknown")
           ),
-          command?.testSummary && h16(import_react16.default.Fragment, null, h16("strong", null, t("acceptanceTestSummary")), h16("p", { className: "pw-text" }, command.testSummary)),
-          h16("strong", null, t("acceptanceOutput")),
-          h16("pre", { className: "pw-text", style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, command?.output || t("acceptanceNoOutput"))
+          command?.testSummary && h18(import_react18.default.Fragment, null, h18("strong", null, t("acceptanceTestSummary")), h18("p", { className: "pw-text" }, command.testSummary)),
+          h18("strong", null, t("acceptanceOutput")),
+          h18("pre", { className: "pw-text", style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, command?.output || t("acceptanceNoOutput"))
         ))
       );
       if (!compact) return report;
       const failed = commands.some((command) => command?.testConclusion === "failed");
-      return h16(
-        import_react16.default.Fragment,
+      return h18(
+        import_react18.default.Fragment,
         null,
-        h16(
+        h18(
           "details",
           { className: "pw-disclosure pw-assist-disclosure" },
-          h16("summary", null, t("acceptanceCheckReport")),
+          h18("summary", null, t("acceptanceCheckReport")),
           report
         ),
         staleNotice,
-        failed && h16("p", { className: "pw-error", role: "status" }, t("acceptanceTestFailed"))
+        failed && h18("p", { className: "pw-error", role: "status" }, t("acceptanceTestFailed"))
       );
     };
     if (!reviewable) return null;
-    const button = (kind, label) => h16("button", {
+    const button2 = (kind, label) => h18("button", {
       type: "button",
       className: "pw-button",
       disabled: busy || !!entry.pending,
       onClick: () => run(kind)
     }, t(label));
-    const help = (label) => h16("p", { className: "pw-note" }, t(label));
-    return h16(
+    const help = (label) => h18("p", { className: "pw-note" }, t(label));
+    return h18(
       "section",
       { className: "pw-reading-block pw-acceptance-assist", "aria-label": t("acceptanceHelp"), "aria-busy": !!entry.pending },
-      h16("h3", { className: "pw-reading-label" }, t("acceptanceHelp")),
-      compact ? h16(
-        import_react16.default.Fragment,
+      h18("h3", { className: "pw-reading-label" }, t("acceptanceHelp")),
+      compact ? h18(
+        import_react18.default.Fragment,
         null,
-        h16("div", { className: "pw-assist-actions" }, button("verify", "acceptanceVerify"), button("guide", "acceptanceGuide")),
+        h18("div", { className: "pw-assist-actions" }, button2("verify", "acceptanceVerify"), button2("guide", "acceptanceGuide")),
         help("acceptanceRunHint"),
-        h16(
+        h18(
           "details",
           { className: "pw-disclosure pw-assist-disclosure" },
-          h16("summary", null, t("acceptanceHelpDetails")),
-          h16("div", { className: "pw-assist-report" }, help("acceptanceVerifyNotice"), help("acceptanceGuideNotice"), help("acceptanceStayOpen"))
+          h18("summary", null, t("acceptanceHelpDetails")),
+          h18("div", { className: "pw-assist-report" }, help("acceptanceVerifyNotice"), help("acceptanceGuideNotice"), help("acceptanceStayOpen"))
         )
-      ) : h16(
-        import_react16.default.Fragment,
+      ) : h18(
+        import_react18.default.Fragment,
         null,
         help("acceptanceStayOpen"),
         help("acceptanceVerifyNotice"),
-        button("verify", "acceptanceVerify"),
+        button2("verify", "acceptanceVerify"),
         help("acceptanceGuideNotice"),
-        button("guide", "acceptanceGuide")
+        button2("guide", "acceptanceGuide")
       ),
-      entry.pending && h16("p", { className: "pw-note", role: "status" }, t("acceptanceHelpRunning")),
-      entry.error && h16("p", { className: "pw-error", role: "alert" }, t("acceptanceHelpError"), entry.error.code ? ` \xB7 ${entry.error.code}` : "", entry.error.message ? `\uFF1A${entry.error.message}` : ""),
+      entry.pending && h18("p", { className: "pw-note", role: "status" }, t("acceptanceHelpRunning")),
+      entry.error && h18("p", { className: "pw-error", role: "alert" }, t("acceptanceHelpError"), entry.error.code ? ` \xB7 ${entry.error.code}` : "", entry.error.message ? `\uFF1A${entry.error.message}` : ""),
       renderResult("verify"),
       renderResult("guide")
     );
   }
 
   // client-src/detail/task-detail.js
-  var h17 = import_react17.default.createElement;
-  var { useEffect: useEffect9, useState: useState10 } = import_react17.default;
+  var h19 = import_react19.default.createElement;
+  var { useEffect: useEffect11, useState: useState12 } = import_react19.default;
   function IssueDetail({ issue, req, t, root, mutate, openWikiPage, openTask, onStartTask, onMoveIssue, projectKey, rootRef, onDirty, busy, uiMemory: uiMemory2, editFocus, runFact }) {
     const form = useWorkItemDraft(issueDraftKey(projectKey, req.id, issue.id), issue, issueDraftFrom, onDirty, uiMemory2);
-    const [formError, setFormError] = useState10(null);
-    const [formFocus, setFormFocus] = useState10("title");
-    const [recording, setRecording] = useState10(false);
-    const [supplementing, setSupplementing] = useState10(false);
-    const [supplement, setSupplement] = useState10("");
-    const [notice, setNotice] = useState10("");
-    const [assistRunning, setAssistRunning] = useState10(false);
-    useEffect9(() => {
+    const [formError, setFormError] = useState12(null);
+    const [formFocus, setFormFocus] = useState12("title");
+    const [recording, setRecording] = useState12(false);
+    const [supplementing, setSupplementing] = useState12(false);
+    const [supplement, setSupplement] = useState12("");
+    const [notice, setNotice] = useState12("");
+    const [assistRunning, setAssistRunning] = useState12(false);
+    useEffect11(() => {
       if (editFocus && !["done", "cancelled"].includes(issue.status)) {
         setFormFocus(editFocus);
         form.begin();
@@ -4449,71 +5031,71 @@ ${detail.trim()}` : value);
         setNotice(t("supplementSaved"));
       }
     };
-    const actions = h17(
+    const actions = h19(
       "div",
       { className: "pw-actions" },
-      reviewing && h17("button", {
+      reviewing && h19("button", {
         className: "pw-button primary",
         disabled: busy || runLocked || assistRunning || !hasResult,
         onClick: () => onMoveIssue("done")
       }, t("demoConfirm")),
-      reviewing && h17("button", {
+      reviewing && h19("button", {
         className: "pw-button",
         disabled: busy || runLocked || assistRunning,
         onClick: () => onMoveIssue("todo")
       }, t("reviseTask")),
-      !terminal && !inactive && ["todo", "doing", "blocked"].includes(issue.status) && h17(
+      !terminal && !inactive && ["todo", "doing", "blocked"].includes(issue.status) && h19(
         "button",
         { className: "pw-button primary", disabled: busy || runLocked, title: runLocked ? t("runRunning") : void 0, onClick: startWork },
         t(missing.length ? "completeTaskInfo" : issue.status === "todo" ? "startTask" : "demoContinue")
       ),
-      issue.status === "blocked" && !inactive && h17("button", { className: "pw-button", disabled: busy, onClick: () => setSupplementing((v) => !v) }, t("supplement")),
-      h17("button", { className: "pw-button", disabled: busy, onClick: () => openTask(issue.id) }, t("openTaskSession")),
-      mayRecord && hasResult && h17("button", {
+      issue.status === "blocked" && !inactive && h19("button", { className: "pw-button", disabled: busy, onClick: () => setSupplementing((v) => !v) }, t("supplement")),
+      h19("button", { className: "pw-button", disabled: busy, onClick: () => openTask(issue.id) }, t("openTaskSession")),
+      mayRecord && hasResult && h19("button", {
         className: "pw-button",
         disabled: busy || runLocked,
         onClick: () => mutate("issue/move", { root, reqId: req.id, id: issue.id, to: "in_review", fileHash: issue.hash })
       }, t("submitTaskAcceptance")),
-      mayRecord && h17("button", { className: "pw-button pw-quiet", disabled: busy, onClick: () => setRecording(true) }, t("recordTaskResult"))
+      mayRecord && h19("button", { className: "pw-button pw-quiet", disabled: busy, onClick: () => setRecording(true) }, t("recordTaskResult"))
     );
-    return h17(
+    return h19(
       "section",
       { className: "pw-subpage pw-issue-page" + (editing ? "" : " pw-read-card"), "aria-label": t("issueDetail") },
-      h17(
+      h19(
         "header",
         { className: "pw-subpage-head" },
-        h17(
+        h19(
           "div",
           { className: "pw-read-title" },
-          h17("h2", null, issue.title),
-          h17("span", { className: "pw-count pw-read-status", "data-status": issue.status }, t("st_" + issue.status))
+          h19("h2", null, issue.title),
+          h19("span", { className: "pw-count pw-read-status", "data-status": issue.status }, t("st_" + issue.status))
         ),
-        !editing && !terminal && h17("button", { className: "pw-button", onClick: () => begin() }, t("edit"))
+        !editing && !terminal && h19("button", { className: "pw-button", onClick: () => begin() }, t("edit"))
       ),
-      notice && h17("p", { className: "pw-note", role: "status" }, notice),
-      runLocked && !editing && h17("p", { className: "pw-note", role: "status" }, t("runRunning")),
-      editing ? h17(TaskForm, { form: { ...form, change: (...args) => {
+      notice && h19("p", { className: "pw-note", role: "status" }, notice),
+      runLocked && !editing && h19("p", { className: "pw-note", role: "status" }, t("runRunning")),
+      editing ? h19(TaskForm, { form: { ...form, change: (...args) => {
         setFormError(null);
         form.change(...args);
-      } }, t, busy, focus: formFocus, error: formError, onSave: save, onCancel: form.finish }) : h17(
+      } }, t, busy, focus: formFocus, error: formError, onSave: save, onCancel: form.finish }) : h19(
         TaskReading,
         { task: issue, since: req.deliveryStartedAt, t, openWikiPage, onAdd: terminal || inactive ? void 0 : (text) => mutate("issue/addUpdate", { root, reqId: req.id, id: issue.id, text }) },
-        inactive && h17("p", { className: "pw-note" }, t(req.pendingReopen ? "errReopenPending" : "errNotActive")),
-        reviewing && h17(AcceptanceAssist, { req, issue, root, t, busy: busy || runLocked, memory: uiMemory2, onRunningChange: setAssistRunning }),
+        inactive && h19("p", { className: "pw-note" }, t(req.pendingReopen ? "errReopenPending" : "errNotActive")),
+        reviewing && h19(AcceptanceAssist, { req, issue, root, t, busy: busy || runLocked, memory: uiMemory2, onRunningChange: setAssistRunning }),
         actions,
-        supplementing && h17(
+        supplementing && h19(
           "form",
           { className: "pw-progress-form", onSubmit: saveSupplement },
-          h17("textarea", { className: "pw-textarea", autoFocus: true, rows: 3, "aria-label": t("supplement"), placeholder: t("supplementPlaceholder"), value: supplement, onChange: (e) => setSupplement(e.target.value) }),
-          h17(
+          h19("textarea", { className: "pw-textarea", autoFocus: true, rows: 3, "aria-label": t("supplement"), placeholder: t("supplementPlaceholder"), value: supplement, onChange: (e) => setSupplement(e.target.value) }),
+          h19(
             "div",
             { className: "pw-actions" },
-            h17("button", { type: "submit", className: "pw-button", disabled: busy || !supplement.trim() }, t("saveSupplement")),
-            h17("button", { type: "button", className: "pw-button pw-quiet", disabled: busy, onClick: () => setSupplementing(false) }, t("cancel"))
+            h19("button", { type: "submit", className: "pw-button", disabled: busy || !supplement.trim() }, t("saveSupplement")),
+            h19("button", { type: "button", className: "pw-button pw-quiet", disabled: busy, onClick: () => setSupplementing(false) }, t("cancel"))
           )
         )
       ),
-      recording && h17(TaskResultForm, {
+      recording && h19(TaskResultForm, {
         task: issue,
         since: req.deliveryStartedAt,
         t,
@@ -4525,82 +5107,82 @@ ${detail.trim()}` : value);
   }
 
   // client-src/detail/acceptance-detail.js
-  var import_react18 = __toESM(__require("react"), 1);
-  var h18 = import_react18.default.createElement;
+  var import_react20 = __toESM(__require("react"), 1);
+  var h20 = import_react20.default.createElement;
   function DeliveryDetail({ req, t, onMove, busy = false }) {
     const returned = reviewRecords(req.reviews).filter((r) => r.kind === "acceptance" && r.decision === "returned");
     const recovering = !!req.pendingReopen;
     const pending = req.status === "pending";
-    return h18(
+    return h20(
       "section",
       { className: "pw-subpage pw-read-card", "aria-label": t("deliveryDetail") },
-      h18(
+      h20(
         "header",
         { className: "pw-subpage-head" },
-        h18(
+        h20(
           "div",
           { className: "pw-read-title" },
-          h18("h2", null, req.title),
-          h18("span", { className: "pw-count pw-read-status", "data-status": req.status }, t("col_" + req.status))
+          h20("h2", null, req.title),
+          h20("span", { className: "pw-count pw-read-status", "data-status": req.status }, t("col_" + req.status))
         ),
-        h18(
+        h20(
           "div",
           { className: "pw-actions" },
-          recovering && h18("button", { className: "pw-button primary", disabled: busy, onClick: () => onMove(req, req.status === "completed" ? "in_progress" : "completed") }, t("resumeReopen")),
-          !recovering && pending && h18("button", { className: "pw-button primary", disabled: busy, onClick: () => onMove(req, "completed") }, t("acceptRequirement")),
-          !recovering && pending && h18("button", { className: "pw-button", disabled: busy, onClick: () => onMove(req, "in_progress") }, t("sendBack"))
+          recovering && h20("button", { className: "pw-button primary", disabled: busy, onClick: () => onMove(req, req.status === "completed" ? "in_progress" : "completed") }, t("resumeReopen")),
+          !recovering && pending && h20("button", { className: "pw-button primary", disabled: busy, onClick: () => onMove(req, "completed") }, t("acceptRequirement")),
+          !recovering && pending && h20("button", { className: "pw-button", disabled: busy, onClick: () => onMove(req, "in_progress") }, t("sendBack"))
         )
       ),
-      h18(DeliveryResult, { req, t, userFacing: true }),
-      returned.length > 0 && h18(
+      h20(DeliveryResult, { req, t, userFacing: true }),
+      returned.length > 0 && h20(
         Disclosure,
         { label: t("previousReturns") },
-        returned.map((r, i) => h18(
+        returned.map((r, i) => h20(
           "div",
           { key: r.marker || i, className: "pw-reading-block" },
-          r.at && h18("span", { className: "pw-count" }, String(r.at).replace("T", " ").slice(0, 16)),
-          h18(ReadingText, { label: t("reviewOpinion"), value: r.opinion })
+          r.at && h20("span", { className: "pw-count" }, String(r.at).replace("T", " ").slice(0, 16)),
+          h20(ReadingText, { label: t("reviewOpinion"), value: r.opinion })
         ))
       )
     );
   }
   function RecordDetail({ record, req, t, onOpenRequirement }) {
-    return h18(
+    return h20(
       "section",
       { className: "pw-subpage pw-read-card", "aria-label": t("recordDetail") },
-      h18(
+      h20(
         "header",
         { className: "pw-subpage-head" },
-        h18(
+        h20(
           "div",
           { className: "pw-read-title" },
-          h18("h2", null, record.reqTitle),
-          h18(
+          h20("h2", null, record.reqTitle),
+          h20(
             "span",
             { className: "pw-count pw-read-status", "data-status": record.decision === "approved" ? "completed" : "in_progress" },
             t(record.decision === "approved" ? "deliveryAccepted" : "deliveryReturned")
           )
         ),
-        h18(
+        h20(
           "div",
           { className: "pw-actions" },
-          req ? h18("button", { className: "pw-button", onClick: () => onOpenRequirement(req) }, t("jumpToRequirement")) : h18("span", { className: "pw-note" }, t("errMissing"))
+          req ? h20("button", { className: "pw-button", onClick: () => onOpenRequirement(req) }, t("jumpToRequirement")) : h20("span", { className: "pw-note" }, t("errMissing"))
         )
       ),
-      h18(
+      h20(
         "div",
         { className: "pw-reading" },
-        record.at && h18("p", { className: "pw-note" }, t("decisionAt"), " ", String(record.at).replace("T", " ").slice(0, 16)),
-        h18(ReadingText, { label: t("reviewOpinion"), value: record.opinion || t("noOpinion") }),
-        h18(ReadingText, { label: t("demoDeliverySummary"), value: record.summary || t("missingDeliverySummary") }),
-        h18("p", { className: "pw-note" }, t("recordReadonlyHint"))
+        record.at && h20("p", { className: "pw-note" }, t("decisionAt"), " ", String(record.at).replace("T", " ").slice(0, 16)),
+        h20(ReadingText, { label: t("reviewOpinion"), value: record.opinion || t("noOpinion") }),
+        h20(ReadingText, { label: t("demoDeliverySummary"), value: record.summary || t("missingDeliverySummary") }),
+        h20("p", { className: "pw-note" }, t("recordReadonlyHint"))
       )
     );
   }
 
   // client-src/shell/main-shell.js
-  var h19 = import_react19.default.createElement;
-  var { useCallback: useCallback4, useEffect: useEffect10, useRef: useRef7, useState: useState11 } = import_react19.default;
+  var h21 = import_react21.default.createElement;
+  var { useCallback: useCallback4, useEffect: useEffect12, useRef: useRef8, useState: useState13 } = import_react21.default;
   var EMPTY_WORKSPACES = [];
   var useNoWorkspaces = (selector) => selector({ items: EMPTY_WORKSPACES });
   var useNoSessionStatus = () => void 0;
@@ -4626,10 +5208,10 @@ ${detail.trim()}` : value);
   ]);
   var diagListView = (diags, t) => {
     const labels = new Set(diags.map((d) => diagnosticLabels.get(d.code) ?? "diagInconsistent"));
-    return h19("ul", { className: "pw-diaglist" }, Array.from(labels, (label) => h19("li", { key: label }, t(label))));
+    return h21("ul", { className: "pw-diaglist" }, Array.from(labels, (label) => h21("li", { key: label }, t(label))));
   };
   var PAGE_COMPONENTS = { home: HomePage, pool: PoolPage, review: ReviewPage, ready: ReadyPage, dev: DevPage, blocked: BlockedPage, board: BoardPage, pending: PendingPage, records: RecordsPage };
-  var pageLabel = (page) => ({ home: "navHome", pool: "navPool", review: "navReview", ready: "navReady", dev: "navDev", blocked: "navBlocked", board: "navBoard", pending: "navPending", records: "navRecords", wiki: "navWiki", arch: "navArch", sync: "viewSync" })[page] ?? "navHome";
+  var pageLabel = (page) => ({ home: "navHome", pool: "navPool", review: "navReview", ready: "navReady", dev: "navDev", blocked: "navBlocked", board: "navBoard", pending: "navPending", records: "navRecords", wiki: "navWiki", arch: "navArch", prds: "navPrds", sync: "viewSync" })[page] ?? "navHome";
   function MainShell(props) {
     const { t, useCurrentSession, useSessions, useWorkspaces, useSessionStatus, uiMemory: uiMemory2, css: css2, showConversation, enterSession, renderFactorySlot } = props;
     const sessionId = useCurrentSession((v) => v);
@@ -4637,10 +5219,10 @@ ${detail.trim()}` : value);
     const sessionRoot = session?.cwd;
     const sessionIndex = useSessions((s) => s?.byId ?? {});
     const sessionStatus = (useSessionStatus ?? useNoSessionStatus)((s) => s);
-    const sessionStatusRef = useRef7(sessionStatus);
+    const sessionStatusRef = useRef8(sessionStatus);
     sessionStatusRef.current = sessionStatus;
-    const mountedRef = useRef7(true);
-    useEffect10(() => {
+    const mountedRef = useRef8(true);
+    useEffect12(() => {
       mountedRef.current = true;
       return () => {
         mountedRef.current = false;
@@ -4649,57 +5231,57 @@ ${detail.trim()}` : value);
     const useWorkspaceList = useWorkspaces ?? useNoWorkspaces;
     const workspaces = useWorkspaceList((s) => s?.items ?? EMPTY_WORKSPACES) ?? EMPTY_WORKSPACES;
     const workspaceOptions = useWorkspaces ? workspaces : foldersFromSessions(sessionIndex);
-    const [picked, setPicked] = useState11(() => uiMemory2.picked ?? null);
+    const [picked, setPicked] = useState13(() => uiMemory2.picked ?? null);
     const pickedWorkspace = picked?.id ? workspaces.find((w) => w.workspaceId === picked.id) : void 0;
     const removedWorkspace = !!picked?.id && !pickedWorkspace;
     const root = picked?.id ? pickedWorkspace?.path : picked?.path;
     const currentWorkspace = pickedWorkspace;
     const wsTitle = currentWorkspace?.title || baseName2(root) || t("title");
     const projectKey = picked?.id ? "id:" + picked.id : root ? "path:" + root : "";
-    const prevKey = useRef7(projectKey);
+    const prevKey = useRef8(projectKey);
     const keyChanged = prevKey.current !== projectKey;
     prevKey.current = projectKey;
-    const rootRef = useRef7(root);
+    const rootRef = useRef8(root);
     const rootChanged = rootRef.current !== root;
     rootRef.current = root;
-    const [nav, setNav] = useState11(() => normalizeViewState(uiMemory2.views[projectKey]));
-    const navRef = useRef7(nav);
+    const [nav, setNav] = useState13(() => normalizeViewState(uiMemory2.views[projectKey]));
+    const navRef = useRef8(nav);
     navRef.current = nav;
-    const lastWritten = useRef7(uiMemory2.views[projectKey]);
-    const [data, setData] = useState11(null);
-    const [error, setError] = useState11("");
-    const [notice, setNotice] = useState11("");
-    const [home, setHome] = useState11(null);
-    const [homeError, setHomeError] = useState11(null);
-    const [runFacts, setRunFacts] = useState11(null);
-    const [runError, setRunError] = useState11(null);
-    const runAuthSnapshot = useRef7(null);
-    const [blocked, setBlocked] = useState11({ proposals: null, deliveryFailed: [] });
-    const [modal, setModal] = useState11(null);
-    const modalRef = useRef7(modal);
+    const lastWritten = useRef8(uiMemory2.views[projectKey]);
+    const [data, setData] = useState13(null);
+    const [error, setError] = useState13("");
+    const [notice, setNotice] = useState13("");
+    const [home, setHome] = useState13(null);
+    const [homeError, setHomeError] = useState13(null);
+    const [runFacts, setRunFacts] = useState13(null);
+    const [runError, setRunError] = useState13(null);
+    const runAuthSnapshot = useRef8(null);
+    const [blocked, setBlocked] = useState13({ proposals: null, deliveryFailed: [] });
+    const [modal, setModal] = useState13(null);
+    const modalRef = useRef8(modal);
     modalRef.current = modal;
-    const [saving, setSaving] = useState11(false);
+    const [saving, setSaving] = useState13(false);
     const reorderMemory = uiMemory2.reorders ??= {};
-    const [, setReorderRevision] = useState11(0);
+    const [, setReorderRevision] = useState13(0);
     const pendingReorder = reorderMemory[projectKey];
-    const [focusTarget, setFocusTarget] = useState11("");
-    const [editFocus, setEditFocus] = useState11(null);
-    const [undo, setUndo] = useState11(null);
-    const [git, setGit] = useState11(null);
-    const [wsMenu, setWsMenu] = useState11(false);
-    const wsAnchor = useRef7(null);
-    const [newDraft, setNewDraft] = useState11(() => uiMemory2.newRequirements[projectKey] ?? emptyRequirementDraft);
-    const [detailDirty, setDetailDirty] = useState11(false);
-    const listSeq = useRef7(0);
-    const gitSeq = useRef7(0);
-    const homeSeq = useRef7(0);
-    const blockedSeq = useRef7(0);
-    const runSeq = useRef7(0);
-    const runFactsRef = useRef7(null);
+    const [focusTarget, setFocusTarget] = useState13("");
+    const [editFocus, setEditFocus] = useState13(null);
+    const [undo, setUndo] = useState13(null);
+    const [git, setGit] = useState13(null);
+    const [wsMenu, setWsMenu] = useState13(false);
+    const wsAnchor = useRef8(null);
+    const [newDraft, setNewDraft] = useState13(() => uiMemory2.newRequirements[projectKey] ?? emptyRequirementDraft);
+    const [detailDirty, setDetailDirty] = useState13(false);
+    const listSeq = useRef8(0);
+    const gitSeq = useRef8(0);
+    const homeSeq = useRef8(0);
+    const blockedSeq = useRef8(0);
+    const runSeq = useRef8(0);
+    const runFactsRef = useRef8(null);
     if (keyChanged || rootChanged) runFactsRef.current = null;
-    const homeStamp = useRef7(null);
-    const homeAuthSnapshot = useRef7(null);
-    const dataRef = useRef7(data);
+    const homeStamp = useRef8(null);
+    const homeAuthSnapshot = useRef8(null);
+    const dataRef = useRef8(data);
     dataRef.current = data;
     const initialized = !!(data && data.project);
     const refresh = useCallback4(async () => {
@@ -4825,7 +5407,7 @@ ${detail.trim()}` : value);
       }
       setBlocked((prev) => ({ ...prev, deliveryFailed: failed }));
     }, [root]);
-    useEffect10(() => {
+    useEffect12(() => {
       if (keyChanged || rootChanged) {
         setData(null);
         setError("");
@@ -4852,7 +5434,7 @@ ${detail.trim()}` : value);
       refreshGit();
     }, [projectKey, refresh, refreshGit]);
     const page = nav.page;
-    useEffect10(() => {
+    useEffect12(() => {
       if (!root) return;
       if (page === "home") refreshHome();
       else if (page === "blocked") {
@@ -4860,19 +5442,19 @@ ${detail.trim()}` : value);
         refreshBlocked();
       } else refresh();
     }, [page, projectKey, root, initialized]);
-    useEffect10(() => {
+    useEffect12(() => {
       if (!root || !initialized) return;
       if (page === "home") refreshHome();
       else if (page === "blocked") refreshBlocked();
     }, [authStatusRevision]);
-    useEffect10(() => {
+    useEffect12(() => {
       if (!root || !initialized || page !== "home") return;
       const timer = setInterval(() => {
         if (!document.hidden) refreshHome();
       }, 1e4);
       return () => clearInterval(timer);
     }, [root, initialized, page, refreshHome]);
-    useEffect10(() => {
+    useEffect12(() => {
       const onVisibility = () => {
         if (document.hidden || !rootRef.current) return;
         refresh();
@@ -4882,7 +5464,7 @@ ${detail.trim()}` : value);
       document.addEventListener("visibilitychange", onVisibility);
       return () => document.removeEventListener("visibilitychange", onVisibility);
     }, [refresh, refreshHome, refreshBlocked]);
-    useEffect10(() => {
+    useEffect12(() => {
       const changed = () => {
         setReorderRevision((n) => n + 1);
         refresh();
@@ -4890,25 +5472,25 @@ ${detail.trim()}` : value);
       window.addEventListener("pw-reorder-changed", changed);
       return () => window.removeEventListener("pw-reorder-changed", changed);
     }, [refresh]);
-    useEffect10(() => {
+    useEffect12(() => {
       if (!projectKey || keyChanged || rootChanged) return;
       uiMemory2.views[projectKey] = nav;
       lastWritten.current = nav;
       uiMemory2.newRequirements[projectKey] = newDraft;
       uiMemory2.picked = picked ? { id: picked.id, path: root } : null;
     }, [projectKey, nav, newDraft, picked, root, keyChanged, rootChanged]);
-    useEffect10(() => {
+    useEffect12(() => {
       const external = uiMemory2.views[projectKey];
       if (external && external !== navRef.current && external !== lastWritten.current) {
         lastWritten.current = external;
         setNav(normalizeViewState(external));
       }
     }, [uiMemory2.views[projectKey], projectKey]);
-    useEffect10(() => {
+    useEffect12(() => {
       const ext = uiMemory2.picked;
       if (ext && (ext.id !== picked?.id || ext.path !== picked?.path)) setPicked(ext);
     }, [uiMemory2.picked]);
-    useEffect10(() => {
+    useEffect12(() => {
       if (!wsMenu) return;
       const close = () => setWsMenu(false);
       const onKey = (e) => {
@@ -4921,7 +5503,7 @@ ${detail.trim()}` : value);
         window.removeEventListener("keydown", onKey);
       };
     }, [wsMenu]);
-    useEffect10(() => {
+    useEffect12(() => {
       if (!focusTarget || keyChanged || rootChanged) return;
       document.getElementById(focusTarget)?.focus();
       setFocusTarget("");
@@ -4943,8 +5525,9 @@ ${detail.trim()}` : value);
         if (navRef.current.page === "home") await refreshHome({ skipDataRefresh: true });
         if (navRef.current.page === "blocked") await refreshBlocked();
       } else if (!inlineError) {
-        if (method === "requirement/move" || method === "issue/move") setModal({ kind: "moveError", error: res });
-        else setError(res);
+        if (method === "requirement/move" || method === "issue/move") {
+          setModal({ kind: "moveError", error: res, ...res.code === "REVIEW_PRD_REQUIRED" && { reqId: input.id } });
+        } else setError(res);
       }
       setSaving(false);
       return res;
@@ -4982,13 +5565,19 @@ ${detail.trim()}` : value);
       if (hasUnsaved) setModal({ kind: "leave", action });
       else action();
     };
-    const guardRef = useRef7(guardLeave);
+    const guardRef = useRef8(guardLeave);
     guardRef.current = guardLeave;
     const navigate = (page2) => guardLeave(() => {
       setEditFocus(null);
       writeNav({ ...navRef.current, page: page2, params: null, history: [] });
     });
     const openDetailAt = (params2, page2) => guardLeave(() => writeNav(openDetail(navRef.current, params2, page2 ?? navRef.current.page)));
+    const openPrd = (prdId) => openDetailAt({ prdId }, "prds");
+    const editPrd = (id, reqId) => setModal({ kind: "prdEditor", id, reqId });
+    const locatePrdLink = (reqId) => guardLeave(() => {
+      writeNav(openDetail(navRef.current, { reqId, issueId: null }, "pool"));
+      setFocusTarget("pw-prd-associations-" + reqId);
+    });
     const back = () => guardLeave(() => {
       const cur = navRef.current;
       if (cur.params?.issueId) setFocusTarget("pw-task-" + cur.params.issueId);
@@ -5258,7 +5847,7 @@ ${detail.trim()}` : value);
       writeNav(defaultViewState());
       setNotice(t("workbenchHint"));
     };
-    useEffect10(() => {
+    useEffect12(() => {
       const onKey = (e) => {
         if (e.key !== "Escape" || modalRef.current || wsMenu) return;
         const tag = (e.target.tagName || "").toLowerCase();
@@ -5317,10 +5906,10 @@ ${detail.trim()}` : value);
     const titles = workspaceOptions.map((w) => w.title);
     const dupTitles = new Set(titles.filter((x, i) => titles.indexOf(x) !== i));
     const isCurrentProject = (w) => picked?.id ? w.workspaceId === picked.id : w.path === root;
-    const wsDropdown = wsMenu && h19(
+    const wsDropdown = wsMenu && h21(
       "div",
       { className: "pw-ws-menu", role: "menu", "aria-label": t("switchWorkspace"), onClick: (e) => e.stopPropagation() },
-      workspaceOptions.map((w) => h19(
+      workspaceOptions.map((w) => h21(
         "button",
         {
           key: w.workspaceId,
@@ -5331,15 +5920,15 @@ ${detail.trim()}` : value);
             pickProject(w);
           }
         },
-        h19("span", { className: "pw-ws-check", "aria-hidden": true }, isCurrentProject(w) ? "\u2713" : ""),
+        h21("span", { className: "pw-ws-check", "aria-hidden": true }, isCurrentProject(w) ? "\u2713" : ""),
         w.title,
-        dupTitles.has(w.title) && h19("span", { className: "pw-count" }, w.path)
+        dupTitles.has(w.title) && h21("span", { className: "pw-count" }, w.path)
       ))
     );
-    const wsSwitch = workspaceOptions.length > 0 || picked || renderFactorySlot && useWorkspaces ? h19(
+    const wsSwitch = workspaceOptions.length > 0 || picked || renderFactorySlot && useWorkspaces ? h21(
       "div",
       { className: "pw-ws-switch", "data-window-drag-exclude": true },
-      h19("button", {
+      h21("button", {
         ref: wsAnchor,
         className: "pw-ws-button",
         title: t("switchWorkspace"),
@@ -5349,7 +5938,7 @@ ${detail.trim()}` : value);
           e.stopPropagation();
           setWsMenu((v) => !v);
         }
-      }, h19("span", { className: "pw-ws-name" }, wsTitle), h19("span", { className: "pw-ws-caret", "aria-hidden": true }, "\u25BE")),
+      }, h21("span", { className: "pw-ws-name" }, wsTitle), h21("span", { className: "pw-ws-caret", "aria-hidden": true }, "\u25BE")),
       renderFactorySlot && useWorkspaces ? renderFactorySlot("workspace.picker", {
         open: wsMenu,
         anchorRef: wsAnchor,
@@ -5360,137 +5949,153 @@ ${detail.trim()}` : value);
         },
         onClose: () => setWsMenu(false)
       }, { fallback: wsDropdown }) : wsDropdown
-    ) : h19("h1", { className: "pw-title" }, t("title"));
-    const menu = h19(
+    ) : h21("h1", { className: "pw-title" }, t("title"));
+    const menu = h21(
       "nav",
       { className: "pw-menu", "aria-label": t("title") },
-      MENU.map((entry) => entry.group ? h19(
+      MENU.map((entry) => entry.group ? h21(
         "div",
         { key: entry.group, className: "pw-menu-group" },
-        h19("span", { className: "pw-menu-grouptitle" }, t(entry.group)),
-        entry.items.map((item) => h19("button", {
+        h21("span", { className: "pw-menu-grouptitle" }, t(entry.group)),
+        entry.items.map((item) => h21("button", {
           key: item.page,
-          className: "pw-menu-item" + (page === item.page && !params ? " active" : ""),
+          className: "pw-menu-item" + (page === item.page && (!params || item.page === "prds" && params.prdId) ? " active" : ""),
           "aria-current": page === item.page ? "page" : void 0,
           onClick: () => navigate(item.page)
         }, t(item.label)))
-      ) : h19("button", {
+      ) : h21("button", {
         key: entry.page,
         className: "pw-menu-item" + (page === entry.page && !params ? " active" : ""),
         "aria-current": page === entry.page ? "page" : void 0,
         onClick: () => navigate(entry.page)
       }, t(entry.label)))
     );
-    const topBar = h19(
+    const topBar = h21(
       "div",
       { className: "pw-top", "data-window-drag": true },
       wsSwitch,
-      h19("div", { className: "pw-spacer" }),
-      initialized && h19("button", { className: "pw-button" + (page === "sync" ? " primary" : ""), onClick: () => navigate("sync") }, t("viewSync")),
-      saving && h19("span", { className: "pw-count" }, t("saving")),
-      initialized && git && (git.available ? h19(
+      h21("div", { className: "pw-spacer" }),
+      initialized && h21("button", { className: "pw-button" + (page === "sync" ? " primary" : ""), onClick: () => navigate("sync") }, t("viewSync")),
+      saving && h21("span", { className: "pw-count" }, t("saving")),
+      initialized && git && (git.available ? h21(
         "button",
         { className: "pw-button", onClick: doCommit, title: t("commit") },
         git.uncommitted > 0 ? `${t("commit")} \xB7 ${t("uncommitted").replace("{n}", String(git.uncommitted))}` : t("commit")
-      ) : h19("span", { className: "pw-count", title: t("gitUnavailable") }, t("gitUnavailable"))),
-      h19("button", { className: "pw-button", onClick: () => guardLeave(showConversation) }, t("back"))
+      ) : h21("span", { className: "pw-count", title: t("gitUnavailable") }, t("gitUnavailable"))),
+      h21("button", { className: "pw-button", onClick: () => guardLeave(showConversation) }, t("back"))
     );
-    const errorBanner = error && h19(
+    const errorBanner = error && h21(
       "div",
       { className: "pw-banner pw-error", role: "alert" },
-      h19(ErrorDetails, { error, t, showRaw: false }),
-      h19("button", { className: "pw-button", style: { marginLeft: "auto" }, onClick: refresh }, t("retryRead"))
+      h21(ErrorDetails, { error, t, showRaw: false }),
+      h21("button", { className: "pw-button", style: { marginLeft: "auto" }, onClick: refresh }, t("retryRead"))
     );
-    const frame = (content2) => h19(
+    const frame = (content2) => h21(
       "main",
       { className: "pw-page", "aria-label": t("title") },
-      h19("style", null, css2),
+      h21("style", null, css2 + prdCss),
       topBar,
-      h19("div", { className: "pw-shell-body" }, menu, h19("div", { className: "pw-content" }, content2))
+      h21("div", { className: "pw-shell-body" }, menu, h21("div", { className: "pw-content" }, content2))
     );
     if (!root) {
-      return frame(h19(
+      return frame(h21(
         "div",
         { className: "pw-init" },
-        h19("h2", null, t("chooseWorkspace")),
-        h19("p", { className: "pw-note" }, removedWorkspace ? t("workspaceRemoved") : workspaceOptions.length ? t("chooseWorkspaceHint") : t("noWorkspacesHint")),
-        !!workspaceOptions.length && h19("div", { className: "pw-workspace-list" }, workspaceOptions.map((w) => h19("button", {
+        h21("h2", null, t("chooseWorkspace")),
+        h21("p", { className: "pw-note" }, removedWorkspace ? t("workspaceRemoved") : workspaceOptions.length ? t("chooseWorkspaceHint") : t("noWorkspacesHint")),
+        !!workspaceOptions.length && h21("div", { className: "pw-workspace-list" }, workspaceOptions.map((w) => h21("button", {
           key: w.workspaceId,
           className: "pw-workspace-card",
           onClick: () => pickProject(w)
-        }, h19("strong", null, w.title), h19("span", { className: "pw-count" }, w.path))))
+        }, h21("strong", null, w.title), h21("span", { className: "pw-count" }, w.path))))
       ));
     }
     if (!data || keyChanged || rootChanged) {
-      return frame(error ? h19(
+      return frame(error ? h21(
         "div",
         { className: "pw-init" },
-        h19("h2", null, t("readFailedTitle")),
-        h19(ErrorDetails, { error, t, showRaw: false }),
-        h19("button", { className: "pw-button primary", onClick: refresh }, t("retryRead"))
-      ) : h19("div", { className: "pw-init" }, h19("p", null, t("loading"))));
+        h21("h2", null, t("readFailedTitle")),
+        h21(ErrorDetails, { error, t, showRaw: false }),
+        h21("button", { className: "pw-button primary", onClick: refresh }, t("retryRead"))
+      ) : h21("div", { className: "pw-init" }, h21("p", null, t("loading"))));
     }
     const { diags, readFailed } = classifyProject(data);
     if (readFailed) {
-      return frame(h19(
+      return frame(h21(
         "div",
         { className: "pw-init" },
-        h19("h2", null, t("readFailedTitle")),
-        h19("p", { className: "pw-note" }, t("readFailedHint")),
+        h21("h2", null, t("readFailedTitle")),
+        h21("p", { className: "pw-note" }, t("readFailedHint")),
         errorBanner,
         diagListView(diags, t),
-        h19("button", { className: "pw-button primary", onClick: refresh }, t("retryRead"))
+        h21("button", { className: "pw-button primary", onClick: refresh }, t("retryRead"))
       ));
     }
     if (!initialized) {
-      return frame(h19(
+      return frame(h21(
         "div",
         { className: "pw-init" },
-        h19("h2", null, t("initTitle")),
-        h19("p", { className: "pw-note" }, t("initBody")),
-        h19("strong", null, wsTitle),
-        h19("p", { className: "pw-note", style: { overflowWrap: "anywhere" } }, root),
+        h21("h2", null, t("initTitle")),
+        h21("p", { className: "pw-note" }, t("initBody")),
+        h21("strong", null, wsTitle),
+        h21("p", { className: "pw-note", style: { overflowWrap: "anywhere" } }, root),
         errorBanner,
-        h19("button", { className: "pw-button primary", onClick: enableProject }, t("initTitle"))
+        h21("button", { className: "pw-button primary", onClick: enableProject }, t("initTitle"))
       ));
     }
-    const breadcrumbs = h19(
+    const breadcrumbs = h21(
       "nav",
       { className: "pw-breadcrumb", "aria-label": "Breadcrumb" },
-      h19("button", { className: "pw-crumb", onClick: () => guardLeave(() => writeNav({ ...navRef.current, params: null, history: [] })) }, t(pageLabel(page))),
-      selected && h19(
-        import_react19.default.Fragment,
+      h21("button", { className: "pw-crumb", onClick: () => guardLeave(() => writeNav({ ...navRef.current, params: null, history: [] })) }, t(pageLabel(page))),
+      selected && h21(
+        import_react21.default.Fragment,
         null,
-        h19("span", { className: "pw-crumb-sep" }, "/"),
-        selectedIssue || page === "pending" && params?.reqId && !selectedRecord ? h19("button", { className: "pw-crumb", onClick: back, title: selected.title }, t(page === "pending" ? "navPending" : "backToTasks")) : h19("span", { className: "pw-crumb-current" }, selected.title)
+        h21("span", { className: "pw-crumb-sep" }, "/"),
+        selectedIssue || page === "pending" && params?.reqId && !selectedRecord ? h21("button", { className: "pw-crumb", onClick: back, title: selected.title }, t(page === "pending" ? "navPending" : "backToTasks")) : h21("span", { className: "pw-crumb-current" }, selected.title)
       ),
-      selectedIssue && h19(
-        import_react19.default.Fragment,
+      selectedIssue && h21(
+        import_react21.default.Fragment,
         null,
-        h19("span", { className: "pw-crumb-sep" }, "/"),
-        h19("span", { className: "pw-crumb-current" }, selectedIssue.title)
+        h21("span", { className: "pw-crumb-sep" }, "/"),
+        h21("span", { className: "pw-crumb-current" }, selectedIssue.title)
       ),
-      selectedRecord && h19(
-        import_react19.default.Fragment,
+      selectedRecord && h21(
+        import_react21.default.Fragment,
         null,
-        h19("span", { className: "pw-crumb-sep" }, "/"),
-        h19("span", { className: "pw-crumb-current" }, t("recordDetail"))
+        h21("span", { className: "pw-crumb-sep" }, "/"),
+        h21("span", { className: "pw-crumb-current" }, t("recordDetail"))
       )
     );
+    const prdPanel = selected && h21(PrdDocuments, {
+      key: projectKey + ":" + selected.id,
+      root,
+      reqId: selected.id,
+      requirements,
+      t,
+      activeId: params?.prdId,
+      onRead: (prdId) => {
+        const view = navRef.current;
+        writeNav({ ...view, params: { ...view.params, prdId } });
+      },
+      onEdit: editPrd,
+      onNew: (reqId) => editPrd(void 0, reqId)
+    });
     let content;
-    if (params?.record) {
-      content = selectedRecord ? h19("div", { className: "pw-subpage-stack" }, h19(RecordDetail, {
+    if (page === "prds" && params?.prdId) {
+      content = h21(PrdReader, { key: projectKey + ":" + params.prdId, root, id: params.prdId, requirements, t, onEdit: editPrd, onBack: back });
+    } else if (params?.record) {
+      content = selectedRecord ? h21("div", { className: "pw-subpage-stack" }, h21(RecordDetail, {
         record: { ...selectedRecord, reqTitle: requirements.find((r) => r.id === params.record.reqId)?.title ?? selectedRecord.reqTitle },
         req: requirements.find((r) => r.id === params.record.reqId) ?? null,
         t,
         onOpenRequirement: (req) => openDetailAt({ reqId: req.id, issueId: null }, statusPage(req.status))
-      })) : h19("div", { className: "pw-init" }, h19("p", null, t("errMissing")), h19("button", { className: "pw-button", onClick: back }, missingReturnLabel));
+      })) : h21("div", { className: "pw-init" }, h21("p", null, t("errMissing")), h21("button", { className: "pw-button", onClick: back }, missingReturnLabel));
     } else if (params?.reqId && !selected) {
-      content = h19("div", { className: "pw-init" }, h19("p", null, t("errMissing")), h19("button", { className: "pw-button", onClick: back }, missingReturnLabel));
+      content = h21("div", { className: "pw-init" }, h21("p", null, t("errMissing")), h21("button", { className: "pw-button", onClick: back }, missingReturnLabel));
     } else if (params?.issueId && !selectedIssue) {
-      content = h19("div", { className: "pw-init" }, h19("p", null, t("errMissing")), h19("button", { className: "pw-button", onClick: back }, missingReturnLabel));
+      content = h21("div", { className: "pw-init" }, h21("p", null, t("errMissing")), h21("button", { className: "pw-button", onClick: back }, missingReturnLabel));
     } else if (selectedIssue) {
-      content = h19("div", { className: "pw-subpage-stack" }, h19(IssueDetail, {
+      content = h21("div", { className: "pw-subpage-stack" }, h21(IssueDetail, {
         key: projectKey + ":" + selectedIssue.id,
         issue: selectedIssue,
         req: selected,
@@ -5510,17 +6115,17 @@ ${detail.trim()}` : value);
         openWikiPage: (p) => guardLeave(() => writeNav({ ...navRef.current, page: "wiki", params: { wikiTarget: p }, history: [] }))
       }));
     } else if (selected && page === "pending") {
-      content = h19("div", { className: "pw-subpage-stack" }, h19(DeliveryDetail, {
+      content = h21("div", { className: "pw-subpage-stack" }, h21(DeliveryDetail, {
         req: selected,
         t,
         onMove: doMove,
         busy: saving || !!pendingReorder || !!modal
-      }));
+      }), prdPanel);
     } else if (selected) {
-      content = h19(
+      content = h21(
         "div",
         { className: "pw-subpage-stack" },
-        h19(DetailPanel, {
+        h21(DetailPanel, {
           key: projectKey + ":" + selected.id,
           req: selected,
           t,
@@ -5541,10 +6146,13 @@ ${detail.trim()}` : value);
           onCreateTask: () => setModal({ kind: "createTask", req: selected, onCreated: (id) => {
             if (rootRef.current === root) setFocusTarget("pw-task-" + id);
           } })
-        })
+        }),
+        prdPanel
       );
+    } else if (page === "prds") {
+      content = h21(PrdManagement, { key: projectKey, wb, onRead: openPrd, onEdit: editPrd });
     } else if (page === "wiki") {
-      content = h19(WikiView, {
+      content = h21(WikiView, {
         key: root,
         root,
         sessionId: sessionRoot === root ? sessionId : void 0,
@@ -5554,68 +6162,74 @@ ${detail.trim()}` : value);
         onPageChange: (path) => writeNav({ ...navRef.current, params: path ? { wikiTarget: path } : null })
       });
     } else if (page === "arch") {
-      content = h19(ArchView, { key: root, root, sessionId: sessionRoot === root ? sessionId : void 0, t });
+      content = h21(ArchView, { key: root, root, sessionId: sessionRoot === root ? sessionId : void 0, t });
     } else if (page === "sync") {
-      content = h19(SyncView, { key: projectKey, root, sessionId: sessionRoot === root ? sessionId : void 0, t, refresh, requirements, onLocateProposal: locateProposal });
+      content = h21(SyncView, { key: projectKey, root, sessionId: sessionRoot === root ? sessionId : void 0, t, refresh, requirements, onLocateProposal: locateProposal });
     } else {
       const Page = PAGE_COMPONENTS[page] ?? HomePage;
-      content = h19(Page, { wb });
+      content = h21(Page, { wb });
     }
-    return frame(h19(
-      import_react19.default.Fragment,
+    return frame(h21(
+      import_react21.default.Fragment,
       null,
       breadcrumbs,
       errorBanner,
-      pendingReorder && h19(
+      pendingReorder && h21(
         "div",
         { className: "pw-banner pw-warn", role: "status" },
-        h19(
+        h21(
           "div",
           null,
-          h19("span", null, t("reorderProgress").replace("{done}", String(pendingReorder.next)).replace("{total}", String(pendingReorder.steps.length))),
-          pendingReorder.error && h19("p", null, t("reorderFailed")),
-          pendingReorder.error && h19(ErrorDetails, { error: pendingReorder.error, t, showRaw: false })
+          h21("span", null, t("reorderProgress").replace("{done}", String(pendingReorder.next)).replace("{total}", String(pendingReorder.steps.length))),
+          pendingReorder.error && h21("p", null, t("reorderFailed")),
+          pendingReorder.error && h21(ErrorDetails, { error: pendingReorder.error, t, showRaw: false })
         ),
-        pendingReorder.error && h19("button", { className: "pw-button", disabled: pendingReorder.running, onClick: () => resumeReorder(pendingReorder) }, t("reorderRetry")),
-        pendingReorder.error && h19("button", { className: "pw-button", disabled: pendingReorder.running, onClick: () => {
+        pendingReorder.error && h21("button", { className: "pw-button", disabled: pendingReorder.running, onClick: () => resumeReorder(pendingReorder) }, t("reorderRetry")),
+        pendingReorder.error && h21("button", { className: "pw-button", disabled: pendingReorder.running, onClick: () => {
           delete reorderMemory[projectKey];
           setReorderRevision((n) => n + 1);
           refresh();
         } }, t("reorderDiscard"))
       ),
-      notice && h19(
+      notice && h21(
         "div",
         { className: "pw-banner", role: "status" },
         notice,
-        h19("button", { className: "pw-button", style: { marginLeft: "auto" }, onClick: () => setNotice(""), "aria-label": t("dismiss") }, "\u2715")
+        h21("button", { className: "pw-button", style: { marginLeft: "auto" }, onClick: () => setNotice(""), "aria-label": t("dismiss") }, "\u2715")
       ),
-      diags.length > 0 && h19(
+      diags.length > 0 && h21(
         "div",
         { className: "pw-banner pw-warn", role: "status" },
-        h19(
+        h21(
           "div",
           { className: "pw-diagwrap" },
-          h19("strong", null, t("dataProblems").replace("{n}", String(diags.length))),
-          h19("details", null, h19("summary", null, t("details")), diagListView(diags, t))
+          h21("strong", null, t("dataProblems").replace("{n}", String(diags.length))),
+          h21("details", null, h21("summary", null, t("details")), diagListView(diags, t))
         ),
-        h19("button", { className: "pw-button", style: { marginLeft: "auto" }, onClick: refresh }, t("retryRead"))
+        h21("button", { className: "pw-button", style: { marginLeft: "auto" }, onClick: refresh }, t("retryRead"))
       ),
-      undo && h19(
+      undo && h21(
         "div",
         { className: "pw-banner", role: "status" },
         t("trashed"),
-        h19("button", { className: "pw-button", style: { marginLeft: "auto" }, onClick: doUndo }, t("undo")),
-        h19("button", { className: "pw-button", onClick: () => setUndo(null), "aria-label": t("dismiss") }, "\u2715")
+        h21("button", { className: "pw-button", style: { marginLeft: "auto" }, onClick: doUndo }, t("undo")),
+        h21("button", { className: "pw-button", onClick: () => setUndo(null), "aria-label": t("dismiss") }, "\u2715")
       ),
       content,
-      selected && !selectedIssue && !selectedRecord && h19(PrdDocuments, {
-        key: projectKey + ":" + selected.id + ":" + (params?.prdId ?? ""),
+      modal?.kind === "prdEditor" && h21(PrdEditor, {
+        key: [root, modal.id, modal.reqId].join(":"),
         root,
-        reqId: selected.id,
-        initialId: params?.prdId,
-        t
+        id: modal.id,
+        reqId: modal.reqId,
+        t,
+        uiMemory: uiMemory2,
+        onClose: () => setModal((current) => current === modal ? null : current),
+        onSaved: () => {
+          notifyPrdChanged(root);
+          setModal((current) => current === modal ? null : current);
+        }
       }),
-      modal && modal.kind !== "leave" && h19(ReasonModal, {
+      modal && !["leave", "prdEditor"].includes(modal.kind) && h21(ReasonModal, {
         key: modal.kind,
         modal,
         t,
@@ -5624,13 +6238,14 @@ ${detail.trim()}` : value);
         root,
         trashWithUndo,
         requirements,
+        locatePrdLink,
         newDraft,
         clearNewDraft,
         changeNewDraft: (name, value) => setNewDraft((draft) => ({ ...draft, [name]: value })),
         createReq: () => createReq(true),
         reopenState: modal.kind === "reopenRequirement" && requirements.find((req) => req.id === modal.req.id)?.pendingReopen
       }),
-      modal?.kind === "leave" && h19(LeaveModal, {
+      modal?.kind === "leave" && h21(LeaveModal, {
         modal,
         t,
         busy: saving,
@@ -5671,7 +6286,7 @@ ${detail.trim()}` : value);
   }
 
   // client-src/rightbar/task-pane.js
-  var import_react20 = __toESM(__require("react"), 1);
+  var import_react22 = __toESM(__require("react"), 1);
 
   // client-src/rightbar/task-state.js
   function taskRunView(status, run) {
@@ -5696,8 +6311,8 @@ ${detail.trim()}` : value);
   var terminalTask = (task) => ["done", "cancelled"].includes(task?.status);
 
   // client-src/rightbar/task-pane.js
-  var h20 = import_react20.default.createElement;
-  var { useCallback: useCallback5, useEffect: useEffect11, useRef: useRef8, useState: useState12 } = import_react20.default;
+  var h22 = import_react22.default.createElement;
+  var { useCallback: useCallback5, useEffect: useEffect13, useRef: useRef9, useState: useState14 } = import_react22.default;
   var EMPTY_WORKSPACES2 = [];
   var useNoWorkspaces2 = (selector) => selector({ items: EMPTY_WORKSPACES2 });
   var useNoSessionStatus2 = () => void 0;
@@ -5829,11 +6444,11 @@ ${detail.trim()}` : value);
       uiMemory2.views[projectKey] = wikiPage ? { ...current, page: "wiki", params: { wikiTarget: wikiPage }, history: [] } : openDetail(current, { reqId, issueId: null }, statusPage(status));
       openMain();
     };
-    return h20(
+    return h22(
       "aside",
       { className: "pw-page pw-task-pane", "aria-label": t("issueDetail") },
-      h20("style", null, css2),
-      root ? h20(LinkedTask, {
+      h22("style", null, css2),
+      root ? h22(LinkedTask, {
         key: root + "|" + sessionId,
         root,
         sessionId,
@@ -5846,39 +6461,39 @@ ${detail.trim()}` : value);
         showConversation,
         openRequirement: (reqId, status) => openObject(reqId, null, status),
         openWikiPage: (reqId, path) => openObject(reqId, path)
-      }) : h20("p", null, t("noWorkspace"))
+      }) : h22("p", null, t("noWorkspace"))
     );
   }
   function LinkedTask({ root, sessionId, sessionStatus, visible, projectKey, t, uiMemory: uiMemory2, openMain, showConversation, openRequirement, openWikiPage }) {
-    const [linkState, setLinkState] = useState12(null);
-    const [task, setTask] = useState12(null);
-    const [req, setReq] = useState12(null);
-    const [proposals, setProposals] = useState12([]);
-    const [delivery, setDelivery] = useState12(null);
-    const [missing, setMissing] = useState12(false);
-    const [readError, setReadError] = useState12(null);
-    const [error, setError] = useState12(null);
-    const [notice, setNotice] = useState12("");
-    const [busy, setBusy] = useState12(false);
-    const [loading, setLoading] = useState12(true);
-    const [syncing, setSyncing] = useState12(true);
-    const [externalUpdate, setExternalUpdate] = useState12(false);
-    const [picking, setPicking] = useState12(false);
-    const [choices, setChoices] = useState12(null);
-    const [pickerBusy, setPickerBusy] = useState12(false);
-    const [createdTask, setCreatedTask] = useState12(null);
-    const [leave, setLeave] = useState12(null);
-    const active = useRef8(false);
-    const linkSeq = useRef8(0);
-    const taskSeq = useRef8(0);
-    const choiceSeq = useRef8(0);
-    const stamp = useRef8({ modified: null, hash: null });
-    const linkRef = useRef8(null);
-    const taskRef = useRef8(null);
-    const leaveRef = useRef8(null);
-    const switchButton = useRef8(null);
-    const focusSwitch = useRef8(false);
-    const visibleRef = useRef8(visible);
+    const [linkState, setLinkState] = useState14(null);
+    const [task, setTask] = useState14(null);
+    const [req, setReq] = useState14(null);
+    const [proposals, setProposals] = useState14([]);
+    const [delivery, setDelivery] = useState14(null);
+    const [missing, setMissing] = useState14(false);
+    const [readError, setReadError] = useState14(null);
+    const [error, setError] = useState14(null);
+    const [notice, setNotice] = useState14("");
+    const [busy, setBusy] = useState14(false);
+    const [loading, setLoading] = useState14(true);
+    const [syncing, setSyncing] = useState14(true);
+    const [externalUpdate, setExternalUpdate] = useState14(false);
+    const [picking, setPicking] = useState14(false);
+    const [choices, setChoices] = useState14(null);
+    const [pickerBusy, setPickerBusy] = useState14(false);
+    const [createdTask, setCreatedTask] = useState14(null);
+    const [leave, setLeave] = useState14(null);
+    const active = useRef9(false);
+    const linkSeq = useRef9(0);
+    const taskSeq = useRef9(0);
+    const choiceSeq = useRef9(0);
+    const stamp = useRef9({ modified: null, hash: null });
+    const linkRef = useRef9(null);
+    const taskRef = useRef9(null);
+    const leaveRef = useRef9(null);
+    const switchButton = useRef9(null);
+    const focusSwitch = useRef9(false);
+    const visibleRef = useRef9(visible);
     visibleRef.current = visible;
     linkRef.current = linkState?.link ?? null;
     taskRef.current = task;
@@ -5958,12 +6573,12 @@ ${detail.trim()}` : value);
       setSyncing(false);
       return currentTask;
     }, [root, sessionId, loadTask]);
-    useEffect11(() => {
+    useEffect13(() => {
       if (picking || !focusSwitch.current) return;
       focusSwitch.current = false;
       switchButton.current?.focus();
     }, [picking]);
-    useEffect11(() => {
+    useEffect13(() => {
       active.current = true;
       return () => {
         active.current = false;
@@ -5972,14 +6587,14 @@ ${detail.trim()}` : value);
         choiceSeq.current++;
       };
     }, [load]);
-    useEffect11(() => {
+    useEffect13(() => {
       if (visible) load();
       else {
         linkSeq.current++;
         taskSeq.current++;
       }
     }, [load, visible]);
-    useEffect11(() => {
+    useEffect13(() => {
       const onVisibility = () => {
         if (document.hidden) {
           linkSeq.current++;
@@ -5989,12 +6604,12 @@ ${detail.trim()}` : value);
       document.addEventListener("visibilitychange", onVisibility);
       return () => document.removeEventListener("visibilitychange", onVisibility);
     }, [load]);
-    const wasRunning = useRef8(runView.running);
-    useEffect11(() => {
+    const wasRunning = useRef9(runView.running);
+    useEffect13(() => {
       if (visible && wasRunning.current && !runView.running) load();
       wasRunning.current = runView.running;
     }, [runView.running, load, visible]);
-    useEffect11(() => {
+    useEffect13(() => {
       if (!visible || !task || readError) return;
       const timer = setInterval(async () => {
         if (document.hidden || !visibleRef.current || !active.current || !linkRef.current) return;
@@ -6014,7 +6629,7 @@ ${detail.trim()}` : value);
       }, 3e3);
       return () => clearInterval(timer);
     }, [root, task?.id, task?.hash, !!readError, loadTask, visible]);
-    const actionRef = useRef8(null);
+    const actionRef = useRef9(null);
     if (!actionRef.current) actionRef.current = createCardActions({
       getKey: () => active.current ? sessionId : null,
       rpc,
@@ -6091,40 +6706,40 @@ ${detail.trim()}` : value);
       return res;
     };
     const switchHint = runView.switchHint ? t(runView.switchHint) : syncing ? t("switchSyncing") : "";
-    const notices = h20(
-      import_react20.default.Fragment,
+    const notices = h22(
+      import_react22.default.Fragment,
       null,
-      switchHint && !loading && h20(
+      switchHint && !loading && h22(
         "div",
         { className: "pw-sidebar-notice", role: "status" },
-        h20("span", null, switchHint),
-        runView.locked && !runView.running && !runView.waiting && h20("button", { className: "pw-button pw-quiet", disabled: syncing, onClick: load }, t("retry"))
+        h22("span", null, switchHint),
+        runView.locked && !runView.running && !runView.waiting && h22("button", { className: "pw-button pw-quiet", disabled: syncing, onClick: load }, t("retry"))
       ),
-      h20(ErrorDetails, { error, t, showRaw: false }),
-      notice && h20("p", { className: "pw-note", role: "status" }, notice),
-      readError && h20(
+      h22(ErrorDetails, { error, t, showRaw: false }),
+      notice && h22("p", { className: "pw-note", role: "status" }, notice),
+      readError && h22(
         "div",
         { className: "pw-sidebar-notice" },
-        h20(ErrorDetails, { error: readError, t, showRaw: false }),
-        h20("button", { className: "pw-button pw-quiet", disabled: syncing, onClick: load }, t("retry"))
+        h22(ErrorDetails, { error: readError, t, showRaw: false }),
+        h22("button", { className: "pw-button pw-quiet", disabled: syncing, onClick: load }, t("retry"))
       ),
-      loading && !task && !readError && h20("p", { className: "pw-note", role: "status" }, t("loading"))
+      loading && !task && !readError && h22("p", { className: "pw-note", role: "status" }, t("loading"))
     );
-    const toolbar = (children, canSwitch = false) => h20(
+    const toolbar = (children, canSwitch = false) => h22(
       "div",
       { className: "pw-task-toolbar" },
-      h20("button", { className: "pw-button pw-quiet", onClick: openMainGuard }, h20("span", { "aria-hidden": true }, "\u2039 "), t("backMain")),
-      h20(
+      h22("button", { className: "pw-button pw-quiet", onClick: openMainGuard }, h22("span", { "aria-hidden": true }, "\u2039 "), t("backMain")),
+      h22(
         "div",
         { className: "pw-task-tools" },
-        canSwitch && h20("button", { className: "pw-button pw-quiet", ref: switchButton, disabled: busy || !!switchHint, title: switchHint, onClick: choose }, t("swapTask")),
+        canSwitch && h22("button", { className: "pw-button pw-quiet", ref: switchButton, disabled: busy || !!switchHint, title: switchHint, onClick: choose }, t("swapTask")),
         children
       )
     );
-    return h20(
-      import_react20.default.Fragment,
+    return h22(
+      import_react22.default.Fragment,
       null,
-      task && h20("div", { hidden: picking }, h20(LinkedTaskDetails, {
+      task && h22("div", { hidden: picking }, h22(LinkedTaskDetails, {
         key: task.reqId + "|" + task.id,
         task,
         req,
@@ -6152,12 +6767,12 @@ ${detail.trim()}` : value);
         notices,
         reload: load
       })),
-      (picking || !task) && h20(
-        import_react20.default.Fragment,
+      (picking || !task) && h22(
+        import_react22.default.Fragment,
         null,
         toolbar(),
         notices,
-        !loading && h20(TaskPicker, {
+        !loading && h22(TaskPicker, {
           requirements: choices,
           t,
           busy: busy || !!switchHint,
@@ -6177,7 +6792,7 @@ ${detail.trim()}` : value);
           onCancel: closePicker
         })
       ),
-      leave && h20(LeaveModal, {
+      leave && h22(LeaveModal, {
         modal: leave,
         t,
         busy,
@@ -6221,23 +6836,23 @@ ${detail.trim()}` : value);
     onCancel,
     onRetryLink
   }) {
-    const [query, setQuery] = useState12("");
-    const [reqId, setReqId] = useState12("");
-    const [choice, setChoice] = useState12("");
-    const [draft, setDraft] = useState12(issueDraftFrom);
-    const [createReqId, setCreateReqId] = useState12("");
-    const [error, setError] = useState12(null);
-    if (!requirements) return h20(
+    const [query, setQuery] = useState14("");
+    const [reqId, setReqId] = useState14("");
+    const [choice, setChoice] = useState14("");
+    const [draft, setDraft] = useState14(issueDraftFrom);
+    const [createReqId, setCreateReqId] = useState14("");
+    const [error, setError] = useState14(null);
+    if (!requirements) return h22(
       "section",
       { className: "pw-subpage pw-task-picker", "aria-label": t("pickTask") },
-      h20("h2", null, t(missing ? "taskMissingTitle" : "pickTask")),
-      h20("p", { className: "pw-note" }, t(loading ? "loading" : missing ? "linkMissing" : picking ? "errUnreadable" : "noLinkedTask")),
-      h20(
+      h22("h2", null, t(missing ? "taskMissingTitle" : "pickTask")),
+      h22("p", { className: "pw-note" }, t(loading ? "loading" : missing ? "linkMissing" : picking ? "errUnreadable" : "noLinkedTask")),
+      h22(
         "div",
         { className: "pw-actions" },
-        missing && !picking && h20("button", { className: "pw-button pw-quiet", disabled: retryBusy, onClick: onRetry }, t("retry")),
-        !loading && h20("button", { className: "pw-button primary", disabled: busy, onClick: onChoose }, t(picking ? "retry" : "pickTask")),
-        picking && h20("button", { className: "pw-button pw-quiet", onClick: onCancel }, t("cancel"))
+        missing && !picking && h22("button", { className: "pw-button pw-quiet", disabled: retryBusy, onClick: onRetry }, t("retry")),
+        !loading && h22("button", { className: "pw-button primary", disabled: busy, onClick: onChoose }, t(picking ? "retry" : "pickTask")),
+        picking && h22("button", { className: "pw-button pw-quiet", onClick: onCancel }, t("cancel"))
       )
     );
     const items = taskChoices(requirements, { query, reqId });
@@ -6251,53 +6866,53 @@ ${detail.trim()}` : value);
       if (invalid || !createFor) return;
       onCreate(createFor, newTaskInput(draft));
     };
-    return h20(
+    return h22(
       "section",
       { className: "pw-subpage pw-task-picker", "aria-label": t("pickTask") },
-      h20(
+      h22(
         "div",
         { className: "pw-task-picker-head" },
-        h20("h2", null, t(currentId ? "swapTask" : "pickTask")),
-        h20("button", { className: "pw-button pw-quiet", disabled: busy, onClick: onCancel }, t("cancel"))
+        h22("h2", null, t(currentId ? "swapTask" : "pickTask")),
+        h22("button", { className: "pw-button pw-quiet", disabled: busy, onClick: onCancel }, t("cancel"))
       ),
-      createdTask ? h20(
+      createdTask ? h22(
         "div",
         { className: "pw-sidebar-notice", role: "status" },
-        h20("p", { className: "pw-text" }, t("createLinkFailed")),
-        h20("strong", null, createdTask.title),
-        h20("button", { className: "pw-button primary", disabled: busy, onClick: onRetryLink }, t("retryLink"))
-      ) : h20(
-        import_react20.default.Fragment,
+        h22("p", { className: "pw-text" }, t("createLinkFailed")),
+        h22("strong", null, createdTask.title),
+        h22("button", { className: "pw-button primary", disabled: busy, onClick: onRetryLink }, t("retryLink"))
+      ) : h22(
+        import_react22.default.Fragment,
         null,
-        h20(
+        h22(
           "label",
           { className: "pw-field" },
-          h20("span", { className: "pw-label" }, t("searchTasks")),
-          h20("input", { className: "pw-input", autoFocus: true, value: query, onChange: (event) => {
+          h22("span", { className: "pw-label" }, t("searchTasks")),
+          h22("input", { className: "pw-input", autoFocus: true, value: query, onChange: (event) => {
             setQuery(event.target.value);
             setChoice("");
           } })
         ),
-        h20(
+        h22(
           "label",
           { className: "pw-field" },
-          h20("span", { className: "pw-label" }, t("parentRequirement")),
-          h20(
+          h22("span", { className: "pw-label" }, t("parentRequirement")),
+          h22(
             "select",
             { className: "pw-select", value: reqId, onChange: (event) => {
               setReqId(event.target.value);
               setChoice("");
             } },
-            h20("option", { value: "" }, t("allRequirements")),
-            requirements.map((req) => h20("option", { key: req.id, value: req.id }, req.title))
+            h22("option", { value: "" }, t("allRequirements")),
+            requirements.map((req) => h22("option", { key: req.id, value: req.id }, req.title))
           )
         ),
-        items.length ? h20("div", { className: "pw-choice-list", role: "radiogroup", "aria-label": t("pickTask") }, items.map((issue) => {
+        items.length ? h22("div", { className: "pw-choice-list", role: "radiogroup", "aria-label": t("pickTask") }, items.map((issue) => {
           const current = currentId === issue.id;
-          return h20(
+          return h22(
             "label",
             { key: issue.id, className: "pw-choice", "data-selected": choice === issue.id },
-            h20("input", {
+            h22("input", {
               type: "radio",
               name: "pw-task-choice",
               value: issue.id,
@@ -6305,46 +6920,46 @@ ${detail.trim()}` : value);
               disabled: current || busy,
               onChange: () => setChoice(issue.id)
             }),
-            h20(
+            h22(
               "span",
               { className: "pw-choice-copy" },
-              h20("strong", null, issue.title),
-              h20("span", { className: "pw-note" }, issue.requirementTitle, " \xB7 ", t("st_" + issue.status), current && " \xB7 " + t("linkedTask")),
-              taskOverview(issue) && h20("span", { className: "pw-preview" }, taskOverview(issue))
+              h22("strong", null, issue.title),
+              h22("span", { className: "pw-note" }, issue.requirementTitle, " \xB7 ", t("st_" + issue.status), current && " \xB7 " + t("linkedTask")),
+              taskOverview(issue) && h22("span", { className: "pw-preview" }, taskOverview(issue))
             )
           );
-        })) : h20("p", { className: "pw-note" }, t("noTaskChoices")),
-        items.length > 0 && h20(
+        })) : h22("p", { className: "pw-note" }, t("noTaskChoices")),
+        items.length > 0 && h22(
           "button",
           { className: "pw-button primary", disabled: busy || !choice, onClick: () => onAttach(choice) },
           t(currentId ? "pickNewTask" : "linkTask")
         ),
-        development.length > 0 && h20(
+        development.length > 0 && h22(
           Disclosure,
           { label: t("createAndLink") },
-          h20(
+          h22(
             "form",
             { noValidate: true, onSubmit: create },
-            h20(
+            h22(
               "label",
               { className: "pw-field" },
-              h20("span", { className: "pw-label" }, t("parentRequirement")),
-              h20(
+              h22("span", { className: "pw-label" }, t("parentRequirement")),
+              h22(
                 "select",
                 { className: "pw-select", value: createFor, disabled: busy, onChange: (event) => {
                   setCreateReqId(event.target.value);
                   setError(null);
                 } },
-                h20("option", { value: "" }, t("selectDevRequirement")),
-                development.map((req) => h20("option", { key: req.id, value: req.id }, req.title))
+                h22("option", { value: "" }, t("selectDevRequirement")),
+                development.map((req) => h22("option", { key: req.id, value: req.id }, req.title))
               )
             ),
-            h20(TaskFields, { form: { draft, change: (name, value) => {
+            h22(TaskFields, { form: { draft, change: (name, value) => {
               setError(null);
               setDraft((previous) => ({ ...previous, [name]: value }));
             } }, t, busy, focus: null }),
-            h20(ErrorDetails, { error, t, showRaw: false }),
-            h20("button", { className: "pw-button", type: "submit", disabled: busy }, t("createAndLink"))
+            h22(ErrorDetails, { error, t, showRaw: false }),
+            h22("button", { className: "pw-button", type: "submit", disabled: busy }, t("createAndLink"))
           )
         )
       )
@@ -6378,28 +6993,28 @@ ${detail.trim()}` : value);
     reload
   }) {
     const form = useTaskDraft(issueDraftKey(projectKey, task.reqId, task.id), task, uiMemory2);
-    const [formFocus, setFormFocus] = useState12("title");
-    const [formError, setFormError] = useState12(null);
-    const [continueEditing, setContinueEditing] = useState12(false);
-    const [continueText, setContinueText] = useState12("");
-    const [continueSaved, setContinueSaved] = useState12(false);
-    const [supplementing, setSupplementing] = useState12(false);
-    const [supplement, setSupplement] = useState12("");
-    const [reasonMove, setReasonMove] = useState12(null);
-    const [reason, setReason] = useState12("");
-    const [reasonError, setReasonError] = useState12(null);
-    const [notice, setNotice] = useState12("");
-    const [recording, setRecording] = useState12(false);
-    const [manualReview, setManualReview] = useState12(null);
-    const [reviewError, setReviewError] = useState12(null);
-    const [assistRunning, setAssistRunning] = useState12(false);
+    const [formFocus, setFormFocus] = useState14("title");
+    const [formError, setFormError] = useState14(null);
+    const [continueEditing, setContinueEditing] = useState14(false);
+    const [continueText, setContinueText] = useState14("");
+    const [continueSaved, setContinueSaved] = useState14(false);
+    const [supplementing, setSupplementing] = useState14(false);
+    const [supplement, setSupplement] = useState14("");
+    const [reasonMove, setReasonMove] = useState14(null);
+    const [reason, setReason] = useState14("");
+    const [reasonError, setReasonError] = useState14(null);
+    const [notice, setNotice] = useState14("");
+    const [recording, setRecording] = useState14(false);
+    const [manualReview, setManualReview] = useState14(null);
+    const [reviewError, setReviewError] = useState14(null);
+    const [assistRunning, setAssistRunning] = useState14(false);
     const deliveryDraftKey = "delivery:" + projectKey + "|" + task.reqId;
-    const [deliveryDraftDirty, setDeliveryDraftDirty] = useState12(() => !!uiMemory2.drafts[deliveryDraftKey]);
-    const lastDeliveryReq = useRef8(null);
+    const [deliveryDraftDirty, setDeliveryDraftDirty] = useState14(() => !!uiMemory2.drafts[deliveryDraftKey]);
+    const lastDeliveryReq = useRef9(null);
     if (lastDeliveryReq.current?.id !== task.reqId) lastDeliveryReq.current = null;
     if (req?.id === task.reqId) lastDeliveryReq.current = req;
     const deliveryReq = req?.id === task.reqId ? req : lastDeliveryReq.current;
-    const menu = useRef8(null);
+    const menu = useRef9(null);
     const terminal = terminalTask(task);
     const item = { root, reqId: task.reqId, id: task.id };
     const inactive = req?.status !== "in_progress" || !!req.pendingReopen;
@@ -6430,13 +7045,13 @@ ${detail.trim()}` : value);
       else setFormError(res);
       return res;
     };
-    useEffect11(() => {
+    useEffect13(() => {
       leaveRef.current = { dirty: () => form.dirty, save, discard: form.finish };
       return () => {
         leaveRef.current = null;
       };
     });
-    useEffect11(() => {
+    useEffect13(() => {
       const clickOutside = (event) => {
         if (menu.current?.open && !menu.current.contains(event.target)) menu.current.open = false;
       };
@@ -6503,7 +7118,7 @@ ${detail.trim()}` : value);
       setReasonMove(to);
     };
     const mayRecord = available && ["todo", "doing", "blocked"].includes(task.status);
-    const menuAction = (label, onClick, danger = false) => h20("button", {
+    const menuAction = (label, onClick, danger = false) => h22("button", {
       key: label,
       className: "pw-button pw-quiet" + (danger ? " danger" : ""),
       disabled: busy,
@@ -6526,7 +7141,7 @@ ${detail.trim()}` : value);
       !terminal && menuAction("cancelTask", () => beginMove("cancelled"), true),
       terminal && menuAction(task.status === "done" ? "reopenTaskAction" : "restoreTask", () => beginMove("todo"))
     ].filter(Boolean) : [];
-    const more = menuItems.length > 0 && h20(
+    const more = menuItems.length > 0 && h22(
       "details",
       {
         className: "pw-task-menu",
@@ -6538,22 +7153,22 @@ ${detail.trim()}` : value);
           menu.current.querySelector("summary")?.focus();
         }
       },
-      h20("summary", { "aria-label": t("moreActions"), title: t("moreActions") }, h20("span", { "aria-hidden": true }, "\u22EF")),
-      h20("div", { className: "pw-task-menu-items" }, menuItems)
+      h22("summary", { "aria-label": t("moreActions"), title: t("moreActions") }, h22("span", { "aria-hidden": true }, "\u22EF")),
+      h22("div", { className: "pw-task-menu-items" }, menuItems)
     );
-    const primary = (label, onClick, disabled = busy) => h20("button", { className: "pw-button primary", disabled, onClick }, t(label));
-    const quiet = (label, onClick, disabled = busy) => h20("button", { className: "pw-button pw-quiet", disabled, onClick }, t(label));
-    const row = (...actions) => h20("div", { className: "pw-task-action-row" }, actions);
+    const primary = (label, onClick, disabled = busy) => h22("button", { className: "pw-button primary", disabled, onClick }, t(label));
+    const quiet = (label, onClick, disabled = busy) => h22("button", { className: "pw-button pw-quiet", disabled, onClick }, t(label));
+    const row = (...actions) => h22("div", { className: "pw-task-action-row" }, actions);
     let action;
     if (!terminal && (runView.waiting || runView.running)) {
       action = row(primary(runView.action, showConversation));
     } else if (available && task.status === "in_review") {
-      action = h20(
+      action = h22(
         "div",
         { className: "pw-review-actions" },
         row(
           primary("demoConfirm", () => confirm(task), !reviewable),
-          h20(
+          h22(
             "div",
             { className: "pw-review-options" },
             quiet("reviseTask", () => setContinueEditing((value) => !value), busy || assistRunning),
@@ -6563,54 +7178,54 @@ ${detail.trim()}` : value);
             })
           )
         ),
-        continueEditing && h20(
+        continueEditing && h22(
           "form",
           { className: "pw-progress-form", onSubmit: continueWork },
-          h20("textarea", { className: "pw-textarea", rows: 3, autoFocus: true, "aria-label": t("askFix"), placeholder: t("askFix"), value: continueText, onChange: (event) => setContinueText(event.target.value) }),
-          h20("button", { type: "submit", className: "pw-button", disabled: busy || assistRunning || !continueText.trim() }, t("submitAndContinue"))
+          h22("textarea", { className: "pw-textarea", rows: 3, autoFocus: true, "aria-label": t("askFix"), placeholder: t("askFix"), value: continueText, onChange: (event) => setContinueText(event.target.value) }),
+          h22("button", { type: "submit", className: "pw-button", disabled: busy || assistRunning || !continueText.trim() }, t("submitAndContinue"))
         )
       );
     } else if (available && task.status === "blocked") {
-      action = h20(
-        import_react20.default.Fragment,
+      action = h22(
+        import_react22.default.Fragment,
         null,
         row(
           primary("supplement", () => setSupplementing((value) => !value)),
           quiet(missing.length ? "completeTaskInfo" : "demoContinue", startWork)
         ),
-        supplementing && h20(
+        supplementing && h22(
           "form",
           { className: "pw-progress-form", onSubmit: saveSupplement },
-          h20("textarea", { className: "pw-textarea", autoFocus: true, rows: 3, "aria-label": t("supplement"), placeholder: t("supplementPlaceholder"), value: supplement, onChange: (event) => setSupplement(event.target.value) }),
-          h20("button", { type: "submit", className: "pw-button", disabled: busy || !supplement.trim() }, t("saveSupplement"))
+          h22("textarea", { className: "pw-textarea", autoFocus: true, rows: 3, "aria-label": t("supplement"), placeholder: t("supplementPlaceholder"), value: supplement, onChange: (event) => setSupplement(event.target.value) }),
+          h22("button", { type: "submit", className: "pw-button", disabled: busy || !supplement.trim() }, t("saveSupplement"))
         )
       );
     } else if (available && ["todo", "doing"].includes(task.status)) {
       action = row(primary(missing.length ? "completeTaskInfo" : task.status === "todo" ? "startTask" : "demoContinue", startWork));
     }
     const activeDelivery = !!deliveryReq && (deliveryReq.status === "pending" || deliveryReq.status === "in_progress" && delivery?.status === "failed" || deliveryDraftDirty);
-    return h20(
-      import_react20.default.Fragment,
+    return h22(
+      import_react22.default.Fragment,
       null,
       toolbar(more, true),
       notices,
-      h20(
+      h22(
         "section",
         { className: "pw-subpage pw-read-card pw-sidebar-detail", "aria-label": t("issueDetail") },
-        h20(
+        h22(
           "header",
           { className: "pw-sidebar-heading" },
-          h20(
+          h22(
             "div",
             { className: "pw-sidebar-title" },
-            h20("h2", null, task.title),
+            h22("h2", null, task.title),
             !terminal && !form.editing && quiet("edit", () => begin())
           ),
-          h20(
+          h22(
             "div",
             { className: "pw-sidebar-meta" },
-            h20("span", { className: "pw-count pw-read-status", "data-status": task.status }, t("st_" + task.status)),
-            req && h20(
+            h22("span", { className: "pw-count pw-read-status", "data-status": task.status }, t("st_" + task.status)),
+            req && h22(
               "button",
               { className: "pw-button pw-quiet pw-parent-link", onClick: () => openRequirement(req.id, req.status) },
               t("parentRequirement"),
@@ -6618,24 +7233,24 @@ ${detail.trim()}` : value);
               req.title
             )
           ),
-          runView.locked && h20("p", { className: "pw-note", role: "status" }, t(runView.description))
+          runView.locked && h22("p", { className: "pw-note", role: "status" }, t(runView.description))
         ),
-        form.updateAvailable && h20(
+        form.updateAvailable && h22(
           "div",
           { className: "pw-banner pw-warn", role: "alert" },
-          h20("span", null, t("newAiUpdate")),
+          h22("span", null, t("newAiUpdate")),
           quiet("keepMyDraft", form.keepUpdate),
           quiet("loadNewContent", () => {
             setFormError(null);
             form.loadUpdate();
           })
         ),
-        notice && h20("p", { className: "pw-note", role: "status" }, notice),
-        continueSaved && h20("p", { className: "pw-text pw-error", role: "alert" }, t("continueSaved")),
-        form.editing && !terminal ? h20(
-          import_react20.default.Fragment,
+        notice && h22("p", { className: "pw-note", role: "status" }, notice),
+        continueSaved && h22("p", { className: "pw-text pw-error", role: "alert" }, t("continueSaved")),
+        form.editing && !terminal ? h22(
+          import_react22.default.Fragment,
           null,
-          h20(TaskForm, {
+          h22(TaskForm, {
             form: { ...form, change: (...args) => {
               setFormError(null);
               form.change(...args);
@@ -6649,11 +7264,11 @@ ${detail.trim()}` : value);
             }) : form.finish()
           }),
           available && missing.length > 0 && quiet(busy ? "drafting" : "aiTaskDraft", () => act("issue/draft", { ...item, sessionId }))
-        ) : h20(
-          import_react20.default.Fragment,
+        ) : h22(
+          import_react22.default.Fragment,
           null,
-          inactive && h20("p", { className: "pw-note" }, t(req?.pendingReopen ? "errReopenPending" : "errNotActive")),
-          h20(
+          inactive && h22("p", { className: "pw-note" }, t(req?.pendingReopen ? "errReopenPending" : "errNotActive")),
+          h22(
             TaskReading,
             {
               task,
@@ -6662,10 +7277,10 @@ ${detail.trim()}` : value);
               t,
               sidebar: true,
               openWikiPage: (path) => openWikiPage(task.reqId, path),
-              resultActions: task.status === "in_review" ? h20(
-                import_react20.default.Fragment,
+              resultActions: task.status === "in_review" ? h22(
+                import_react22.default.Fragment,
                 null,
-                !inactive && h20(AcceptanceAssist, {
+                !inactive && h22(AcceptanceAssist, {
                   req,
                   issue: task,
                   root,
@@ -6679,19 +7294,19 @@ ${detail.trim()}` : value);
                 action
               ) : null
             },
-            !terminal && task.status !== "in_review" && missingText && !runView.locked && h20("p", { className: "pw-note" }, missingText),
+            !terminal && task.status !== "in_review" && missingText && !runView.locked && h22("p", { className: "pw-note" }, missingText),
             task.status !== "in_review" && action,
-            linkState?.link?.unrecorded && h20("p", { className: "pw-note" }, t("demoUnrecorded"))
+            linkState?.link?.unrecorded && h22("p", { className: "pw-note" }, t("demoUnrecorded"))
           ),
-          externalUpdate && h20("p", { className: "pw-note", role: "status" }, t("aiUpdated")),
-          activeDelivery && h20(
+          externalUpdate && h22("p", { className: "pw-note", role: "status" }, t("aiUpdated")),
+          activeDelivery && h22(
             Disclosure,
             { label: t("requirementDelivery") },
-            deliveryReq.status === "pending" && !deliveryDraftDirty ? h20(DeliveryResult, { req: deliveryReq, t, compact: true, userFacing: true }) : h20(
-              import_react20.default.Fragment,
+            deliveryReq.status === "pending" && !deliveryDraftDirty ? h22(DeliveryResult, { req: deliveryReq, t, compact: true, userFacing: true }) : h22(
+              import_react22.default.Fragment,
               null,
-              deliveryReq.status === "in_progress" && delivery?.status === "failed" && h20("p", { className: "pw-error" }, t("demoDeliveryFailed")),
-              h20(ManualDelivery, {
+              deliveryReq.status === "in_progress" && delivery?.status === "failed" && h22("p", { className: "pw-error" }, t("demoDeliveryFailed")),
+              h22(ManualDelivery, {
                 key: root + "|" + deliveryReq.id,
                 req: deliveryReq,
                 t,
@@ -6706,15 +7321,15 @@ ${detail.trim()}` : value);
             )
           )
         ),
-        !terminal && proposals.length > 0 && h20(
+        !terminal && proposals.length > 0 && h22(
           Disclosure,
           { label: t("demoDrafts") },
-          h20(DraftSuggestions, { proposals, act, root, t, busy: busy || form.dirty, dismissMethod: "proposal/dismiss", showHeading: false })
+          h22(DraftSuggestions, { proposals, act, root, t, busy: busy || form.dirty, dismissMethod: "proposal/dismiss", showHeading: false })
         ),
-        h20(
+        h22(
           "div",
           { hidden: form.editing && !terminal },
-          h20(UpdateLog, {
+          h22(UpdateLog, {
             activity: task.activity,
             t,
             onAdd: !terminal && !inactive ? (text) => act("issue/addUpdate", { ...item, text: "\u4EBA\u5DE5\u64CD\u4F5C\uFF1A" + text }) : void 0,
@@ -6724,7 +7339,7 @@ ${detail.trim()}` : value);
           })
         )
       ),
-      recording && h20(TaskResultForm, {
+      recording && h22(TaskResultForm, {
         task,
         since: taskSince,
         t,
@@ -6732,13 +7347,13 @@ ${detail.trim()}` : value);
         onClose: () => setRecording(false),
         onSave: (params) => available ? act("issue/update", { ...item, ...params }) : { ok: false, code: "RUNNING" }
       }),
-      manualReview && h20(Modal, { title: t("confirmIssueTitle"), wide: true, onClose: () => {
+      manualReview && h22(Modal, { title: t("confirmIssueTitle"), wide: true, onClose: () => {
         if (!busy) setManualReview(null);
       }, actions: [
         quiet("cancel", () => setManualReview(null)),
         primary("demoConfirm", () => confirm(manualReview), !reviewable || !taskResult(manualReview, taskSince).summary)
-      ] }, h20(TaskResult, { task: manualReview, since: taskSince, t, userFacing: true }), h20(ErrorDetails, { error: reviewError, t, showRaw: false })),
-      reasonMove && h20(
+      ] }, h22(TaskResult, { task: manualReview, since: taskSince, t, userFacing: true }), h22(ErrorDetails, { error: reviewError, t, showRaw: false })),
+      reasonMove && h22(
         Modal,
         { title: reasonTitle, onClose: () => {
           if (!busy) setReasonMove(null);
@@ -6746,7 +7361,7 @@ ${detail.trim()}` : value);
           quiet("cancel", () => setReasonMove(null)),
           primary("ok", move, busy || !reason.trim())
         ] },
-        h20("textarea", {
+        h22("textarea", {
           className: "pw-textarea",
           autoFocus: true,
           rows: 3,
@@ -6757,15 +7372,15 @@ ${detail.trim()}` : value);
             setReasonError(null);
           }
         }),
-        h20(ErrorDetails, { error: reasonError, t, showRaw: false })
+        h22(ErrorDetails, { error: reasonError, t, showRaw: false })
       )
     );
   }
 
   // client-src/conversation.js
-  var import_react21 = __toESM(__require("react"), 1);
+  var import_react23 = __toESM(__require("react"), 1);
   var import_dsh_client_ui_primitives = __require("@deepseek-ai/dsh-client-ui-primitives");
-  var { createElement: h21, useEffect: useEffect12, useRef: useRef9, useState: useState13 } = import_react21.default;
+  var { createElement: h23, useEffect: useEffect14, useRef: useRef10, useState: useState15 } = import_react23.default;
   var generating = /* @__PURE__ */ new Set(["running", "stopping", "starting"]);
   var confirmPrompts = { remove: "removePrompt", restore: "restorePrompt", start: "startPrompt" };
   var confirmActions = { remove: "pwbMoveToTrash", restore: "pwbRestore", start: "pwbStart", prd: "savePrd", reviewEdit: "pwbConfirm" };
@@ -6784,10 +7399,8 @@ ${detail.trim()}` : value);
       prds: "\u5173\u8054 PRD",
       savePrd: "\u4FDD\u5B58 PRD",
       checkPrdVersion: "\u6838\u5BF9\u5DF2\u4FDD\u5B58\u7248\u672C",
-      prdBefore: "\u539F\u7248\u672C\u4E2D\u7684\u6539\u52A8\u90E8\u5206",
-      prdAfter: "\u8349\u7A3F\u4E2D\u7684\u6539\u52A8\u90E8\u5206",
-      prdDiff: "\u67E5\u770B\u65B0\u65E7\u5DEE\u5F02",
-      noPrdDiff: "\u5185\u5BB9\u6CA1\u6709\u53D8\u5316",
+      prdLatestSaved: "\u5F53\u524D\u5DF2\u4FDD\u5B58\u7684\u6B63\u6587",
+      prdOverwrite: "\u8986\u76D6\u4FDD\u5B58 PRD",
       pwbCheckPassed: "\u901A\u8FC7",
       pwbCheckFailed: "\u5931\u8D25",
       pwbCheckIncomplete: "\u5F85\u6838\u5B9E",
@@ -6827,10 +7440,8 @@ ${detail.trim()}` : value);
       prds: "Related PRDs",
       savePrd: "Save PRD",
       checkPrdVersion: "Review the saved version",
-      prdBefore: "Changed lines in the saved version",
-      prdAfter: "Changed lines in the draft",
-      prdDiff: "Compare versions",
-      noPrdDiff: "No content changes",
+      prdLatestSaved: "Current saved text",
+      prdOverwrite: "Overwrite PRD",
       pwbCheckPassed: "Passed",
       pwbCheckFailed: "Failed",
       pwbCheckIncomplete: "Unverified",
@@ -6888,6 +7499,7 @@ ${detail.trim()}` : value);
       issueId: card.issueId ?? null,
       ...card.prdId && { prdId: card.prdId }
     }, statusPage(card.status ?? "backlog"));
+    else if (card.prdId) uiMemory2.views[key] = openDetail(view, { prdId: card.prdId }, "prds");
     else if (card.type) uiMemory2.views[key] = { ...view, page: card.type === "wiki" ? "wiki" : "arch", params: null, history: [] };
     else uiMemory2.views[key] = view;
     openMain();
@@ -6898,17 +7510,17 @@ ${detail.trim()}` : value);
     return type === "turn/end" || type === "tool/result" || type === "tool/ptc-dispatch" || type === "command/run" && data?.name?.startsWith("pwb-") || type === "command/done";
   }
   function ConversationDock(props) {
-    return h21(SessionConversationDock, { ...props, key: props.sessionId });
+    return h23(SessionConversationDock, { ...props, key: props.sessionId });
   }
   function SessionConversationDock({ sessionId, eventSource, t, useWorkspaces, openMain, enterSession, uiMemory: uiMemory2, css: css2 }) {
-    const [cards, setCards] = useState13([]);
-    const [error, setError] = useState13(null);
-    const [toast, setToast] = useState13(null);
-    const shown = useRef9(/* @__PURE__ */ new Set());
-    const generation = useRef9(0);
+    const [cards, setCards] = useState15([]);
+    const [error, setError] = useState15(null);
+    const [toast, setToast] = useState15(null);
+    const shown = useRef10(/* @__PURE__ */ new Set());
+    const generation = useRef10(0);
     const workspaces = (useWorkspaces ?? useNoWorkspaces3)((state) => state?.items) ?? [];
-    const refreshRef = useRef9(null);
-    useEffect12(() => {
+    const refreshRef = useRef10(null);
+    useEffect14(() => {
       setError(null);
       let disposed = false;
       let timer;
@@ -6947,7 +7559,7 @@ ${detail.trim()}` : value);
         document.removeEventListener("visibilitychange", schedule);
       };
     }, [sessionId, eventSource]);
-    useEffect12(() => {
+    useEffect14(() => {
       const ids = new Set(cards.map((card) => card.id));
       for (const id of shown.current) if (!ids.has(id)) shown.current.delete(id);
       if (toast) return;
@@ -6963,15 +7575,18 @@ ${detail.trim()}` : value);
     const perform = async (card, action, extra = {}) => {
       const res = await rpc("conversation/act", { sessionId, cardId: card.id, action, ...extra });
       setError(res.ok ? null : { cardId: card.id, ...res });
+      if (res.ok && card.kind === "prd" && action === "confirm") {
+        window.dispatchEvent(new CustomEvent("pw-prd-changed", { detail: { root: card.root } }));
+      }
       if (refreshRef.current && res.ok && res.data.sessionId) await enterSession(res.data.sessionId);
       await refreshRef.current?.();
       return res;
     };
-    const dock = running.length > 0 || pending.length > 0 ? h21(
+    const dock = running.length > 0 || pending.length > 0 ? h23(
       "section",
       { className: "pw-conversation", "aria-label": t("workbenchConversation") },
-      h21("style", null, css2 + conversationCss),
-      pending.map((card) => h21(ConversationAction, {
+      h23("style", null, css2 + conversationCss),
+      pending.map((card) => h23(ConversationAction, {
         key: card.id,
         card,
         t,
@@ -6981,13 +7596,13 @@ ${detail.trim()}` : value);
         perform,
         open: () => open(card)
       })),
-      running.length > 0 && h21(ResourceProgress, { cards: running, t })
+      running.length > 0 && h23(ResourceProgress, { cards: running, t })
     ) : null;
-    return h21(
-      import_react21.default.Fragment,
+    return h23(
+      import_react23.default.Fragment,
       null,
       dock,
-      toast && h21(ConversationToast, { key: toast.id, card: toast, t, open: () => open(toast), dismiss: () => setToast(null) })
+      toast && h23(ConversationToast, { key: toast.id, card: toast, t, open: () => open(toast), dismiss: () => setToast(null) })
     );
   }
   function resourceRunning(card) {
@@ -7012,10 +7627,10 @@ ${detail.trim()}` : value);
     else if (resource && card.state === "idle") message = t("pwbResourceIdle", { name });
     else if (card.kind === "open" && card.prdId) message = t("pwbPrdSaved");
     const label = resource ? t("pwbOpenResource", { name }) : t(card.prdId ? "pwbOpenPrd" : "openWorkbenchObject");
-    return h21(import_dsh_client_ui_primitives.Toast, {
+    return h23(import_dsh_client_ui_primitives.Toast, {
       text: message,
       onDone: dismiss,
-      ...failed ? { icon: h21(import_dsh_client_ui_primitives.IconWarningOutlineRegular), holdMs: 6e3 } : (canOpen || card.kind === "receipt" && !card.pending) && { tone: "success" },
+      ...failed ? { icon: h23(import_dsh_client_ui_primitives.IconWarningOutlineRegular), holdMs: 6e3 } : (canOpen || card.kind === "receipt" && !card.pending) && { tone: "success" },
       actions: canOpen ? [{ label, prefix: " \xB7 ", onClick: () => {
         dismiss();
         open();
@@ -7024,23 +7639,23 @@ ${detail.trim()}` : value);
   }
   function ResourceProgress({ cards, t }) {
     const label = (card) => t(card.state === "stopping" ? "pwbStopping" : "pwbGenerating", { name: resourceName(card, t) });
-    const spinner = h21("span", { className: "pw-conversation-spinner", "aria-hidden": true });
-    if (cards.length === 1) return h21(
+    const spinner = h23("span", { className: "pw-conversation-spinner", "aria-hidden": true });
+    if (cards.length === 1) return h23(
       "div",
       { className: "pw-conversation-row pw-conversation-progress", role: "status" },
       spinner,
-      h21("span", null, label(cards[0]))
+      h23("span", null, label(cards[0]))
     );
-    return h21(
+    return h23(
       "details",
       { className: "pw-conversation-group" },
-      h21(
+      h23(
         "summary",
         { className: "pw-conversation-row pw-conversation-progress" },
         spinner,
-        h21("span", { role: "status" }, t("pwbGenerationCount", { n: cards.length }))
+        h23("span", { role: "status" }, t("pwbGenerationCount", { n: cards.length }))
       ),
-      h21("ul", null, cards.map((card) => h21("li", { key: card.id }, label(card))))
+      h23("ul", null, cards.map((card) => h23("li", { key: card.id }, label(card))))
     );
   }
   function ConversationAction({ card, t, sessionId, uiMemory: uiMemory2, error, perform, open }) {
@@ -7048,10 +7663,10 @@ ${detail.trim()}` : value);
     const canConfirm = Object.hasOwn(confirmActions, card.kind);
     const drafts = uiMemory2.drafts ??= {};
     const draftKey = "conversation-prd:" + sessionId;
-    const [expanded, setExpanded] = useState13(false);
-    const [busy, setBusy] = useState13(false);
-    const [markdown, setMarkdown] = useState13(() => isPrd && drafts[draftKey]?.id === card.id ? drafts[draftKey].markdown : card.markdown ?? "");
-    const [reason, setReason] = useState13("");
+    const [expanded, setExpanded] = useState15(false);
+    const [busy, setBusy] = useState15(false);
+    const [markdown, setMarkdown] = useState15(() => isPrd && drafts[draftKey]?.id === card.id ? drafts[draftKey].markdown : card.markdown ?? "");
+    const [reason, setReason] = useState15("");
     const launch = async (action, extra) => {
       if (busy) return;
       setBusy(true);
@@ -7065,54 +7680,56 @@ ${detail.trim()}` : value);
         setBusy(false);
       }
     };
-    const close = () => {
-      if (!busy) setExpanded(false);
+    const close = (event) => {
+      if (busy) return;
+      if (isPrd && event?.currentTarget?.getAttribute?.("aria-hidden") === "true") return;
+      setExpanded(false);
     };
     const confirmation = confirmPrompts[card.kind];
     const direct = card.kind === "open" || card.kind === "openTask" && !card.evidence;
     const label = isPrd ? "pwbPreviewPrd" : card.kind === "open" ? "openWorkbenchObject" : direct ? "openAcceptance" : canConfirm ? "pwbPreviewAction" : card.evidence ? "pwbReviewDetails" : "pwbDetails";
-    const row = h21(
+    const row = h23(
       "div",
       { className: "pw-conversation-row" },
-      h21("span", { className: "pw-conversation-label", title: card.title }, isPrd ? t("pwbPrdReady") : card.title),
-      h21(import_dsh_client_ui_primitives.Button, {
+      h23("span", { className: "pw-conversation-label", title: card.title }, isPrd ? t("pwbPrdReady") : card.title),
+      h23(import_dsh_client_ui_primitives.Button, {
         size: "sm",
         disabled: busy,
         "aria-haspopup": direct ? void 0 : "dialog",
         onClick: card.kind === "open" ? open : direct ? () => launch("openTask") : () => setExpanded(true)
       }, t(label)),
-      !isPrd && h21(import_dsh_client_ui_primitives.Button, {
+      !isPrd && h23(import_dsh_client_ui_primitives.Button, {
         size: "sm",
         disabled: busy,
         "aria-label": t("pwbDismiss"),
         title: t("pwbDismiss"),
-        icon: h21(import_dsh_client_ui_primitives.IconCloseOutlineRegular, { size: 14, "aria-hidden": true }),
+        icon: h23(import_dsh_client_ui_primitives.IconCloseOutlineRegular, { size: 14, "aria-hidden": true }),
         onClick: () => launch("dismiss")
       }),
-      !expanded && error && h21("p", { role: "alert", className: "pw-error" }, error.message)
+      !expanded && error && h23("p", { role: "alert", className: "pw-error" }, error.message)
     );
     if (!expanded) return row;
-    const footer = h21(
-      import_react21.default.Fragment,
+    const footer = h23(
+      import_react23.default.Fragment,
       null,
-      isPrd && error?.code === "PRD_CONFLICT" && card.previous !== void 0 && h21(import_dsh_client_ui_primitives.Button, { disabled: busy, onClick: () => launch("reloadPrd") }, t("checkPrdVersion")),
-      h21(
+      isPrd && error?.code === "PRD_CONFLICT" && card.updating && h23(import_dsh_client_ui_primitives.Button, { disabled: busy, onClick: () => launch("reloadPrd") }, t("checkPrdVersion")),
+      h23(
         import_dsh_client_ui_primitives.Button,
         { disabled: busy, onClick: canConfirm ? () => launch("dismiss") : close },
         t(isPrd ? "pwbDiscardPrd" : canConfirm ? "pwbCancel" : "pwbDismiss")
       ),
-      card.kind === "openTask" && h21(import_dsh_client_ui_primitives.Button, { variant: "primary", disabled: busy, onClick: () => launch("openTask") }, t("openAcceptance")),
-      canConfirm && h21(import_dsh_client_ui_primitives.Button, {
+      card.kind === "openTask" && h23(import_dsh_client_ui_primitives.Button, { variant: "primary", disabled: busy, onClick: () => launch("openTask") }, t("openAcceptance")),
+      canConfirm && h23(import_dsh_client_ui_primitives.Button, {
         variant: "primary",
-        disabled: busy || isPrd && !markdown.trim() || card.kind === "reviewEdit" && !reason.trim(),
+        disabled: busy || isPrd && (!markdown.trim() || error?.code === "PRD_CONFLICT") || card.kind === "reviewEdit" && !reason.trim(),
         onClick: () => launch("confirm", { ...isPrd && { markdown }, ...card.kind === "reviewEdit" && { reason } })
-      }, t(confirmActions[card.kind]))
+      }, t(isPrd && card.updating ? "prdOverwrite" : confirmActions[card.kind]))
     );
-    return h21(
-      import_react21.default.Fragment,
+    return h23(
+      import_react23.default.Fragment,
       null,
       row,
-      h21(
+      h23(
         import_dsh_client_ui_primitives.Modal,
         {
           open: expanded,
@@ -7125,35 +7742,40 @@ ${detail.trim()}` : value);
           tone: card.kind === "remove" ? "warning" : void 0,
           description: isPrd ? card.requirements.join(" \xB7 ") : confirmation ? t(confirmation) : card.evidence || canConfirm ? card.message : void 0
         },
-        card.kind === "note" && h21("p", null, card.message),
-        card.evidence && h21(TaskEvidence, { data: card.evidence, t }),
-        card.kind === "reviewEdit" && h21(
-          import_react21.default.Fragment,
+        card.kind === "note" && h23("p", null, card.message),
+        card.evidence && h23(TaskEvidence, { data: card.evidence, t }),
+        card.kind === "reviewEdit" && h23(
+          import_react23.default.Fragment,
           null,
-          h21("p", null, t("confirmReviewEditBody")),
-          h21("ul", null, card.changes.map(({ label: label2, value }) => h21("li", { key: label2 }, label2, " \xB7 ", value))),
-          h21(
+          h23("p", null, t("confirmReviewEditBody")),
+          h23("ul", null, card.changes.map(({ label: label2, value }) => h23("li", { key: label2 }, label2, " \xB7 ", value))),
+          h23(
             "label",
             { className: "pw-field" },
-            h21("span", null, t("reasonTitle")),
-            h21("input", { className: "pw-input", value: reason, onChange: (event) => setReason(event.target.value) })
+            h23("span", null, t("reasonTitle")),
+            h23("input", { className: "pw-input", value: reason, onChange: (event) => setReason(event.target.value) })
           )
         ),
-        isPrd && h21(
-          import_react21.default.Fragment,
+        isPrd && h23(
+          import_react23.default.Fragment,
           null,
-          h21(
+          h23(
             "label",
             { className: "pw-field" },
-            h21("span", null, t("prdMarkdown")),
-            h21("textarea", { className: "pw-textarea", rows: 10, value: markdown, onChange: (event) => {
+            h23("span", null, t("prdMarkdown")),
+            h23("textarea", { className: "pw-textarea", rows: 10, value: markdown, onChange: (event) => {
               setMarkdown(event.target.value);
               drafts[draftKey] = { id: card.id, markdown: event.target.value };
             } })
           ),
-          card.previous !== void 0 && h21(PrdDiff, { before: card.previous, after: markdown, t })
+          card.latest !== void 0 && h23(
+            "details",
+            { open: true },
+            h23("summary", null, t("prdLatestSaved")),
+            h23("pre", null, card.latest)
+          )
         ),
-        error && h21("p", { role: "alert", className: "pw-error" }, error.message)
+        error && h23("p", { role: "alert", className: "pw-error" }, error.message)
       )
     );
   }
@@ -7161,40 +7783,17 @@ ${detail.trim()}` : value);
     const { verification, currentEvidence } = data;
     const counts = verification && t("checksPassed", { n: verification.passed }) + " \xB7 " + t("checksFailed", { n: verification.failed });
     const outcomeLabels = { passed: "pwbCheckPassed", failed: "pwbCheckFailed", incomplete: "pwbCheckIncomplete" };
-    return h21(
+    return h23(
       "details",
       { open: true },
-      h21("summary", null, t("verify")),
-      h21("p", null, t("acceptanceField"), " \xB7 ", data.acceptance || t("noLimits")),
-      counts && h21("p", null, counts),
-      verification?.status === "unverified" && h21("p", null, t("noChecks")),
-      (verification?.incomplete > 0 || verification?.unconfirmedChanges > 0) && h21("p", null, t("checksIncomplete")),
-      data.currentLimits && h21("p", null, data.currentLimits),
-      data.checks?.length > 0 && h21("ul", null, data.checks.map((check) => h21("li", { key: check.command }, t(outcomeLabels[check.status]), " \xB7 ", h21("code", null, check.command), " \xB7 ", check.outcome))),
-      currentEvidence && h21("pre", null, currentEvidence)
-    );
-  }
-  function changedLines(before, after) {
-    const a = before.trim().split(/\r?\n/), b = after.trim().split(/\r?\n/);
-    let start = 0;
-    let end = 0;
-    const min = Math.min(a.length, b.length);
-    while (start < min && a[start] === b[start]) start++;
-    while (end < min - start && a[a.length - 1 - end] === b[b.length - 1 - end]) end++;
-    return [a.slice(start, a.length - end).join("\n"), b.slice(start, b.length - end).join("\n")];
-  }
-  function PrdDiff({ before, after, t }) {
-    const [removed, added] = changedLines(before, after);
-    return h21(
-      "details",
-      { className: "pw-prd-diff", open: true },
-      h21("summary", null, t("prdDiff")),
-      !removed && !added ? h21("p", null, t("noPrdDiff")) : h21(
-        "div",
-        { className: "pw-prd-diff-columns" },
-        h21("div", null, h21("span", null, t("prdBefore")), h21("pre", null, removed)),
-        h21("div", null, h21("span", null, t("prdAfter")), h21("pre", null, added))
-      )
+      h23("summary", null, t("verify")),
+      h23("p", null, t("acceptanceField"), " \xB7 ", data.acceptance || t("noLimits")),
+      counts && h23("p", null, counts),
+      verification?.status === "unverified" && h23("p", null, t("noChecks")),
+      (verification?.incomplete > 0 || verification?.unconfirmedChanges > 0) && h23("p", null, t("checksIncomplete")),
+      data.currentLimits && h23("p", null, data.currentLimits),
+      data.checks?.length > 0 && h23("ul", null, data.checks.map((check) => h23("li", { key: check.command }, t(outcomeLabels[check.status]), " \xB7 ", h23("code", null, check.command), " \xB7 ", check.outcome))),
+      currentEvidence && h23("pre", null, currentEvidence)
     );
   }
   var conversationCss = [
@@ -7214,13 +7813,12 @@ ${detail.trim()}` : value);
     ".pw-conversation-dialog-content{min-height:0;overflow:auto}",
     ".pw-conversation-dialog p,.pw-conversation-dialog pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0}",
     ".pw-conversation-dialog li{overflow-wrap:anywhere}",
-    ".pw-prd-diff-columns{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:12px}",
     ".pw-conversation-dialog details pre{max-height:150px;overflow:auto}",
     ".pw-conversation-dialog .pw-field{display:block}.pw-conversation-dialog textarea{box-sizing:border-box;max-height:40vh}"
   ].join("\n");
 
   // client-src/index.js
-  var h22 = import_react22.default.createElement;
+  var h24 = import_react24.default.createElement;
   var NS = "projectWorkbench";
   var PANEL_ID = "project-workbench";
   var en = {
@@ -7228,6 +7826,8 @@ ${detail.trim()}` : value);
     ...rightbarLocale.en,
     ...acceptanceAssistLocale.en,
     ...conversationLocale.en,
+    ...prdLocale.en,
+    ...prdEditorLocale.en,
     requirementActions: "More options",
     resumeReopen: "Resume reopening",
     reopenProgress: "{done} of {total} tasks prepared",
@@ -7561,6 +8161,8 @@ ${detail.trim()}` : value);
     ...rightbarLocale.zh,
     ...acceptanceAssistLocale.zh,
     ...conversationLocale.zh,
+    ...prdLocale.zh,
+    ...prdEditorLocale.zh,
     requirementActions: "\u66F4\u591A\u9009\u9879",
     resumeReopen: "\u7EE7\u7EED\u91CD\u5F00",
     reopenProgress: "\u5DF2\u5904\u7406 {done}/{total} \u9879\u4EFB\u52A1",
@@ -8213,12 +8815,12 @@ ${detail.trim()}` : value);
 @media(prefers-reduced-motion:reduce){.pw-page *{transition:none!important}}
 `;
   function WorkbenchIcon({ size = 16 }) {
-    return h22(
+    return h24(
       "svg",
       { width: size, height: size, viewBox: "0 0 20 20", fill: "none", "aria-hidden": true },
-      h22("rect", { x: 2, y: 3, width: 4, height: 11, rx: 1, stroke: "currentColor", strokeWidth: 1.4 }),
-      h22("rect", { x: 8, y: 3, width: 4, height: 14, rx: 1, stroke: "currentColor", strokeWidth: 1.4 }),
-      h22("rect", { x: 14, y: 3, width: 4, height: 8, rx: 1, stroke: "currentColor", strokeWidth: 1.4 })
+      h24("rect", { x: 2, y: 3, width: 4, height: 11, rx: 1, stroke: "currentColor", strokeWidth: 1.4 }),
+      h24("rect", { x: 8, y: 3, width: 4, height: 14, rx: 1, stroke: "currentColor", strokeWidth: 1.4 }),
+      h24("rect", { x: 14, y: 3, width: 4, height: 8, rx: 1, stroke: "currentColor", strokeWidth: 1.4 })
     );
   }
   var shellCss = `

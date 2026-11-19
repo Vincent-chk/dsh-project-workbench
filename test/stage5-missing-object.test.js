@@ -1,4 +1,4 @@
-// Verify the actual missing-object panel labels the same destination its button opens.
+// Verify navigation keeps the original requirement and correct return destinations.
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createRequire } from 'node:module'
@@ -32,7 +32,7 @@ function find(tree, predicate) {
   }
   return null
 }
-function renderMissing(nav, requirements) {
+function renderShell(nav, requirements) {
   let stateNumber = 0
   const data = { project: { name: '隔离项目' }, requirements, diagnostics: [] }
   const react = {
@@ -50,6 +50,11 @@ function renderMissing(nav, requirements) {
     useCurrentSession: cb => cb(undefined), useSessions: cb => cb({ byId: {} }),
     useWorkspaces: cb => cb({ items: [{ workspaceId: 'w1', path: '/isolated', title: '隔离项目' }] }),
   })
+  return { shell, uiMemory }
+}
+
+function renderMissing(nav, requirements) {
+  const { shell, uiMemory } = renderShell(nav, requirements)
   const panel = find(shell, node => node.props?.className === 'pw-init' && find(node, child => child.type === 'p' && child.props.children.includes('找不到此项内容')))
   assert.ok(panel, 'missing-object panel is rendered')
   return { button: find(panel, node => node.type === 'button'), uiMemory }
@@ -76,4 +81,35 @@ test('missing task, parent and record describe their real return destinations', 
   assert.equal(renderMissing(fromHome, [req]).button.props.children[0], '返回首页')
   const record = openDetail({ ...defaultViewState(), page: 'records' }, { record: { reqId: 'r1', round: 1 } })
   assert.equal(renderMissing(record, []).button.props.children[0], '返回验收记录')
+})
+
+test('opening an associated PRD keeps the original requirement detail and its navigation', t => {
+  t.after(() => { delete globalThis.__missingObjectHost })
+  const req = {
+    id: 'r1', title: '通知偏好', status: 'backlog', q_pain: '通知太多', goal: '降低打扰',
+    scope: '站内通知', acceptance: '可关闭通知', issues: [], reviews: [],
+  }
+  const view = openDetail({ ...defaultViewState(), page: 'pool' }, { reqId: req.id, issueId: null })
+  const { shell, uiMemory } = renderShell(view, [req])
+  const detail = find(shell, node => node.props?.req === req && node.props.onCreateTask)
+  assert.ok(detail)
+  const documents = detail.props.prdPanel ?? find(shell, node => node.props?.reqId === req.id && node.props.onRead)
+  assert.ok(documents)
+  documents.props.onRead('prd-1')
+
+  const opened = uiMemory.views['id:w1']
+  assert.equal(opened.page, 'pool', 'PRD reading must not replace the requirement page')
+  assert.equal(opened.params.reqId, req.id)
+  assert.equal(opened.params.prdId, 'prd-1')
+  assert.deepEqual(opened.history, view.history)
+
+  const { shell: reading, uiMemory: readingMemory } = renderShell(opened, [req])
+  assert.deepEqual(find(reading, node => node.props?.req === req && node.props.onCreateTask)?.props.req, req)
+  const stack = find(reading, node => node.props?.className === 'pw-subpage-stack')
+  assert.equal(stack.props.children[0].props.req, req)
+  const reader = stack.props.children[1]
+  assert.equal(reader.props.activeId, 'prd-1')
+  reader.props.onRead(null)
+  assert.equal(readingMemory.views['id:w1'].params.reqId, req.id)
+  assert.equal(readingMemory.views['id:w1'].params.prdId, null)
 })

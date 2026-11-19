@@ -12,6 +12,7 @@ import { maybeRunLiveProbe, maybeRunPatchProbe } from './live-probe.js'
 import { installLinks } from './link.js'
 import { acceptanceMode } from './tools.js'
 import { listProposals } from './proposals.js'
+import { listPrds, savePrd } from './prd.js'
 
 // Plugins cannot resolve @deepseek-ai/* by name; anchor at the running DSH install.
 function dshAnchor() {
@@ -38,6 +39,12 @@ export async function ensureDemoData(root) {
   try { await readFile(join(root, '.project', 'project.md'), 'utf8') } catch { await store.initProject(root, {}) }
   const develop = async reqId => {
     await store.updateRequirement(root, reqId, { goal: '空名字时给出清楚提示', scope: '只处理示例问候函数', acceptance: '三个输入场景通过' })
+    if (!(await listPrds(root, reqId)).length) {
+      await savePrd(root, {
+        reqIds: [reqId],
+        markdown: '# 问候示例\n\n用户未填写名字或输入全空格时，显示“请填写名字”。输入正常名字时，保留原问候。',
+      })
+    }
     await store.moveRequirement(root, reqId, 'reviewing')
     await store.moveRequirement(root, reqId, 'ready')
     await store.moveRequirement(root, reqId, 'in_progress')

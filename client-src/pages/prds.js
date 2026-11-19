@@ -1,0 +1,263 @@
+import React from 'react'
+import { rpc } from '../api.js'
+import { Modal } from '../shared/ui.js'
+import { ListPage } from '../shared/list.js'
+import { renderMarkdown } from './resources.js'
+
+const h = React.createElement
+const { useEffect, useRef, useState } = React
+const prdDateFormat = new Intl.DateTimeFormat(undefined, {
+  year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+})
+function prdDate(value) {
+  const time = Date.parse(value)
+  return Number.isFinite(time) ? prdDateFormat.format(time) : ''
+}
+
+export const prdLocale = {
+  en: {
+    navPrds: 'PRD management', prdNew: 'New PRD', prdRead: 'View PRD', prdCloseRead: 'Close PRD', prdTrash: 'Trash', prdActive: 'Active PRDs',
+    prdEmpty: 'No PRDs have been saved in this project.', prdTrashEmpty: 'No deleted PRDs.',
+    prdRelatedRequirements: 'Related requirements', prdNoRequirements: 'No linked requirements',
+    prdLinkPicker: 'Choose a PRD', prdSaveLink: 'Save link', prdUnlink: 'Unlink',
+    prdRestore: 'Restore', prdNoLinks: 'This requirement has no linked PRDs.', prdNoOptions: 'No other PRDs are available to link.',
+    prdLinkSaved: 'PRD linked.', prdLinkRemoved: 'PRD unlinked.', prdRestored: 'PRD restored.', prdDeleted: 'PRD moved to Trash.',
+    prdDeleteTitle: 'Delete PRD?', prdDeleteHint: 'This document will be removed from the following requirements. It can be restored from Trash.',
+    prdDeleteUnlinked: 'This document can be restored from Trash.',
+    prdImageMissing: 'Image unavailable', prdImageLoading: 'Loading image',
+    reviewPrdRequired: 'Link a saved PRD before sending this requirement for review.', prdGoLink: 'Go to linked PRDs',
+  },
+  zh: {
+    navPrds: 'PRD 管理', prdNew: '新建 PRD', prdRead: '查看 PRD', prdCloseRead: '收起 PRD', prdTrash: '回收站', prdActive: '当前文档',
+    prdEmpty: '当前项目还没有已保存的 PRD。', prdTrashEmpty: '回收站为空。',
+    prdRelatedRequirements: '关联需求', prdNoRequirements: '未关联需求',
+    prdLinkPicker: '选择 PRD', prdSaveLink: '保存关联', prdUnlink: '解除关联',
+    prdRestore: '恢复', prdNoLinks: '当前需求还没有关联 PRD。', prdNoOptions: '暂无其他可关联的 PRD。',
+    prdLinkSaved: '已保存 PRD 关联。', prdLinkRemoved: '已解除 PRD 关联。', prdRestored: '已恢复 PRD。', prdDeleted: '已将 PRD 移入回收站。',
+    prdDeleteTitle: '删除 PRD？', prdDeleteHint: '以下需求将失去此文档的关联。之后可在回收站恢复。',
+    prdDeleteUnlinked: '之后可在回收站恢复此文档。',
+    prdImageMissing: '图片无法显示', prdImageLoading: '图片加载中',
+    reviewPrdRequired: '请先关联一份 PRD，再提交评审。', prdGoLink: '去关联 PRD',
+  },
+}
+
+export function notifyPrdChanged(root) {
+  window.dispatchEvent(new CustomEvent('pw-prd-changed', { detail: { root } }))
+}
+
+function usePrdRead(root, { id, deleted = false } = {}) {
+  const [revision, setRevision] = useState(0)
+  const [result, setResult] = useState(null)
+  const reload = () => setRevision(value => value + 1)
+  useEffect(() => {
+    const changed = event => { if (event.detail?.root === root) reload() }
+    const visible = () => { if (!document.hidden) reload() }
+    window.addEventListener('pw-prd-changed', changed)
+    document.addEventListener('visibilitychange', visible)
+    return () => {
+      window.removeEventListener('pw-prd-changed', changed)
+      document.removeEventListener('visibilitychange', visible)
+    }
+  }, [root])
+  useEffect(() => {
+    let active = true
+    const request = id ? rpc('prd/read', { root, id }) : rpc('prd/list', { root, deleted })
+    request.then(res => { if (active) setResult({ root, id, deleted, revision, res }) })
+    return () => { active = false }
+  }, [root, id, deleted, revision])
+  const current = result && result.root === root && result.id === id && result.deleted === deleted ? result : null
+  return { data: current?.res.ok ? current.res.data : null, error: current?.res.ok === false ? current.res : null,
+    initial: !current, pending: current?.revision !== revision, reload }
+}
+
+function PrdError({ error, t, onRetry }) {
+  if (!error) return null
+  return h('div', { className: 'pw-prd-error', role: 'alert' },
+    h('span', { className: 'pw-error' }, error.message || t('errGeneric')),
+    onRetry && h('button', { type: 'button', className: 'pw-button pw-quiet', onClick: onRetry }, t('retryRead')))
+}
+
+const reqTitle = (requirements, id) => requirements.find(item => item.id === id)?.title || id
+
+export function PrdManagement({ wb, onRead, onEdit }) {
+  const { root, requirements, t, nav, setFilter } = wb
+  const deleted = nav.filters.prds?.deleted === true
+  const { data, error, initial, pending, reload } = usePrdRead(root, { deleted })
+  const [remove, setRemove] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [actionError, setActionError] = useState(null)
+  const [notice, setNotice] = useState('')
+  const changeTab = next => { setNotice(''); setActionError(null); setFilter('prds', { deleted: next, query: '' }) }
+  const manage = async (method, item) => {
+    if (busy) return
+    setBusy(true); setActionError(null); setNotice('')
+    const res = await rpc(method, { root, id: item.id, version: item.version })
+    setBusy(false)
+    if (!res.ok) {
+      setActionError(res)
+      if (res.code === 'PRD_CONFLICT') { setRemove(null); reload() }
+      return
+    }
+    setRemove(null)
+    setNotice(t(method === 'prd/delete' ? 'prdDeleted' : 'prdRestored'))
+    notifyPrdChanged(root)
+  }
+  const query = String(nav.filters.prds?.query ?? '').trim().toLocaleLowerCase()
+  const items = [...(data ?? [])].filter(item => !query || item.title.toLocaleLowerCase().includes(query))
+    .sort((a, b) => String(b.updated ?? '').localeCompare(String(a.updated ?? '')) || a.title.localeCompare(b.title))
+  const toolbar = h(React.Fragment, null,
+    h('div', { className: 'pw-prd-switch', role: 'group', 'aria-label': t('navPrds') },
+      h('button', { className: 'pw-button' + (!deleted ? ' primary' : ''), 'aria-pressed': !deleted,
+        onClick: () => changeTab(false) }, t('prdActive')),
+      h('button', { className: 'pw-button' + (deleted ? ' primary' : ''), 'aria-pressed': deleted,
+        onClick: () => changeTab(true) }, t('prdTrash'))),
+    !deleted && h('button', { className: 'pw-button', onClick: () => onEdit() }, t('prdNew')))
+  return h(React.Fragment, null,
+    !remove && h(PrdError, { error: actionError, t }),
+    h(PrdError, { error, t, onRetry: reload }),
+    notice && h('p', { className: 'pw-prd-notice', role: 'status' }, notice),
+    h(ListPage, { wb, page: 'prds', items, toolbar,
+      emptyText: initial || pending ? t('loading') : error ? '' : t(deleted ? 'prdTrashEmpty' : 'prdEmpty'),
+      renderRow: item => {
+        const metadata = h(React.Fragment, null,
+          h('strong', { className: 'pw-preview' }, item.title),
+          h('span', { className: 'pw-count' }, 'v' + item.revision, ' · ', t('updated'), ' ', prdDate(item.updated)),
+          h('span', { className: 'pw-preview pw-note' }, item.reqIds.length
+            ? t('prdRelatedRequirements') + ' · ' + item.reqIds.map(id => reqTitle(requirements, id)).join('、')
+            : t('prdNoRequirements')))
+        return h('div', { className: 'pw-row pw-prd-row', key: item.id },
+          deleted ? h('div', { className: 'pw-row-main pw-row-static' }, metadata)
+            : h('button', { className: 'pw-row-main', onClick: () => onRead(item.id) }, metadata),
+          h('div', { className: 'pw-row-actions' }, deleted
+            ? h('button', { className: 'pw-button', onClick: () => manage('prd/restore', item), disabled: busy || pending }, t('prdRestore'))
+            : [h('button', { key: 'edit', className: 'pw-button', onClick: () => onEdit(item.id), disabled: busy || pending }, t('edit')),
+                h('button', { key: 'delete', className: 'pw-button danger', onClick: () => { setRemove(item); setActionError(null) }, disabled: busy || pending }, t('delete'))]))
+      },
+    }),
+    remove && h(Modal, { title: t('prdDeleteTitle'), onClose: () => { if (!busy) setRemove(null) }, actions: [
+      h('button', { key: 'cancel', className: 'pw-button', disabled: busy, onClick: () => setRemove(null) }, t('cancel')),
+      h('button', { key: 'delete', className: 'pw-button danger', disabled: busy, onClick: () => manage('prd/delete', remove) }, t('delete')),
+    ] }, h('strong', null, remove.title),
+    h('p', { className: 'pw-note' }, t(remove.reqIds.length ? 'prdDeleteHint' : 'prdDeleteUnlinked')),
+    remove.reqIds.length > 0 && h('ul', { className: 'pw-diaglist' }, remove.reqIds.map(id => h('li', { key: id }, reqTitle(requirements, id)))),
+    h(PrdError, { error: actionError, t })))
+}
+
+export function PrdDocuments({ root, reqId, requirements, t, activeId, onRead, onEdit, onNew }) {
+  const { data, error, initial, pending, reload } = usePrdRead(root)
+  const [pick, setPick] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [actionError, setActionError] = useState(null)
+  const [notice, setNotice] = useState('')
+  const linked = (data ?? []).filter(item => item.reqIds.includes(reqId))
+  const available = (data ?? []).filter(item => !item.reqIds.includes(reqId))
+  const candidate = available.find(item => item.id === pick)
+  const changeLink = async (item, linked) => {
+    if (busy || pending || !item) return
+    setBusy(true); setActionError(null); setNotice('')
+    const res = await rpc('prd/link', { root, id: item.id, reqId, linked, version: item.version })
+    setBusy(false)
+    if (!res.ok) {
+      setActionError(res)
+      if (res.code === 'PRD_CONFLICT') reload()
+      return
+    }
+    setPick('')
+    if (!linked && item.id === activeId) onRead(null)
+    setNotice(t(linked ? 'prdLinkSaved' : 'prdLinkRemoved'))
+    notifyPrdChanged(root)
+  }
+  return h('section', { id: 'pw-prd-associations-' + reqId, tabIndex: -1, className: 'pw-subpage pw-prd-associations', 'aria-label': t('prds') },
+    h('header', { className: 'pw-subpage-head' }, h('h2', null, t('prds')),
+      h('button', { type: 'button', className: 'pw-button', onClick: () => onNew(reqId) }, t('prdNew'))),
+    h(PrdError, { error, t, onRetry: reload }),
+    h(PrdError, { error: actionError, t }),
+    initial ? h('p', { className: 'pw-note', role: 'status' }, t('loading')) : !error && h(React.Fragment, null,
+      linked.length === 0 && h('p', { className: 'pw-note' }, t('prdNoLinks')),
+      linked.length > 0 && h('ul', { className: 'pw-prd-links' }, linked.map(item => h('li', { key: item.id },
+        h('button', { type: 'button', className: 'pw-button pw-prd-link', 'aria-expanded': item.id === activeId,
+          onClick: () => onRead(activeId === item.id ? null : item.id) }, item.title),
+        h('span', { className: 'pw-count' }, 'v' + item.revision),
+        h('button', { type: 'button', className: 'pw-button pw-quiet', 'aria-label': `${t('prdUnlink')} · ${item.title}`,
+          disabled: busy || pending, onClick: () => changeLink(item, false) }, t('prdUnlink'))))),
+      activeId && h(PrdReader, { key: activeId, root, id: activeId, requirements, t, onEdit, onBack: () => onRead(null), inline: true }),
+      h('form', { className: 'pw-prd-link-form', onSubmit: event => { event.preventDefault(); changeLink(candidate, true) } },
+        h('label', { className: 'pw-field' }, h('span', null, t('prdLinkPicker')),
+          h('select', { className: 'pw-select', value: candidate?.id ?? '', disabled: busy || pending || !available.length, onChange: event => { setPick(event.target.value); setActionError(null) } },
+            h('option', { value: '' }, t(available.length ? 'prdLinkPicker' : 'prdNoOptions')),
+            available.map(item => h('option', { key: item.id, value: item.id }, `${item.title} · v${item.revision}`)))),
+        h('div', { className: 'pw-actions' },
+          h('button', { type: 'submit', className: 'pw-button primary', disabled: busy || pending || !candidate }, t('prdSaveLink')),
+          h('button', { type: 'button', className: 'pw-button pw-quiet', disabled: busy || !pick,
+            onClick: () => { setPick(''); setActionError(null) } }, t('cancel'))))),
+    notice && h('p', { className: 'pw-prd-notice', role: 'status' }, notice))
+}
+
+function PrdImage({ root, id, name, alt, revision, t }) {
+  const [image, setImage] = useState(null)
+  useEffect(() => {
+    let active = true
+    rpc('prd/image', { root, id, name }).then(({ ok, data }) => {
+      if (!active) return
+      const safe = ok && /^image\/(?:png|jpeg|gif|webp)$/.test(data?.mime) && typeof data.base64 === 'string'
+      setImage(safe ? `data:${data.mime};base64,${data.base64}` : '')
+    })
+    return () => { active = false }
+  }, [root, id, name, revision])
+  if (image) return h('img', { className: 'pw-prd-image', src: image, alt, loading: 'lazy', decoding: 'async', onError: () => setImage('') })
+  return h('span', { className: 'pw-note' }, alt || t(image === null ? 'prdImageLoading' : 'prdImageMissing'))
+}
+
+export function PrdReader({ root, id, requirements, t, onEdit, onBack, inline = false }) {
+  const { data: prd, error, initial, reload } = usePrdRead(root, { id })
+  const reader = useRef(null)
+  useEffect(() => {
+    if (inline && !initial) reader.current?.scrollIntoView({ block: 'nearest' })
+  }, [inline, initial])
+  return h('section', { ref: reader, className: 'pw-prd-reader' + (inline ? ' pw-prd-reader-inline' : ''), 'aria-label': t('prdRead') },
+    h('header', { className: 'pw-prd-reader-head' },
+      h('button', { className: 'pw-button', onClick: onBack }, t(inline ? 'prdCloseRead' : 'backToPrevious')),
+      prd && h('button', { className: 'pw-button', onClick: () => onEdit(id) }, t('edit'))),
+    h(PrdError, { error, t, onRetry: reload }),
+    initial && h('p', { className: 'pw-note', role: 'status' }, t('loading')),
+    prd && h('div', { className: 'pw-prd-scroll', tabIndex: 0, role: 'region', 'aria-label': prd.title },
+      h('article', { className: 'pw-md pw-prd-article' },
+        h('h1', { className: 'pw-md-h' }, prd.title),
+        h('p', { className: 'pw-count' }, 'v' + prd.revision, ' · ', t('updated'), ' ', prdDate(prd.updated)),
+        prd.reqIds.length > 0 && h('p', { className: 'pw-note' }, t('prdRelatedRequirements'), ' · ', prd.reqIds.map(reqId => reqTitle(requirements, reqId)).join('、')),
+        renderMarkdown(prd.markdown.replace(/^#[ \t]+[^\r\n]+(?:\r?\n|$)/, ''), t, {
+          image: (alt, path, key) => {
+            const name = /^assets\/([a-z0-9][a-z0-9_.-]*)$/i.exec(path)?.[1]
+            return name ? h(PrdImage, { key: key + ':' + name + ':' + prd.version, name, alt, root, id, revision: prd.revision, t })
+              : h('span', { key, className: 'pw-note' }, alt || t('prdImageMissing'))
+          },
+        }))))
+}
+
+export const prdCss = `
+.pw-prd-error{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-block:6px}
+.pw-prd-notice{margin-block:3px;color:var(--dsw-alias-label-secondary)}
+.pw-prd-switch{display:flex;gap:6px}
+.pw-prd-row{flex-wrap:wrap}
+.pw-prd-row .pw-row-main{min-width:min(180px,100%)}
+.pw-prd-associations:focus-visible,.pw-prd-scroll:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
+.pw-prd-associations .pw-subpage-head{align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.pw-prd-associations .pw-subpage-head h2{font-size:16px;margin:0}
+.pw-prd-links{list-style:none;padding:0;margin:0 0 14px}
+.pw-prd-links li{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--dsw-alias-border-l3);padding-block:4px}
+.pw-prd-links li .pw-button:last-child{margin-inline-start:auto}
+.pw-prd-links .pw-prd-link{max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:start}
+.pw-prd-link-form{display:grid;grid-template-columns:minmax(180px,1fr) auto;align-items:end;gap:8px 12px;padding:12px;border-radius:8px;background:var(--dsw-alias-bg-layer-2)}
+.pw-prd-link-form .pw-field{margin:0;min-width:0}
+.pw-prd-link-form select{width:100%;min-height:32px}
+.pw-prd-reader{flex:1;min-height:0;min-width:0;display:flex;flex-direction:column}
+.pw-prd-reader-inline{margin-block:12px 16px}
+.pw-prd-reader-inline .pw-prd-scroll{max-height:60vh}
+.pw-prd-reader-head{display:flex;justify-content:space-between;padding-bottom:8px}
+.pw-prd-scroll{flex:1;min-height:0;overflow:auto;border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-1);border-radius:10px}
+.pw-prd-article{margin:0 auto;padding:clamp(14px,4vw,38px);box-sizing:border-box;overflow-wrap:anywhere}
+.pw-prd-article h1{font-size:clamp(22px,3vw,30px)}
+.pw-prd-article .pw-md-table{min-width:max-content}
+.pw-prd-article .pw-prd-image{display:block;max-width:100%;height:auto;margin-block:8px;border-radius:6px}
+@media(max-width:620px){.pw-prd-link-form{grid-template-columns:1fr}}
+`

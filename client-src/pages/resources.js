@@ -19,10 +19,12 @@ function wikiLink(href, pagePath) {
   } catch { return null }
 }
 
-// Minimal inline markdown: `code`, **bold**, [text](url).
+// Workbench Markdown uses text and React elements. The PRD reader supplies its own image loader.
 function inline(text, keyBase, wiki) {
   const nodes = []; let rest = text; let k = 0
-  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\[[^\]]+\]\([^)]+\))/
+  const re = wiki?.image
+    ? /`[^`]+`|\*\*[^*]+\*\*|!?\[[^\]]*\]\([^)]+\)/
+    : /`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\)/
   while (rest.length) {
     const m = rest.match(re)
     if (!m) { nodes.push(rest); break }
@@ -30,8 +32,11 @@ function inline(text, keyBase, wiki) {
     const tok = m[0]
     if (tok.startsWith('`')) nodes.push(h('code', { key: keyBase + '-' + (k++), className: 'pw-inline-code' }, tok.slice(1, -1)))
     else if (tok.startsWith('**')) nodes.push(h('strong', { key: keyBase + '-' + (k++) }, tok.slice(2, -2)))
-    else {
-      const lm = tok.match(/\[([^\]]+)\]\(([^)]+)\)/)
+    else if (tok.startsWith('![')) {
+      const [, alt, src] = tok.match(/^!\[([^\]]*)\]\(([^)]+)\)$/)
+      nodes.push(wiki.image(alt, src, keyBase + '-' + k++))
+    } else {
+      const lm = tok.match(/\[([^\]]*)\]\(([^)]+)\)/)
       const path = wikiLink(lm[2], wiki?.pagePath)
       if (path && wiki?.open) nodes.push(h('a', { key: keyBase + '-' + (k++), href: '#', onClick: event => { event.preventDefault(); wiki.open(path) } }, lm[1]))
       else if (/^https?:\/\//i.test(lm[2])) nodes.push(h('a', { key: keyBase + '-' + (k++), href: lm[2], target: '_blank', rel: 'noreferrer' }, lm[1]))
@@ -89,10 +94,13 @@ export function renderMarkdown(src, t, wiki) {
     }
     const head = line.match(/^(#{1,4})\s+(.*)$/)
     if (head) { const lvl = head[1].length; out.push(h('h' + lvl, { key: key++, className: 'pw-md-h' }, inline(head[2], 'h' + key, wiki))); i++; continue }
-    if (/^\s*[-*]\s+/.test(line)) {
+    const ordered = wiki?.image && /^\s*(\d+)[.)]\s+/.exec(line)
+    const listItem = ordered ? /^\s*\d+[.)]\s+/ : /^\s*[-*]\s+/
+    if (listItem.test(line)) {
       const items = []
-      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*[-*]\s+/, '')); i++ }
-      out.push(h('ul', { key: key++, className: 'pw-md-ul' }, items.map((it, j) => h('li', { key: j }, inline(it, 'li' + key + '-' + j, wiki)))))
+      while (i < lines.length && listItem.test(lines[i])) { items.push(lines[i].replace(listItem, '')); i++ }
+      out.push(h(ordered ? 'ol' : 'ul', { key: key++, className: 'pw-md-ul', ...(ordered && { start: Number(ordered[1]) }) },
+        items.map((it, j) => h('li', { key: j }, inline(it, 'li' + key + '-' + j, wiki)))))
       continue
     }
     // GFM table: header row + |---| separator, then body rows.

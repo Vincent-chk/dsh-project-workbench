@@ -1,12 +1,17 @@
 import { mkdtemp, rm, readFile } from 'node:fs/promises'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { savePrd } from '../core/prd.js'
 
 export async function makeRoot(t) {
   const root = await mkdtemp(join(tmpdir(), 'pw-store-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   return root
+}
+
+export function saveReviewPrd(root, reqId) {
+  return savePrd(root, { id: 'prd-' + randomUUID(), reqIds: [reqId], markdown: '# 送审用 PRD\n\n确认本需求的范围。' })
 }
 
 // Content fingerprint matching store.hashText, for tests that confirm completion.

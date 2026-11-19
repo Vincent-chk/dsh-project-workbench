@@ -86,11 +86,27 @@ test('conversation cards refresh when the session event source is unavailable', 
   assert.equal(panel.type, nativeUi.Modal)
   const field = panel.props.children[3].props.children[0].props.children[1]
   field.props.onChange({ target: { value: '# 手动编辑' } })
-  panel.props.onClose()
+  // The host Modal forwards the click from its aria-hidden mask to onClose.
+  // A second click on the preview button's old position must leave the editor open.
+  panel.props.onClose({ currentTarget: { getAttribute: name => name === 'aria-hidden' ? 'true' : null } })
+  assert.equal(renderAction().props.children[1]?.type, nativeUi.Modal)
+  panel.props.onClose({ currentTarget: { getAttribute: () => null } })
   const collapsed = renderAction()
   assert.equal(collapsed.type, 'div')
   collapsed.props.children[1].props.onClick()
   panel = renderAction().props.children[1]
   assert.equal(panel.props.children[3].props.children[0].props.children[1].props.value, '# 手动编辑')
+  panel.props.onClose() // Escape is still an explicit dismissal.
+  assert.equal(renderAction().type, 'div')
+
+  const workspaces = [{ workspaceId: 'w1', path: '/isolated' }]
+  const memory = { views: {} }
+  const receipt = { root: '/isolated', prdId: 'prd-1', reqId: 'req-1' }
+  mod.exports.openConversationTarget(receipt, workspaces, memory, () => {})
+  assert.equal(memory.views['id:w1'].page, 'pool')
+  assert.deepEqual(memory.views['id:w1'].params, { reqId: 'req-1', issueId: null, prdId: 'prd-1' })
+  mod.exports.openConversationTarget({ ...receipt, reqId: undefined }, workspaces, memory, () => {})
+  assert.equal(memory.views['id:w1'].page, 'prds')
+  assert.deepEqual(memory.views['id:w1'].params, { prdId: 'prd-1' })
   cleanup()
 })

@@ -265,6 +265,7 @@ export function installConversation(ctx, { links, routes, resources }) {
     const issue = req?.issues.find(item => item.id === link?.issueId)
     return { currentRequirement: req && publicReq(req), currentTask: issue && publicTask(req, issue),
       requirements: requirements.slice(0, 100).map(({ id, title, status }) => ({ id, title, status: states[status] ?? status })),
+      ...(args.query === '*' && { prds: (await listPrds(root)).slice(0, 100) }),
       moreRequirements: requirements.length > 100, diagnostics: project.diagnostics.slice(0, 8) }
   }
 
@@ -325,18 +326,19 @@ export function installConversation(ctx, { links, routes, resources }) {
       return { ...data, title: req.title, message: state.card.message }
     }
     if (action === 'prdPreview') {
-      const reqIds = args.reqIds?.length ? [...new Set(args.reqIds)] : [(await selected(agent, state, args, project)).req.id]
-      validatePrdDraft(reqIds, args.markdown)
-      if (reqIds.some(id => !project.requirements.some(req => req.id === id))
-        || (turn.followUp && turn.target && !reqIds.includes(turn.target.reqId))) {
-        throw new WorkbenchError('REQ_REQUIRED', '请选择本次 PRD 所属的当前项目需求。')
-      }
       const current = args.prdId ? await readPrd(root, args.prdId) : null
       if (current && current.version !== args.version) throw new WorkbenchError('PRD_CONFLICT', '请先读取现有 PRD，再基于该版本生成预览。')
+      const reqIds = current?.reqIds ?? (args.reqIds?.length
+        ? [...new Set(args.reqIds)] : [(await selected(agent, state, args, project)).req.id])
+      validatePrdDraft(reqIds, args.markdown)
+      if (!current && (reqIds.some(id => !project.requirements.some(req => req.id === id))
+        || (turn.followUp && turn.target && !reqIds.includes(turn.target.reqId)))) {
+        throw new WorkbenchError('REQ_REQUIRED', '请选择本次 PRD 所属的当前项目需求。')
+      }
       const prdId = current?.id ?? 'prd-' + randomUUID()
-      state.target = { reqId: reqIds[0] }
+      if (reqIds.length) state.target = { reqId: reqIds[0] }
       show(state, { kind: 'prd', root, title: args.markdown.trim().split(/\r?\n/)[0].replace(/^#\s+/, ''),
-        markdown: args.markdown, previous: current?.markdown, version: current?.version, prdId, reqIds,
+        markdown: args.markdown, updating: !!current, version: current?.version, prdId, reqIds,
         requirements: project.requirements.filter(req => reqIds.includes(req.id)).map(req => req.title) })
       return { message: '已准备可编辑的 PRD 草稿，请用户在会话中预览及保存。', reqIds, prdId }
     }
@@ -562,7 +564,7 @@ export function installConversation(ctx, { links, routes, resources }) {
         '用 read 查需求与任务。query 按需求标题搜索，reqId 或 issueId 可读取具体对象。匹配多个时请用户选。先看真实状态，再解释哪些操作可用。',
         '新建需求须有用户已表达的标题和概述。用 addRequirement 的 fields.title 与 fields.overview。补充用 editRequirement，并在字段中保留原文已有信息。只保存明确表达的决定。',
         '验收用 taskReview 核对真实标准和证据。允许 taskConfirm 打开人工确认入口。任务结果只记录真实已完成及已核实的事实。改代码、测试或执行任务使用工作台现有开始入口。',
-        '写 PRD 用 read 的 reqIds 读取已选需求，再调用 prdPreview，提供 reqIds 和有一级标题的 Markdown。包括用户、问题、首版范围、完成标准和待定项。只有需求或本会话中用户明确表达的决定才能写成已定范围；不得把推测或常见做法写成用户决定。完成标准须逐条有用户明确确认的依据，依据不足的标准一律标注为建议、待用户确认，即使相关功能已经确定也不能推定其具体标准。问题和用户痛点须有用户原话或需求记录作为依据，无法证实的描述标注待确认，不要虚构现有工具的问题。可以提出合理建议，但须明确标注为建议或待确认，并将缺少依据、会影响范围的事项列为待定，不要自行决定。已有文档先用 prdId 读回 version，再用同一 prdId 和 version 预览更新。保存由用户在界面确认。',
+        '写 PRD 用 read 的 reqIds 读取已选需求，再调用 prdPreview，提供 reqIds 和有一级标题的 Markdown。包括用户、问题、首版范围、完成标准和待定项。只有需求或本会话中用户明确表达的决定才能写成已定范围；不得把推测或常见做法写成用户决定。完成标准须逐条有用户明确确认的依据，依据不足的标准一律标注为建议、待用户确认，即使相关功能已经确定也不能推定其具体标准。问题和用户痛点须有用户原话或需求记录作为依据，无法证实的描述标注待确认，不要虚构现有工具的问题。可以提出合理建议，但须明确标注为建议或待确认，并将缺少依据、会影响范围的事项列为待定，不要自行决定。更新已有文档时先确定用户要更新的文档。如需查找整个项目的文档（包括未关联需求的 PRD），用 read 且 query 为 *。有多个候选时请用户选择。用 prdId 读取当前正文和 version，再用同一 prdId 和 version 预览覆盖更新。保存由用户在界面确认。',
         '只讨论、询问可行性或只读时使用读取操作。generate 必须是用户明确要求生成 Wiki 或架构图。type 用 wiki 或 arch。查询进度用 resourceStatus。',
         '若要追问用户并继续本次工作，请在回复前调用 remember。知道对象时传入 reqId 或 issueId。用户答复时沿用原对象。换题时调用 finish。只向用户报告已成功的写入，失败时解释原因。',
         active.followUp ? '本轮是对上次追问的回答。只处理与上次同一件事的内容，无法确定时先问清。' : '',
@@ -623,16 +625,20 @@ export function installConversation(ctx, { links, routes, resources }) {
           if (card.kind === 'prd' && action === 'reloadPrd' && card.version != null) {
             const doc = await readPrd(card.root, card.prdId)
             card.version = doc.version
-            card.previous = doc.markdown
+            card.latest = doc.markdown
+            card.reqIds = doc.reqIds
+            card.requirements = (await projectOf(agent)).requirements.filter(req => doc.reqIds.includes(req.id)).map(req => req.title)
             return { card: visibleCard(card) }
           }
           if (action !== 'confirm') throw new WorkbenchError('ACTION_NOT_AVAILABLE', '该操作已不可用。')
           let result
           if (card.kind === 'prd') {
-            const doc = await savePrd(card.root, { id: card.prdId, reqIds: card.reqIds, markdown, version: card.version })
+            const doc = await savePrd(card.root, {
+              id: card.prdId, markdown, version: card.version, ...(card.updating ? {} : { reqIds: card.reqIds }),
+            })
             result = { message: '已保存 PRD。', prdId: doc.id }
             if (state.prd === card) state.prd = null
-            show(state, { kind: 'open', root: card.root, title: doc.title, reqId: card.reqIds[0], prdId: doc.id, message: result.message })
+            show(state, { kind: 'open', root: card.root, title: doc.title, reqId: doc.reqIds[0], prdId: doc.id, message: result.message })
           } else if (card.kind === 'remove' || card.kind === 'reviewEdit') {
             await safePath(card.root, ['.project', 'requirements', card.reqId, 'requirement.md'])
             if (card.kind === 'remove') {

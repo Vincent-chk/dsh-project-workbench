@@ -581,3 +581,25 @@ test('leaving a Wiki page and switching projects reconnects to the original back
   assert.deepEqual(requests.filter(r => r.url.endsWith('/wiki-generate-status')).map(r => r.body.root), ['/project-a', '/project-b', '/project-a', '/project-a'])
   view.host.unmount()
 })
+
+test('PRD Markdown renders image tokens, ordered steps and tables without treating HTML as elements', async t => {
+  const originalReact = globalThis.__wikiReact
+  t.after(() => { globalThis.__wikiReact = originalReact })
+  const host = hookHost(); globalThis.__wikiReact = host.api
+  const result = await build({ entryPoints: [fileURLToPath(new URL('../client-src/pages/resources.js', import.meta.url))], bundle: true, platform: 'node', format: 'cjs', write: false, plugins: [reactStub] })
+  const mod = { exports: {} }
+  new Function('module', 'exports', 'require', result.outputFiles[0].text)(mod, mod.exports, require)
+  const source = [
+    '![本地图片](assets/demo.png)', '| 设置 | 说明 |', '| --- | --- |', '| 操作 | ![表格图片](assets/example.webp) |',
+    '1. 点击查看', '2. 保存', '<img src="https://example.invalid/test.png">', '长文末尾',
+  ].join('\n')
+  const images = []
+  const tree = host.api.createElement('div', null, mod.exports.renderMarkdown(source, key => key, {
+    image: (alt, path) => { images.push({ alt, path }); return alt },
+  }))
+  assert.deepEqual(images, [{ alt: '本地图片', path: 'assets/demo.png' }, { alt: '表格图片', path: 'assets/example.webp' }])
+  assert.equal(all(tree, node => node.type === 'table').length, 1)
+  assert.equal(all(tree, node => node.type === 'ol').length, 1)
+  assert.equal(all(tree, node => node.type === 'img').length, 0)
+  assert.match(textOf(tree), /长文末尾/)
+})

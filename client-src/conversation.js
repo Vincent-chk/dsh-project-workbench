@@ -17,7 +17,7 @@ export const conversationLocale = {
     workbenchConversation: '会话中的项目工作台', openWorkbenchObject: '在工作台查看', openAcceptance: '打开任务与验收',
     removePrompt: '将此草稿移到回收站？', restorePrompt: '将此草稿恢复到需求池？', startPrompt: '开始处理这项任务？',
     prdMarkdown: 'PRD 草稿（Markdown）', prds: '关联 PRD', savePrd: '保存 PRD', checkPrdVersion: '核对已保存版本',
-    prdBefore: '原版本中的改动部分', prdAfter: '草稿中的改动部分', prdDiff: '查看新旧差异', noPrdDiff: '内容没有变化',
+    prdLatestSaved: '当前已保存的正文', prdOverwrite: '覆盖保存 PRD',
     pwbCheckPassed: '通过', pwbCheckFailed: '失败', pwbCheckIncomplete: '待核实',
     pwbConfirm: '确认', pwbCancel: '取消', pwbDismiss: '关闭', pwbRetry: '重试',
     pwbPrdReady: 'PRD 草稿已就绪', pwbPreviewPrd: '预览并保存', pwbDiscardPrd: '放弃草稿',
@@ -33,7 +33,7 @@ export const conversationLocale = {
     workbenchConversation: 'Project Workbench in chat', openWorkbenchObject: 'View in Workbench', openAcceptance: 'Open task and acceptance',
     removePrompt: 'Move this draft to Trash?', restorePrompt: 'Restore this draft to the requirement pool?', startPrompt: 'Start this task?',
     prdMarkdown: 'PRD draft (Markdown)', prds: 'Related PRDs', savePrd: 'Save PRD', checkPrdVersion: 'Review the saved version',
-    prdBefore: 'Changed lines in the saved version', prdAfter: 'Changed lines in the draft', prdDiff: 'Compare versions', noPrdDiff: 'No content changes',
+    prdLatestSaved: 'Current saved text', prdOverwrite: 'Overwrite PRD',
     pwbCheckPassed: 'Passed', pwbCheckFailed: 'Failed', pwbCheckIncomplete: 'Unverified',
     pwbConfirm: 'Confirm', pwbCancel: 'Cancel', pwbDismiss: 'Dismiss', pwbRetry: 'Retry',
     pwbPrdReady: 'PRD draft ready', pwbPreviewPrd: 'Preview and save', pwbDiscardPrd: 'Discard draft',
@@ -75,6 +75,7 @@ export function openConversationTarget(card, workspaces, uiMemory, openMain) {
   if (card.reqId) uiMemory.views[key] = openDetail(view, {
     reqId: card.reqId, issueId: card.issueId ?? null, ...(card.prdId && { prdId: card.prdId }),
   }, statusPage(card.status ?? 'backlog'))
+  else if (card.prdId) uiMemory.views[key] = openDetail(view, { prdId: card.prdId }, 'prds')
   else if (card.type) uiMemory.views[key] = { ...view, page: card.type === 'wiki' ? 'wiki' : 'arch', params: null, history: [] }
   else uiMemory.views[key] = view
   openMain()
@@ -158,6 +159,9 @@ function SessionConversationDock({ sessionId, eventSource, t, useWorkspaces, ope
   const perform = async (card, action, extra = {}) => {
     const res = await rpc('conversation/act', { sessionId, cardId: card.id, action, ...extra })
     setError(res.ok ? null : { cardId: card.id, ...res })
+    if (res.ok && card.kind === 'prd' && action === 'confirm') {
+      window.dispatchEvent(new CustomEvent('pw-prd-changed', { detail: { root: card.root } }))
+    }
     if (refreshRef.current && res.ok && res.data.sessionId) await enterSession(res.data.sessionId)
     await refreshRef.current?.()
     return res
@@ -239,7 +243,13 @@ function ConversationAction({ card, t, sessionId, uiMemory, error, perform, open
       }
     } finally { setBusy(false) }
   }
-  const close = () => { if (!busy) setExpanded(false) }
+  const close = event => {
+    if (busy) return
+    // The host forwards backdrop clicks and the close button through onClose.
+    // A repeated click on the preview trigger can land on the new backdrop.
+    if (isPrd && event?.currentTarget?.getAttribute?.('aria-hidden') === 'true') return
+    setExpanded(false)
+  }
   const confirmation = confirmPrompts[card.kind]
   const direct = card.kind === 'open' || (card.kind === 'openTask' && !card.evidence)
   const label = isPrd ? 'pwbPreviewPrd' : card.kind === 'open' ? 'openWorkbenchObject'
@@ -254,15 +264,15 @@ function ConversationAction({ card, t, sessionId, uiMemory, error, perform, open
   if (!expanded) return row
 
   const footer = h(React.Fragment, null,
-    isPrd && error?.code === 'PRD_CONFLICT' && card.previous !== undefined &&
+    isPrd && error?.code === 'PRD_CONFLICT' && card.updating &&
       h(Button, { disabled: busy, onClick: () => launch('reloadPrd') }, t('checkPrdVersion')),
     h(Button, { disabled: busy, onClick: canConfirm ? () => launch('dismiss') : close },
       t(isPrd ? 'pwbDiscardPrd' : canConfirm ? 'pwbCancel' : 'pwbDismiss')),
     card.kind === 'openTask' && h(Button, { variant: 'primary', disabled: busy, onClick: () => launch('openTask') }, t('openAcceptance')),
     canConfirm && h(Button, {
-      variant: 'primary', disabled: busy || (isPrd && !markdown.trim()) || (card.kind === 'reviewEdit' && !reason.trim()),
+      variant: 'primary', disabled: busy || (isPrd && (!markdown.trim() || error?.code === 'PRD_CONFLICT')) || (card.kind === 'reviewEdit' && !reason.trim()),
       onClick: () => launch('confirm', { ...(isPrd && { markdown }), ...(card.kind === 'reviewEdit' && { reason }) }),
-    }, t(confirmActions[card.kind])))
+    }, t(isPrd && card.updating ? 'prdOverwrite' : confirmActions[card.kind])))
   return h(React.Fragment, null, row,
     h(Modal, {
       open: expanded, onClose: close, title: card.title, closeLabel: t('pwbDismiss'), footer,
@@ -285,7 +295,8 @@ function ConversationAction({ card, t, sessionId, uiMemory, error, perform, open
           setMarkdown(event.target.value)
           drafts[draftKey] = { id: card.id, markdown: event.target.value }
         } })),
-      card.previous !== undefined && h(PrdDiff, { before: card.previous, after: markdown, t })),
+      card.latest !== undefined && h('details', { open: true },
+        h('summary', null, t('prdLatestSaved')), h('pre', null, card.latest))),
     error && h('p', { role: 'alert', className: 'pw-error' }, error.message)))
 }
 
@@ -305,26 +316,6 @@ function TaskEvidence({ data, t }) {
     currentEvidence && h('pre', null, currentEvidence))
 }
 
-// Collapse identical leading/trailing lines. The full edited Markdown stays
-// in the text area, so no Markdown renderer or diff dependency is needed.
-export function changedLines(before, after) {
-  const a = before.trim().split(/\r?\n/), b = after.trim().split(/\r?\n/)
-  let start = 0
-  let end = 0
-  const min = Math.min(a.length, b.length)
-  while (start < min && a[start] === b[start]) start++
-  while (end < min - start && a[a.length - 1 - end] === b[b.length - 1 - end]) end++
-  return [a.slice(start, a.length - end).join('\n'), b.slice(start, b.length - end).join('\n')]
-}
-
-function PrdDiff({ before, after, t }) {
-  const [removed, added] = changedLines(before, after)
-  return h('details', { className: 'pw-prd-diff', open: true }, h('summary', null, t('prdDiff')),
-    !removed && !added ? h('p', null, t('noPrdDiff')) : h('div', { className: 'pw-prd-diff-columns' },
-      h('div', null, h('span', null, t('prdBefore')), h('pre', null, removed)),
-      h('div', null, h('span', null, t('prdAfter')), h('pre', null, added))))
-}
-
 const conversationCss = [
   '.pw-conversation{box-sizing:border-box;width:calc(100% - 2 * var(--dsh-composer-side-clearance,16px));max-width:var(--dsh-composer-card-max-width,920px);margin:0 auto 6px;border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md,10px);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);font-size:13px}',
   '.pw-conversation>*+*{border-top:1px solid var(--dsw-alias-border-l3)}.pw-conversation>style+*{border-top:0}',
@@ -342,7 +333,6 @@ const conversationCss = [
   '.pw-conversation-dialog-content{min-height:0;overflow:auto}',
   '.pw-conversation-dialog p,.pw-conversation-dialog pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0}',
   '.pw-conversation-dialog li{overflow-wrap:anywhere}',
-  '.pw-prd-diff-columns{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:12px}',
   '.pw-conversation-dialog details pre{max-height:150px;overflow:auto}',
   '.pw-conversation-dialog .pw-field{display:block}.pw-conversation-dialog textarea{box-sizing:border-box;max-height:40vh}',
 ].join('\n')

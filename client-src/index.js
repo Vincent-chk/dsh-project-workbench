@@ -1,5 +1,7 @@
 import React from 'react'
 import { MainShell } from './shell/main-shell.js'
+import { prdLocale } from './pages/prds.js'
+import { prdEditorLocale } from './forms/prd-form.js'
 import { TaskPane, rightbarLocale } from './rightbar/task-pane.js'
 import { workbenchContentLocale } from './workbench-content.js'
 import { acceptanceAssistLocale } from './detail/acceptance-assist.js'
@@ -12,6 +14,8 @@ import { ConversationDock, conversationLocale, workbenchMentionSource } from './
       ...rightbarLocale.en,
       ...acceptanceAssistLocale.en,
       ...conversationLocale.en,
+      ...prdLocale.en,
+      ...prdEditorLocale.en,
       requirementActions: 'More options', resumeReopen: 'Resume reopening',
       reopenProgress: '{done} of {total} tasks prepared',
       confirmIssueTitle: 'Confirm task completion',
@@ -118,6 +122,8 @@ import { ConversationDock, conversationLocale, workbenchMentionSource } from './
       ...rightbarLocale.zh,
       ...acceptanceAssistLocale.zh,
       ...conversationLocale.zh,
+      ...prdLocale.zh,
+      ...prdEditorLocale.zh,
       requirementActions: '更多选项', resumeReopen: '继续重开',
       reopenProgress: '已处理 {done}/{total} 项任务',
       confirmIssueTitle: '确认任务完成',

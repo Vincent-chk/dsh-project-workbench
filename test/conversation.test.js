@@ -5,7 +5,7 @@ import test from 'node:test'
 import { apply } from '../index.js'
 import { readInvocation } from '../core/conversation-commands.js'
 import * as store from '../core/store.js'
-import { makeRoot, stubSpawnHost, waitFor } from './util.js'
+import { makeRoot, saveReviewPrd, stubSpawnHost, waitFor } from './util.js'
 
 async function setup(t) {
   const root = await makeRoot(t)
@@ -166,6 +166,7 @@ test('task actions record real results and leave final completion to the existin
   await store.initProject(p.root)
   const { data: { id } } = await store.createRequirement(p.root, '聊天网页', { q_pain: '切换风格' })
   await store.updateRequirement(p.root, id, { goal: '完成聊天', scope: '两个风格', acceptance: '两种风格可切换' })
+  await saveReviewPrd(p.root, id)
   await store.moveRequirement(p.root, id, 'reviewing')
   await store.moveRequirement(p.root, id, 'ready')
   await store.moveRequirement(p.root, id, 'in_progress')
@@ -255,13 +256,17 @@ test('PRD preview, multi-requirement navigation, conflict reread and explicit sa
   p.begin('/pwb-prd 更新已有 PRD')
   await p.tool('prdPreview', { reqIds: [id, second], prdId: draft.prdId, version: original.version, markdown: '# 新草稿\n\n同一个 AI' })
   const [card] = await p.view()
-  assert.equal(card.previous, original.markdown)
+  assert.equal(card.updating, true)
+  assert.equal(card.latest, undefined)
   const filename = join(p.root, '.project', 'prds', draft.prdId + '.md')
   await writeFile(filename, (await readFile(filename, 'utf8')).replace('离线可用性待定', '手工补充的阅读说明'))
   assert.equal((await p.act(card, 'confirm', { markdown: card.markdown })).code, 'PRD_CONFLICT')
   assert.match(await readFile(filename, 'utf8'), /手工补充/)
-  assert.match((await p.act(card, 'reloadPrd')).data.card.previous, /手工补充/)
+  assert.match((await p.act(card, 'reloadPrd')).data.card.latest, /手工补充/)
   assert.equal((await p.act(card, 'confirm', { markdown: '# 新草稿\n\n保留人工补充的阅读说明' })).ok, true)
+  const latest = (await p.rpc('prd/read', { root: p.root, id: draft.prdId })).data
+  assert.equal(latest.revision, 2)
+  assert.match(latest.markdown, /保留人工补充的阅读说明/)
   const requirements = (await store.scanProject(p.root)).requirements
   assert.ok(requirements.every(req => req.status === 'backlog'))
 })

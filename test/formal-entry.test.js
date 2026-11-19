@@ -8,7 +8,7 @@ import test from 'node:test'
 import { apply } from '../index.js'
 import * as store from '../core/store.js'
 import { PROJECT_DENIAL, TASK_READ_DENIAL } from '../core/write-guard.js'
-import { makeRoot, stubSpawnHost } from './util.js'
+import { makeRoot, stubSpawnHost, saveReviewPrd } from './util.js'
 
 test('formal host keeps task entry and write guard without prototype routes, tools or probes', async t => {
   const root = await makeRoot(t)
@@ -63,6 +63,7 @@ test('formal host keeps task entry and write guard without prototype routes, too
   await store.initProject(root)
   const reqId = (await store.createRequirement(root, '正式任务')).data.id
   await store.updateRequirement(root, reqId, { goal: '目标', scope: '范围', acceptance: '标准' })
+  await saveReviewPrd(root, reqId)
   await store.moveRequirement(root, reqId, 'reviewing')
   await store.moveRequirement(root, reqId, 'ready')
   await store.moveRequirement(root, reqId, 'in_progress')

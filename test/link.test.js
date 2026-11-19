@@ -8,7 +8,7 @@ import fs from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { installLinks } from '../core/link.js'
 import * as store from '../core/store.js'
-import { makeRoot, issueFileHash } from './util.js'
+import { makeRoot, issueFileHash, saveReviewPrd } from './util.js'
 
 function stubCtx() {
   const listeners = {}
@@ -43,6 +43,7 @@ async function devReq(root, title = '需求') {
   await store.initProject(root)
   const { data } = await store.createRequirement(root, title)
   await store.updateRequirement(root, data.id, { goal: 'g', scope: 's', acceptance: 'a' })
+  await saveReviewPrd(root, data.id)
   await store.moveRequirement(root, data.id, 'reviewing')
   await store.moveRequirement(root, data.id, 'ready')
   await store.moveRequirement(root, data.id, 'in_progress')

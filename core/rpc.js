@@ -5,7 +5,7 @@ import * as store from './store.js'
 import { gitStatus, gitCommitProject } from './git.js'
 import { wikiStatus, wikiPage, wikiEvidence } from './wiki.js'
 import { readArchitecture } from './architecture.js'
-import { listPrds, readPrd } from './prd.js'
+import { listPrds, readPrd, readPrdImage, savePrd, setPrdDeleted, setPrdLink } from './prd.js'
 import * as proposals from './proposals.js'
 import { deriveRequirement, currentDoing, todaySuggestion, rankSuggestions, homeSummary } from './derive.js'
 
@@ -69,8 +69,13 @@ const routes = {
   'wiki/page': async i => { assertRoot(i.root); return wikiPage(i.root, i.path, i.viewVersion) },
   'wiki/evidence': async i => { assertRoot(i.root); return wikiEvidence(i.root, i.path, i.viewVersion) },
   'architecture/read': async i => { assertRoot(i.root); return readArchitecture(i.root) },
-  'prd/list': async i => { assertRoot(i.root); return listPrds(i.root, i.reqId) },
+  'prd/list': async i => { assertRoot(i.root); return listPrds(i.root, i.reqId, { deleted: i.deleted === true }) },
   'prd/read': async i => { assertRoot(i.root); return readPrd(i.root, i.id) },
+  'prd/save': async i => { assertRoot(i.root); return savePrd(i.root, i) },
+  'prd/link': async i => { assertRoot(i.root); return setPrdLink(i.root, i) },
+  'prd/delete': async i => { assertRoot(i.root); return setPrdDeleted(i.root, { ...i, deleted: true }) },
+  'prd/restore': async i => { assertRoot(i.root); return setPrdDeleted(i.root, { ...i, deleted: false }) },
+  'prd/image': async i => { assertRoot(i.root); return readPrdImage(i.root, i.id, i.name) },
   'sync/proposals': async i => { assertRoot(i.root); return { proposals: await proposals.listProposals(i.root), baseline: await proposals.readBaseline(i.root) } },
   'sync/submit': async i => { assertRoot(i.root); return (await proposals.submitProposals(i.root, i.proposals)).data },
   'sync/apply': async i => { assertRoot(i.root); return (await proposals.adoptProposal(i.root, i.proposalId, i.patch)).data },

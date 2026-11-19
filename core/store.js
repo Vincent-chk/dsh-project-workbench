@@ -10,6 +10,7 @@ import { parseFrontmatter } from './frontmatter.js'
 import { canMoveRequirement, canMoveIssue, canCreateIssue, changesReviewedRequirement, freshDelivery, effectiveEvidence, taskContentBlockers, taskOverview, TASK_CONTENT_FIELDS, REQUIREMENT_STATES, ISSUE_STATES, TERMINAL_ISSUE } from './state.js'
 import { evidenceFacts, isEvidenceCommand, isEvidenceOutcome, isObservationCommand, isVerificationCommand } from './extract.js'
 import { readSplitEvidence } from './split-evidence.js'
+import { listPrds, withPrdLock } from './prd.js'
 
 export const SUPPORTED_SCHEMA = 2
 const REQ_ID_RE = /^req-\d{8}-[0-9a-f]{6}$/
@@ -759,21 +760,30 @@ export async function moveRequirement(root, id, to, { reason, actor = 'human', o
     // a failed write retries exactly once (see recordDecision).
     const record = REVIEW_RECORD_EDGES[`${from}>${to}`]
     if (!record && pending) throw new WorkbenchError('DECISION_PENDING', 'finish the previous decision before making another change')
-    if (record) await recordDecision(root, id, doc, file, { ...record, opinion: opinion || reason || '', summary: doc.get('deliverySummary') ?? '', originalHash: fileHash })
-    doc.setPlain('status', to)
-    if (from === 'backlog' && to === 'reviewing') doc.setString('submittedAt', nowIso())
-    if (from === 'reviewing' && to === 'ready') doc.setString('reviewedAt', nowIso())
-    if (from === 'ready' && to === 'in_progress') {
-      const priorStart = Number(doc.get('deliveryStartedAt')) || 0
-      const latest = issues.reduce((value, issue) => Math.max(value, issue.deliveryStartedAt || 0, issue.resultAt || 0, issue.evidenceAt || 0, issue.objectiveAt || 0, issue.knownLimitsAt || 0, issue.resultScopeAt || 0), priorStart)
-      doc.setPlain('deliveryStartedAt', Math.max(Date.now(), latest ? latest + 1 : 0))
+    const commit = async () => {
+      if (record) await recordDecision(root, id, doc, file, { ...record, opinion: opinion || reason || '', summary: doc.get('deliverySummary') ?? '', originalHash: fileHash })
+      doc.setPlain('status', to)
+      if (from === 'backlog' && to === 'reviewing') doc.setString('submittedAt', nowIso())
+      if (from === 'reviewing' && to === 'ready') doc.setString('reviewedAt', nowIso())
+      if (from === 'ready' && to === 'in_progress') {
+        const priorStart = Number(doc.get('deliveryStartedAt')) || 0
+        const latest = issues.reduce((value, issue) => Math.max(value, issue.deliveryStartedAt || 0, issue.resultAt || 0, issue.evidenceAt || 0, issue.objectiveAt || 0, issue.knownLimitsAt || 0, issue.resultScopeAt || 0), priorStart)
+        doc.setPlain('deliveryStartedAt', Math.max(Date.now(), latest ? latest + 1 : 0))
+      }
+      if (record) doc.setString('pendingDecision', '')
+      doc.setPlain('updated', nowIso())
+      appendActivity(doc, `${nowIso()} ${from} → ${to}${reason ? `（${reason}）` : ''}`)
+      if (proposalId) appendActivity(doc, `建议已采用：${proposalId}`)
+      await atomicWrite(file, doc.toString())
+      return { ok: true, data: { id, from, to } }
     }
-    if (record) doc.setString('pendingDecision', '')
-    doc.setPlain('updated', nowIso())
-    appendActivity(doc, `${nowIso()} ${from} → ${to}${reason ? `（${reason}）` : ''}`)
-    if (proposalId) appendActivity(doc, `建议已采用：${proposalId}`)
-    await atomicWrite(file, doc.toString())
-    return { ok: true, data: { id, from, to } }
+    if (from !== 'backlog' || to !== 'reviewing') return commit()
+    return withPrdLock(root, async directory => {
+      if (!(await listPrds(directory, id)).length) {
+        throw new WorkbenchError('REVIEW_PRD_REQUIRED', '请先关联一份 PRD，再提交评审。')
+      }
+      return commit()
+    })
   })
 }
 
