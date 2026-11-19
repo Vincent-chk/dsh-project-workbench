@@ -53,8 +53,16 @@ export function requirementResult(req) {
   }
 }
 
+export const archRenderErrorKeys = new Map([
+  ['ARCHIFY_LAYOUT_FAILED', 'archLayoutFailed'],
+  ['ARCHIFY_RENDER_FAILED', 'archRenderFailed'],
+  ['ARCHIFY_NO_SVG', 'archRenderFailed'],
+])
+
 export const workbenchContentLocale = {
   en: {
+    archLayoutFailed: 'The diagram did not pass the layout check after automatic repair. Some components or labels may overlap or run out of space. Regenerate to try a fresh layout.',
+    archRenderFailed: 'The diagram renderer could not produce a readable diagram. Try generating it again.',
     splitReview: 'Task review', splitDetails: 'Review details', splitVerified: 'Verified',
     splitAssigned: 'Existing task', splitGap: 'Gap', splitUnknown: 'Needs checking',
     splitWorking: 'Checking existing tasks and project progress…',
@@ -118,6 +126,8 @@ export const workbenchContentLocale = {
     errTrashDraft: 'Only unused drafts can be deleted.', errExists: 'This item already exists.',
   },
   zh: {
+    archLayoutFailed: '自动调整后，架构图仍未通过布局校验。组件或标签可能重叠、超出边界。请重新生成以尝试新的布局。',
+    archRenderFailed: '架构图渲染失败，未能产出可阅读的图。请重新生成。',
     splitReview: '任务核对结果', splitDetails: '查看核对依据', splitVerified: '已验证',
     splitAssigned: '已有任务负责', splitGap: '仍有缺口', splitUnknown: '待核实',
     splitWorking: '正在核对已有任务和项目进展…',

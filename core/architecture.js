@@ -58,7 +58,9 @@ export async function renderArchitecture(root, candidatePath, signal) {
       await exec(process.execPath, [ARCHIFY_CLI, 'render', 'architecture', renderInput, outHtml, '--quality', 'standard', '--repo-root', root], { cwd: tmp, timeout: 180000, maxBuffer: 64 * 1024 * 1024, signal })
     } catch (e) {
       const detail = (e.stderr || e.stdout || e.message || '').toString()
-      throw new WorkbenchError('ARCHIFY_RENDER_FAILED', detail.slice(-6000))
+      const layoutRejected = /^Architecture layout validation failed:/m.test(detail)
+      const code = layoutRejected ? 'ARCHIFY_LAYOUT_FAILED' : 'ARCHIFY_RENDER_FAILED'
+      throw new WorkbenchError(code, layoutRejected ? detail.slice(0, 6000) : detail.slice(-6000))
     }
     html = await readFile(outHtml, 'utf8')
     const metadata = JSON.stringify(sources).replace(/[<>&]/g, c => ({ '<': '\\u003c', '>': '\\u003e', '&': '\\u0026' })[c])

@@ -234,6 +234,36 @@ test('Wiki reports the Git preflight and architecture shares a single job with t
   p.children[1].resolve({ stopReason: 'cancelled', output: [] })
 })
 
+test('architecture layout rejection survives the repair and shows an actionable conversation status', async t => {
+  const p = await setup(t)
+  await store.initProject(p.root)
+  await writeFile(join(p.root, 'app.js'), 'export const ping = () => 42\n')
+  const candidate = {
+    schema_version: 1, diagram_type: 'architecture',
+    meta: { title: 'Example', output: 'architecture.html', quality_profile: 'standard' },
+    layout: { mode: 'grid', cols: 1 },
+    components: [{ id: 'app', type: 'frontend', label: '一个需要足够显示空间才能完整阅读的中文组件名称', row: 0, col: 0, sources: [{ path: 'app.js', line: 1 }] }],
+    connections: [],
+  }
+  const start = p.command('architecture-update')
+  await waitFor(() => p.children.length === 1)
+  await start
+  const reply = { stopReason: 'completed', output: [{ type: 'text', text: JSON.stringify(candidate) }] }
+  p.children[0].resolve(reply)
+  await waitFor(() => p.children.length === 2)
+  p.children[1].resolve(reply)
+  const status = async () => (await p.post('/arch-status', { root: p.root })).data
+  await waitFor(async () => (await status()).status === 'failed')
+  assert.match((await status()).error, /Architecture layout validation failed/)
+  assert.equal((await status()).code, 'ARCHIFY_LAYOUT_FAILED')
+  const card = (await p.view()).find(card => card.type === 'arch')
+  assert.equal(card.code, 'ARCHIFY_LAYOUT_FAILED')
+  assert.match(card.message, /未通过布局校验/)
+  const progress = (await p.command('architecture-update', '查看进度')).text
+  assert.match(progress, /未通过布局校验/)
+  assert.doesNotMatch(progress, /component-label-overflow|Architecture layout validation failed/)
+})
+
 test('PRD preview, multi-requirement navigation, conflict reread and explicit save', async t => {
   const p = await setup(t)
   await store.initProject(p.root)

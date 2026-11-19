@@ -241,7 +241,7 @@ export function installConversation(ctx, { links, routes, resources }) {
     const status = res.data?.status === 'idle' ? (res.data.last ?? res.data) : res.data
     const text = states[status?.status] ?? (status?.status === 'done' ? '已生成' : '状态不可用')
     const result = { ...card, watch: generating.has(status?.status), state: status?.status ?? 'failed', code: status?.code ?? res.code,
-      message: status?.error || res.message || text }
+      message: status?.message || status?.error || res.message || text }
     // A terminal receipt describes this run even if another job starts before it is viewed.
     if (!result.watch && state.resources.get(card.type) === card) state.resources.set(card.type, result)
     return result
