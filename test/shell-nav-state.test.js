@@ -9,11 +9,11 @@ import {
 const req = (id, status, extra = {}) => ({ id, title: '需求' + id, status, issues: [], reviews: [], ...extra })
 const issue = (id, status, extra = {}) => ({ id, title: '任务' + id, status, ...extra })
 
-test('menu covers home + 11 pages; every menu page is a known page', () => {
+test('home and board are the first two top-level destinations', () => {
+  assert.deepEqual(MENU.filter(entry => !entry.group).map(entry => entry.page), ['home', 'board'])
+  assert.deepEqual(MENU.find(entry => entry.group === 'navDevelopment').items.map(item => item.page), ['dev', 'blocked'])
   const pages = MENU.flatMap(e => e.group ? e.items.map(i => i.page) : [e.page])
-  assert.equal(pages.length, 12)
-  assert.deepEqual(pages, ['home', 'pool', 'review', 'ready', 'dev', 'blocked', 'board', 'pending', 'records', 'wiki', 'arch', 'prds'])
-  for (const p of pages) assert.ok(PAGES.includes(p))
+  assert.deepEqual(pages, PAGES.filter(page => page !== 'sync'))
   assert.equal(statusPage('backlog'), 'pool')
   assert.equal(statusPage('pending'), 'pending')
   assert.equal(statusPage('completed'), 'board')
