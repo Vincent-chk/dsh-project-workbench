@@ -14,7 +14,7 @@ import { BoardPage } from '../pages/board.js'
 import { PendingPage, RecordsPage } from '../pages/acceptance.js'
 import { WikiView, ArchView } from '../pages/resources.js'
 import { SyncView } from '../pages/sync.js'
-import { DetailPanel } from '../detail/requirement-detail.js'
+import { DetailPanel, PrdDocuments } from '../detail/requirement-detail.js'
 import { IssueDetail } from '../detail/task-detail.js'
 import { DeliveryDetail, RecordDetail } from '../detail/acceptance-detail.js'
 import { requirementFormError } from '../forms/requirement-form.js'
@@ -619,6 +619,7 @@ export function MainShell(props) {
     await refresh()
     if (rootRef.current !== requested) return
     writeNav(defaultViewState()) // 成功后进入该项目首页
+    setNotice(t('workbenchHint'))
   }
 
   // Esc backs out of a detail; the board keeps its own N/J/K/H/L handling.
@@ -829,6 +830,9 @@ export function MainShell(props) {
       h('button', { className: 'pw-button', style: { marginLeft: 'auto' }, onClick: doUndo }, t('undo')),
       h('button', { className: 'pw-button', onClick: () => setUndo(null), 'aria-label': t('dismiss') }, '✕')),
     content,
+    selected && !selectedIssue && !selectedRecord && h(PrdDocuments, {
+      key: projectKey + ':' + selected.id + ':' + (params?.prdId ?? ''), root, reqId: selected.id, initialId: params?.prdId, t,
+    }),
     modal && modal.kind !== 'leave' && h(ReasonModal, {
       key: modal.kind, modal, t, setModal, mutate, root, trashWithUndo, requirements,
       newDraft, clearNewDraft,

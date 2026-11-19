@@ -213,11 +213,12 @@ test('Wiki guard protects the first child call and is removed on startup failure
   assert.equal(guard({ agent: { session: { id: started.data.childId } }, name: 'bash', arguments: {} }), undefined)
 })
 
-test('Wiki generation rejects a Git subdirectory or non-repository before starting an agent', async t => {
+test('Wiki generation checks the Git root and source before starting an agent', async t => {
   const root = await makeGitRoot(t)
   const subdir = join(root, 'subdir')
   await mkdir(subdir)
   const plain = await makeRoot(t)
+  await writeFile(join(plain, 'app.js'), 'export const value = 1\n')
   const { ctx, children } = spawnHost(root)
   const routes = new Map()
   ctx.skills = { register: () => {} }
@@ -237,8 +238,13 @@ test('Wiki generation rejects a Git subdirectory or non-repository before starti
   assert.equal(subdirResult.code, 'WIKI_ROOT_NOT_TOPLEVEL')
   assert.match(subdirResult.message, /顶层文件夹/)
   const plainResult = await call('wiki-generate', plain)
-  assert.equal(plainResult.code, 'WIKI_ROOT_UNAVAILABLE')
-  assert.match(plainResult.message, /Git/)
+  assert.equal(plainResult.code, 'NOT_GIT')
+  assert.match(plainResult.message, /初始化 Git.*无需提交/)
+  const sourceLink = join(root, 'source-link.js')
+  await symlink('source.js', sourceLink)
+  const unsupported = await call('wiki-generate', root)
+  assert.equal(unsupported.code, 'WIKI_SOURCE_UNSUPPORTED')
+  await unlink(sourceLink)
   assert.equal(children.length, 0)
   const alias = join(plain, 'repository-alias')
   await symlink(root, alias)

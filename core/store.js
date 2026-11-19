@@ -2,7 +2,7 @@
 // All writes are atomic; ids are validated to prevent path traversal; corrupt
 // files degrade to read-only diagnostics. New six-info fields default to empty
 // on old files (no migration); terminal content is read-only until reopened.
-import { mkdir, readFile, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
 import { join, basename, relative, isAbsolute, sep } from 'node:path'
 import { randomBytes, createHash } from 'node:crypto'
 import { atomicWrite, WorkbenchError } from './files.js'
@@ -187,23 +187,33 @@ function objectiveEvidence(content, since, savedTime) {
   return { hasObjective: hasHistory || objectiveAt > 0, objectiveAt, files, commands }
 }
 
-// Decision copy reports recorded checks, not all activity considered by the
-// workflow's evidence rule. A successful later retry supersedes the same check.
-function verificationFor({ files, commands }, since, evidence, evidenceAt) {
+// A successful later retry supersedes the same check.
+function latestVerificationChecks(commands, since) {
   const latestChecks = new Map()
   for (const command of commands) {
     if ((since && command.time <= since) || (!command.testConclusion && (isObservationCommand(command.command) || !isVerificationCommand(command.command)))) continue
     const last = latestChecks.get(command.command)
     if (!last || last.time <= command.time) latestChecks.set(command.command, command)
   }
-  let passed = 0, failed = 0, incomplete = 0
-  for (const command of latestChecks.values()) {
+  return [...latestChecks.values()].map(command => {
     const { outcome, testConclusion } = command
-    if (testConclusion === 'failed') failed++
-    else if (isEvidenceCommand(command)) passed++
-    else if (outcome === 'error' || (/^exit:-?\d+$/.test(outcome) && !isEvidenceOutcome(outcome))) failed++
-    else incomplete++
-  }
+    let status = 'incomplete'
+    if (testConclusion === 'failed') status = 'failed'
+    else if (isEvidenceCommand(command)) status = 'passed'
+    else if (outcome === 'error' || (/^exit:-?\d+$/.test(outcome) && !isEvidenceOutcome(outcome))) status = 'failed'
+    return { command: command.command, outcome, status }
+  })
+}
+
+export function taskVerificationChecks(issue, since) {
+  const { commands } = objectiveEvidence(issue.objective ?? '', since, issue.objectiveAt)
+  return latestVerificationChecks(commands, since)
+}
+
+function verificationFor({ files, commands }, since, evidence, evidenceAt) {
+  const counts = { passed: 0, failed: 0, incomplete: 0 }
+  for (const check of latestVerificationChecks(commands, since)) counts[check.status]++
+  const { passed, failed, incomplete } = counts
   const latestFiles = new Map()
   for (const file of files) {
     if (!file.path || (since && file.time <= since)) continue
@@ -530,7 +540,18 @@ async function loadReqDoc(root, id) {
   return { file, raw, doc }
 }
 
-export async function createRequirement(root, title, fields) {
+function requestCreationId(kind, creation) {
+  return `${kind}-${new Date(creation.time).toISOString().slice(0, 10).replaceAll('-', '')}-${creation.key.slice(0, 6)}`
+}
+
+function existingCreation(raw, creation, id) {
+  if (parseFrontmatter(raw).get('creationKey') !== creation.key) {
+    throw new WorkbenchError('CONFLICT', '记录编号发生冲突，请重新发送新建请求。')
+  }
+  return { ok: true, data: { id, reused: true } }
+}
+
+export async function createRequirement(root, title, fields, { creation } = {}) {
   if (!title || !String(title).trim()) throw new WorkbenchError('TITLE_REQUIRED', 'title is required')
   // The interactive RPC supplies fields. Internal callers can still make a legacy draft.
   if (fields !== undefined && (typeof fields?.q_pain !== 'string' || blank(fields.q_pain))) {
@@ -538,8 +559,9 @@ export async function createRequirement(root, title, fields) {
   }
   const p = paths(root)
   if (!(await exists(p.project))) throw new WorkbenchError('NOT_INITIALIZED', 'run project/init first')
-  const id = newId('req')
+  const id = creation ? requestCreationId('req', creation) : newId('req')
   const dir = join(p.reqs, id)
+  const file = join(dir, 'requirement.md')
   const ts = nowIso()
   const fm = `---\nschema: ${SUPPORTED_SCHEMA}\nid: ${id}\ntitle: ""\nstatus: backlog\nnext: ""\norder: 0\ngoal: ""\nscope: ""\nacceptance: ""\nq_who: ""\nq_pain: ""\nq_success: ""\nq_out: ""\nrefs: []\ncreated: ${ts}\nupdated: ${ts}\n---\n`
   const body = `\n## 背景\n\n\n## 决策记录\n\n\n## 活动\n`
@@ -548,9 +570,16 @@ export async function createRequirement(root, title, fields) {
   for (const key of ['q_pain', 'goal', 'scope', 'q_who', 'acceptance']) {
     if (fields?.[key] != null) doc.setString(key, String(fields[key]).trim())
   }
-  await mkdir(join(dir, 'issues'), { recursive: true })
-  await atomicWrite(join(dir, 'requirement.md'), doc.toString())
-  return { ok: true, data: { id } }
+  const save = async () => {
+    if (creation) {
+      if (await exists(file)) return existingCreation(await readText(file), creation, id)
+      doc.setString('creationKey', creation.key)
+    }
+    await mkdir(join(dir, 'issues'), { recursive: true })
+    await atomicWrite(file, doc.toString())
+    return { ok: true, data: { id } }
+  }
+  return creation ? withRequirementLock(root, id, save) : save()
 }
 
 const REQ_EDITABLE = new Set(['title', 'next', 'q_who', 'q_pain', 'q_success', 'q_out', 'order', 'goal', 'scope', 'acceptance'])
@@ -827,11 +856,12 @@ async function reqStatus(root, reqId) {
   return doc.get('status')
 }
 
-function issueFileText(id, title, deliveryStartedAt, fields) {
+function issueFileText(id, title, deliveryStartedAt, fields, creation) {
   const ts = nowIso()
   const fm = `---\nschema: ${SUPPORTED_SCHEMA}\nid: ${id}\ntitle: ""\nstatus: todo\nblocked_reason: ""\nacceptance: ""\nevidence: ""\norder: 0\nrefs: []\ndeliveryStartedAt: ${deliveryStartedAt}\ncreated: ${ts}\nupdated: ${ts}\n---\n`
   const doc = parseFrontmatter(fm + `\n## 说明\n\n`)
   doc.setString('title', title.trim())
+  if (creation) doc.setString('creationKey', creation.key)
   // Validate and apply initial fields BEFORE writing, so an invalid proposal
   // never leaves a half-created task.
   if (fields) applyIssuePatch(doc, fields)
@@ -854,10 +884,15 @@ function initialTaskFields(fields = {}) {
 }
 
 export const newIssueId = () => newId('iss')
-export async function createIssue(root, reqId, title, fields = null, id = null, { reuseTitle = false, splitVersion } = {}) {
+export async function createIssue(root, reqId, title, fields = null, id = null, { reuseTitle = false, splitVersion, creation } = {}) {
   return withRequirementLock(root, reqId, async () => {
+    const requestedId = creation ? requestCreationId('iss', creation) : id
     // Finishing a suggestion that already created its task does not create or modify a task.
-    if (id && await exists(issuePath(root, reqId, id))) return { ok: true, data: { id, reused: true } }
+    if (requestedId && await exists(issuePath(root, reqId, requestedId))) {
+      return creation
+        ? existingCreation(await readText(issuePath(root, reqId, requestedId)), creation, requestedId)
+        : { ok: true, data: { id: requestedId, reused: true } }
+    }
     const { doc: requirement } = await loadReqDoc(root, reqId)
     const status = requirement.get('status')
     const guard = canCreateIssue(status)
@@ -885,8 +920,8 @@ export async function createIssue(root, reqId, title, fields = null, id = null, 
       const existing = reuseTitle && issues.find(issue => issue.title === title.trim())
       if (existing) return { ok: true, data: { id: existing.id, reused: true } }
     }
-    const issueId = id ?? newId('iss')
-    const text = issueFileText(issueId, title, Math.max(Date.now(), Number(requirement.get('deliveryStartedAt')) || 0), fields)
+    const issueId = requestedId ?? newId('iss')
+    const text = issueFileText(issueId, title, Math.max(Date.now(), Number(requirement.get('deliveryStartedAt')) || 0), fields, creation)
     await atomicWrite(issuePath(root, reqId, issueId), text)
     return { ok: true, data: { id: issueId, ...(splitVersion ? { hash: hashText(text) } : {}) } }
   })
@@ -1309,14 +1344,15 @@ export async function reopenRequirement(root, id, { reason, reopen = [], create 
 }
 
 // ---- soft delete: ONLY untouched drafts (PRD §10.3). Tasks are cancelled, not deleted. ----
-export async function trash(root, kind, id, { reqId } = {}) {
+export async function trash(root, kind, id, { fileHash } = {}) {
   const p = paths(root)
   if (kind !== 'requirement') throw new WorkbenchError('INVALID_KIND', 'only draft requirements can be deleted; cancel tasks instead')
   assertReqId(id)
   const src = join(p.reqs, id)
   const remove = async () => {
     if (!(await exists(src))) throw new WorkbenchError('NOT_FOUND', `requirement ${id} not found`)
-    const { doc } = await loadReqDoc(root, id)
+    const { doc, raw } = await loadReqDoc(root, id)
+    if (fileHash && hashText(raw) !== fileHash) throw new WorkbenchError('CONFLICT', '草稿已变化，请重新核对后移除。')
     if (doc.get('status') !== 'backlog') throw new WorkbenchError('NOT_A_DRAFT', 'only requirements in the pool can be deleted')
     const index = await scanProject(root)
     const req = index.requirements.find(r => r.id === id)
@@ -1329,6 +1365,30 @@ export async function trash(root, kind, id, { reqId } = {}) {
     return { ok: true, data: { trashed: id, kind, id, location: relative(p.dir, join(destDir, id)) } }
   }
   return withRequirementLock(root, id, remove)
+}
+
+export async function listTrashedRequirements(root) {
+  const p = paths(root)
+  const listDirs = async path => {
+    try { return (await readdir(path, { withFileTypes: true })).filter(entry => entry.isDirectory()) }
+    catch (error) { if (error.code === 'ENOENT') return []; throw error }
+  }
+  const result = []
+  for (const when of await listDirs(p.trash)) {
+    for (const item of await listDirs(join(p.trash, when.name))) {
+      if (!REQ_ID_RE.test(item.name)) continue
+      const folder = join(p.trash, when.name, item.name)
+      const file = join(folder, 'requirement.md')
+      try {
+        if (!(await lstat(file)).isFile()) continue
+        const doc = parseFrontmatter(await readText(file))
+        if (doc.hasFm && doc.get('id') === item.name) result.push({
+          id: item.name, title: doc.get('title') || item.name, location: relative(p.dir, folder).split(sep).join('/'),
+        })
+      } catch (error) { if (error.code !== 'ENOENT') throw error }
+    }
+  }
+  return result
 }
 
 // ---- restore from trash (drafts come back to the pool, never auto-reviewed) ----

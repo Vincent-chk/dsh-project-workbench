@@ -114,6 +114,17 @@ test('an old checkpoint does not block a fresh update or hide current status and
   assert.match(textOf(current.tree), /wikiTryAgain/)
   assert.doesNotMatch(textOf(current.tree), /wikiStateUnreadable|wikiDone/)
   current.host.unmount()
+
+  job = { ok: true, data: { status: 'idle' } }
+  pageStatus = { exists: false }
+  startResponse = { ok: false, code: 'NOT_GIT' }
+  props.uiMemory.wikiGen = {}
+  current = await render()
+  await all(current.tree, node => node.type === 'button' && textOf(node) === 'wikiGenerate')[0].props.onClick()
+  const failed = current.host.render(current.component, props)
+  const banner = all(failed, node => node.props.role === 'alert' && node.props.className === 'pw-banner pw-error')[0]
+  assert.equal(textOf(banner), 'wikiNeedsGit')
+  current.host.unmount()
 })
 
 test('interrupted wiki shows the last completed date without masking an active Host job', async t => {
@@ -167,7 +178,10 @@ test('interrupted wiki shows the last completed date without masking an active H
         ['WORKSPACE_MISMATCH', 'errWrongWorkspace'],
         ['WIKI_BUSY', 'wikiBusy'],
         ['WIKI_ROOT_NOT_TOPLEVEL', 'wikiRootNotTopLevel'],
+        ['NOT_GIT', 'wikiNeedsGit'],
+        ['GIT_MISSING', 'wikiGitMissing'],
         ['WIKI_ROOT_UNAVAILABLE', 'wikiRootUnavailable'],
+        ['WIKI_SOURCE_UNSUPPORTED', 'wikiSourceUnsupported'],
         ['WIKI_STATE_UNREADABLE', 'wikiStateUnreadable'],
         ['WIKI_METADATA_UNSAFE', 'wikiMetadataUnsafe'],
         ['WIKI_CHECKPOINT_UNSAFE', 'wikiCheckpointUnsafe'],
@@ -178,7 +192,8 @@ test('interrupted wiki shows the last completed date without masking an active H
         startError = code
         await button.props.onClick()
         const afterFailure = host.render(mod.exports.WikiView, props)
-        assert.match(textOf(afterFailure), new RegExp(message))
+        const banner = all(afterFailure, node => node.props.role === 'alert' && node.props.className === 'pw-banner pw-error')[0]
+        assert.equal(textOf(banner), message)
         assert.ok(textOf(afterFailure).includes(`wikiLastUpdate: ${previousDate}`))
         assert.equal(!!all(afterFailure, node => node.type === 'button' && textOf(node) === 'wikiUpdate')[0].props.disabled, false)
       }
@@ -197,6 +212,43 @@ test('interrupted wiki shows the last completed date without masking an active H
   await host.mount()
   assert.ok(textOf(host.render(mod.exports.WikiView, props)).includes('wikiLastUpdate: wikiDateUnknown'))
   host.unmount()
+})
+
+test('architecture generation shows source errors in a banner and keeps the previous diagram', async t => {
+  const host = hookHost()
+  const originalReact = globalThis.__wikiReact
+  globalThis.__wikiReact = host.api
+  t.after(() => { globalThis.__wikiReact = originalReact })
+  let pollStatus
+  let status = { status: 'idle' }
+  const html = '<svg></svg>'
+  t.mock.method(globalThis, 'setInterval', callback => { pollStatus = callback; return 1 })
+  t.mock.method(globalThis, 'clearInterval', () => {})
+  t.mock.method(globalThis, 'fetch', async (url, options) => ({ json: async () => {
+    if (url.endsWith('/arch-status')) return { ok: true, data: status }
+    if (url.endsWith('/arch-generate')) return { ok: true, data: { started: true } }
+    assert.equal(JSON.parse(options.body).method, 'architecture/read')
+    return { ok: true, data: { exists: true, html } }
+  } }))
+  const result = await build({ entryPoints: [fileURLToPath(new URL('../client-src/pages/resources.js', import.meta.url))], bundle: true, platform: 'node', format: 'cjs', write: false, plugins: [reactStub] })
+  const mod = { exports: {} }
+  new Function('module', 'exports', 'require', result.outputFiles[0].text)(mod, mod.exports, require)
+  const props = { root: '/sample', t: key => key }
+  const render = () => host.render(mod.exports.ArchView, props)
+  render()
+  await host.mount()
+  t.after(() => host.unmount())
+  for (const [code, message] of [['ARCH_SOURCE_REQUIRED', 'archSourceRequired'], ['ARCH_SOURCE_INVALID', 'archSourceInvalid']]) {
+    const button = all(render(), node => node.type === 'button' && textOf(node) === 'archRegenerate')[0]
+    assert.equal(Boolean(button.props.disabled), false)
+    await button.props.onClick()
+    status = { status: 'failed', code }
+    await pollStatus()
+    const failed = render()
+    const banner = all(failed, node => node.props.role === 'alert' && node.props.className === 'pw-banner pw-error')[0]
+    assert.equal(textOf(banner), message)
+    assert.equal(all(failed, node => node.type === 'iframe')[0].props.srcDoc, html)
+  }
 })
 
 test('wiki reader follows local Markdown links and hides generated HTML diagnostics', async t => {

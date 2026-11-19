@@ -12,6 +12,44 @@ import { RequirementFields, requirementFormError } from '../forms/requirement-fo
 const h = React.createElement
 const { useCallback, useEffect, useRef, useState } = React
 
+export function PrdDocuments({ root, reqId, initialId, t }) {
+  const [items, setItems] = useState([])
+  const [show, setShow] = useState(initialId ?? null)
+  const [content, setContent] = useState(null)
+  const [error, setError] = useState(null)
+  const [retry, setRetry] = useState(0)
+  useEffect(() => {
+    let active = true
+    rpc('prd/list', { root, reqId }).then(res => {
+      if (!active) return
+      if (res.ok) setItems(res.data)
+      else setError(res.message)
+    })
+    return () => { active = false }
+  }, [root, reqId, retry])
+  useEffect(() => {
+    let active = true
+    setContent(null)
+    if (show) rpc('prd/read', { root, id: show }).then(res => {
+      if (!active) return
+      if (res.ok) setContent(res.data.markdown)
+      else setError(res.message)
+    })
+    return () => { active = false }
+  }, [root, show, retry])
+  if (!items.length && !error) return null
+  return h('section', { className: 'pw-result', 'aria-label': t('prds') },
+    h('strong', null, t('prds')),
+    h('div', { className: 'pw-actions' }, items.map(item => h('button', {
+      key: item.id, type: 'button', className: 'pw-button', 'aria-expanded': item.id === show,
+      onClick: () => { setError(null); setShow(show === item.id ? null : item.id) },
+    }, item.title))),
+    error && h('p', { role: 'alert' }, error, ' ', h('button', {
+      type: 'button', className: 'pw-button', onClick: () => { setError(null); setRetry(n => n + 1) },
+    }, t('pwbRetry'))),
+    show && content && h('pre', { style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, content))
+}
+
 // Drafts live in the plugin instance memory keyed by project + object, so an
 // unmount (DSH sidebar switch) keeps the input and its original fingerprint.
 export function useWorkItemDraft(draftKey, item, fieldsOf, onDirty, memory) {

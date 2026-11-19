@@ -41,7 +41,7 @@ var __projectWorkbenchModule = (() => {
   __export(index_exports, {
     default: () => index_default
   });
-  var import_react21 = __toESM(__require("react"), 1);
+  var import_react22 = __toESM(__require("react"), 1);
 
   // client-src/shell/main-shell.js
   var import_react19 = __toESM(__require("react"), 1);
@@ -2970,6 +2970,8 @@ ${detail.trim()}` : value);
   function generationStartMessage(error, fallback, t) {
     if (error?.code === "SESSION_NOT_LIVE") return t("generationNeedsSession");
     if (error?.code === "WORKSPACE_MISMATCH") return t("errWrongWorkspace");
+    if (error?.code === "NOT_GIT") return t("wikiNeedsGit");
+    if (error?.code === "GIT_MISSING") return t("wikiGitMissing");
     if (error?.code === "WIKI_BUSY") return t("wikiBusy");
     if (error?.code === "WIKI_ROOT_NOT_TOPLEVEL") return t("wikiRootNotTopLevel");
     if (error?.code === "WIKI_ROOT_UNAVAILABLE") return t("wikiRootUnavailable");
@@ -2981,6 +2983,8 @@ ${detail.trim()}` : value);
     if (error?.code === "WIKI_EXTERNAL_CHANGE") return t("wikiExternalChangeBlocked");
     if (error?.code === "WIKI_STAGING_FAILED") return t("wikiStagingFailed");
     if (error?.code === "WIKI_SOURCE_UNSUPPORTED") return t("wikiSourceUnsupported");
+    if (error?.code === "ARCH_SOURCE_REQUIRED") return t("archSourceRequired");
+    if (error?.code === "ARCH_SOURCE_INVALID") return t("archSourceInvalid");
     return t(fallback);
   }
   function wikiJobMessage(error, t) {
@@ -3171,13 +3175,13 @@ ${detail.trim()}` : value);
         const res = await fetch("/api/project-workbench/wiki-generate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ root, sessionId }) });
         const j = await res.json();
         if (!j.ok) {
-          setGenState({ busy: false, failed: true, message: generationStartMessage(j, "wikiTryAgain", t) });
+          setGenState({ busy: false, failed: true, startFailed: true, message: generationStartMessage(j, "wikiTryAgain", t) });
           return;
         }
         setGenState({ busy: true, message: t("wikiGenerating") });
         pollGen();
       } catch {
-        setGenState({ busy: false, failed: true, message: t("wikiTryAgain") });
+        setGenState({ busy: false, failed: true, startFailed: true, message: t("wikiTryAgain") });
       }
     };
     const stopGen = async () => {
@@ -3196,15 +3200,16 @@ ${detail.trim()}` : value);
     const genMessage = genChecked === false || statusError && !gen?.failed ? null : checkpointMessage || (status?.viewExternalChanged && !gen?.failed ? null : interrupted && !gen?.failed ? t("wikiTryAgain") : gen?.message);
     const lastCompleted = status?.lastCompleted ?? (!status?.viewIsSnapshot && status?.lastUpdate?.status === "complete" ? status.lastUpdate : null);
     const visiblePage = !statusError && page && (!status?.viewVersion || !page.viewVersion || page.viewVersion === status.viewVersion) ? page : null;
+    const genError = gen?.startFailed && genMessage ? h13("div", { className: "pw-banner pw-error", role: "alert" }, genMessage) : null;
     const genBar = h13(
       "div",
       { className: "pw-banner", role: "status" },
       h13("button", { className: "pw-button primary", onClick: generate, disabled: genChecked === false || gen?.busy }, status?.exists ? t("wikiUpdate") : t("wikiGenerate")),
       gen?.busy && h13("button", { className: "pw-button", onClick: stopGen }, t("wikiStop")),
-      genMessage && h13("span", { style: { marginLeft: 10 } }, genMessage)
+      !genError && genMessage && h13("span", { style: { marginLeft: 10 } }, genMessage)
     );
     if (!status && !page) return h13("div", { className: "pw-init" }, readError || h13("p", null, t("loading")));
-    if (!status?.exists && !page) return h13("div", { className: "pw-init" }, h13("h2", null, t("wikiTitle")), h13("p", { className: "pw-note" }, t("wikiEmpty")), readError, pageError, genBar);
+    if (!status?.exists && !page) return h13("div", { className: "pw-init" }, h13("h2", null, t("wikiTitle")), h13("p", { className: "pw-note" }, t("wikiEmpty")), readError, pageError, genBar, genError);
     const needle = query.trim().toLowerCase();
     const pages = (status?.pages ?? []).filter((p) => !needle || p.toLowerCase().includes(needle));
     const groups = /* @__PURE__ */ new Map();
@@ -3223,6 +3228,7 @@ ${detail.trim()}` : value);
       "div",
       { className: "pw-wiki-wrap" },
       genBar,
+      genError,
       h13("div", { className: "pw-note" }, t("wikiRebuildNotice")),
       readError,
       status?.viewExternalChanged ? h13("div", { className: "pw-note", role: "status" }, t(status.viewUnavailable ? "wikiNoSavedExternal" : "wikiExternalChangeView")) : (page ? page.viewIsSnapshot : status?.viewIsSnapshot) && h13("div", { className: "pw-note", role: "status" }, t("wikiShowingPrevious")),
@@ -3312,6 +3318,10 @@ ${detail.trim()}` : value);
       setReadError(res.ok ? null : res);
       if (res.ok) setArch(res.data);
     }, [root]);
+    const showRunFailure = useCallback((data) => {
+      const stopped = data.error === "stopped by user";
+      setRun({ busy: false, failed: !stopped, message: stopped ? t("wikiStopped") : generationStartMessage(data, "archTryAgain", t) });
+    }, [t]);
     const poll = useCallback(() => {
       stopPoll();
       timer.current = setInterval(async () => {
@@ -3326,7 +3336,7 @@ ${detail.trim()}` : value);
           load();
         } else if (s === "failed") {
           stopPoll();
-          setRun({ busy: false, message: t(st.data.error === "stopped by user" ? "wikiStopped" : "archTryAgain") });
+          showRunFailure(st.data);
         } else if (s === "stopping") {
           setRun({ busy: true, message: t("wikiStopping") });
         } else if (s === "idle") {
@@ -3337,7 +3347,7 @@ ${detail.trim()}` : value);
           setRun({ busy: false, message: t("generationStatusUnavailable") });
         }
       }, 4e3);
-    }, [root, t, load, stopPoll]);
+    }, [root, t, load, stopPoll, showRunFailure]);
     useEffect5(() => {
       mounted.current = true;
       load();
@@ -3352,7 +3362,7 @@ ${detail.trim()}` : value);
           setRun({ busy: true, message: t("wikiStopping") });
           poll();
         } else if (st?.data?.status === "failed") {
-          setRun({ busy: false, message: t(st.data.error === "stopped by user" ? "wikiStopped" : "archTryAgain") });
+          showRunFailure(st.data);
         }
       }).catch(() => {
       });
@@ -3361,13 +3371,13 @@ ${detail.trim()}` : value);
         mounted.current = false;
         stopPoll();
       };
-    }, [root, load, poll, stopPoll, t]);
+    }, [root, load, poll, stopPoll, t, showRunFailure]);
     const generate = async () => {
       setRun({ busy: true, starting: true, message: t("archAuthoring") });
       const res = await fetch("/api/project-workbench/arch-generate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ root, sessionId }) }).then((r) => r.json()).catch(() => null);
       if (!mounted.current) return;
       if (!res?.ok) {
-        setRun({ busy: false, message: generationStartMessage(res, "archTryAgain", t) });
+        showRunFailure(res ?? {});
         return;
       }
       setRun({ busy: true, message: t("archAuthoring") });
@@ -3408,8 +3418,9 @@ ${detail.trim()}` : value);
         h13("button", { className: "pw-button primary", onClick: generate, disabled: run?.busy }, arch?.exists ? t("archRegenerate") : t("archGenerate")),
         run?.busy && h13("button", { className: "pw-button", onClick: stop, disabled: run.starting }, t("wikiStop")),
         h13("span", { className: "pw-count", style: { marginLeft: 8 } }, t("archHint")),
-        run && h13("span", { style: { marginLeft: 10 } }, run.message)
+        run && !run.failed && h13("span", { style: { marginLeft: 10 } }, run.message)
       ),
+      run?.failed && h13("div", { className: "pw-banner pw-error", role: "alert" }, run.message),
       readError && h13(
         "div",
         { className: "pw-banner pw-error", role: "alert" },
@@ -3618,6 +3629,61 @@ ${detail.trim()}` : value);
   var import_react15 = __toESM(__require("react"), 1);
   var h15 = import_react15.default.createElement;
   var { useCallback: useCallback3, useEffect: useEffect7, useRef: useRef5, useState: useState8 } = import_react15.default;
+  function PrdDocuments({ root, reqId, initialId, t }) {
+    const [items, setItems] = useState8([]);
+    const [show, setShow] = useState8(initialId ?? null);
+    const [content, setContent] = useState8(null);
+    const [error, setError] = useState8(null);
+    const [retry, setRetry] = useState8(0);
+    useEffect7(() => {
+      let active = true;
+      rpc("prd/list", { root, reqId }).then((res) => {
+        if (!active) return;
+        if (res.ok) setItems(res.data);
+        else setError(res.message);
+      });
+      return () => {
+        active = false;
+      };
+    }, [root, reqId, retry]);
+    useEffect7(() => {
+      let active = true;
+      setContent(null);
+      if (show) rpc("prd/read", { root, id: show }).then((res) => {
+        if (!active) return;
+        if (res.ok) setContent(res.data.markdown);
+        else setError(res.message);
+      });
+      return () => {
+        active = false;
+      };
+    }, [root, show, retry]);
+    if (!items.length && !error) return null;
+    return h15(
+      "section",
+      { className: "pw-result", "aria-label": t("prds") },
+      h15("strong", null, t("prds")),
+      h15("div", { className: "pw-actions" }, items.map((item) => h15("button", {
+        key: item.id,
+        type: "button",
+        className: "pw-button",
+        "aria-expanded": item.id === show,
+        onClick: () => {
+          setError(null);
+          setShow(show === item.id ? null : item.id);
+        }
+      }, item.title))),
+      error && h15("p", { role: "alert" }, error, " ", h15("button", {
+        type: "button",
+        className: "pw-button",
+        onClick: () => {
+          setError(null);
+          setRetry((n) => n + 1);
+        }
+      }, t("pwbRetry"))),
+      show && content && h15("pre", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, content)
+    );
+  }
   function useWorkItemDraft(draftKey, item, fieldsOf, onDirty, memory) {
     const [editing, setEditing] = useState8(() => !!memory.drafts[draftKey]);
     const [draft, setDraft] = useState8(() => draftOf(memory.drafts, draftKey, fieldsOf(item)));
@@ -5190,6 +5256,7 @@ ${detail.trim()}` : value);
       await refresh();
       if (rootRef.current !== requested) return;
       writeNav(defaultViewState());
+      setNotice(t("workbenchHint"));
     };
     useEffect10(() => {
       const onKey = (e) => {
@@ -5541,6 +5608,13 @@ ${detail.trim()}` : value);
         h19("button", { className: "pw-button", onClick: () => setUndo(null), "aria-label": t("dismiss") }, "\u2715")
       ),
       content,
+      selected && !selectedIssue && !selectedRecord && h19(PrdDocuments, {
+        key: projectKey + ":" + selected.id + ":" + (params?.prdId ?? ""),
+        root,
+        reqId: selected.id,
+        initialId: params?.prdId,
+        t
+      }),
       modal && modal.kind !== "leave" && h19(ReasonModal, {
         key: modal.kind,
         modal,
@@ -6688,14 +6762,472 @@ ${detail.trim()}` : value);
     );
   }
 
+  // client-src/conversation.js
+  var import_react21 = __toESM(__require("react"), 1);
+  var import_dsh_client_ui_primitives = __require("@deepseek-ai/dsh-client-ui-primitives");
+  var { createElement: h21, useEffect: useEffect12, useRef: useRef9, useState: useState13 } = import_react21.default;
+  var generating = /* @__PURE__ */ new Set(["running", "stopping", "starting"]);
+  var confirmPrompts = { remove: "removePrompt", restore: "restorePrompt", start: "startPrompt" };
+  var confirmActions = { remove: "pwbMoveToTrash", restore: "pwbRestore", start: "pwbStart", prd: "savePrd", reviewEdit: "pwbConfirm" };
+  var useNoWorkspaces3 = () => null;
+  var conversationLocale = {
+    zh: {
+      workbenchMention: "\u5728\u5F53\u524D\u9879\u76EE\u4F7F\u7528\u5DE5\u4F5C\u53F0",
+      workbenchHint: "\u5728\u804A\u5929\u6846\u8F93\u5165 /pwb \u9009\u62E9\u64CD\u4F5C\uFF0C\u6216\u7528 @workbench \u76F4\u63A5\u4EA4\u4EE3\u3002",
+      workbenchConversation: "\u4F1A\u8BDD\u4E2D\u7684\u9879\u76EE\u5DE5\u4F5C\u53F0",
+      openWorkbenchObject: "\u5728\u5DE5\u4F5C\u53F0\u67E5\u770B",
+      openAcceptance: "\u6253\u5F00\u4EFB\u52A1\u4E0E\u9A8C\u6536",
+      removePrompt: "\u5C06\u6B64\u8349\u7A3F\u79FB\u5230\u56DE\u6536\u7AD9\uFF1F",
+      restorePrompt: "\u5C06\u6B64\u8349\u7A3F\u6062\u590D\u5230\u9700\u6C42\u6C60\uFF1F",
+      startPrompt: "\u5F00\u59CB\u5904\u7406\u8FD9\u9879\u4EFB\u52A1\uFF1F",
+      prdMarkdown: "PRD \u8349\u7A3F\uFF08Markdown\uFF09",
+      prds: "\u5173\u8054 PRD",
+      savePrd: "\u4FDD\u5B58 PRD",
+      checkPrdVersion: "\u6838\u5BF9\u5DF2\u4FDD\u5B58\u7248\u672C",
+      prdBefore: "\u539F\u7248\u672C\u4E2D\u7684\u6539\u52A8\u90E8\u5206",
+      prdAfter: "\u8349\u7A3F\u4E2D\u7684\u6539\u52A8\u90E8\u5206",
+      prdDiff: "\u67E5\u770B\u65B0\u65E7\u5DEE\u5F02",
+      noPrdDiff: "\u5185\u5BB9\u6CA1\u6709\u53D8\u5316",
+      pwbCheckPassed: "\u901A\u8FC7",
+      pwbCheckFailed: "\u5931\u8D25",
+      pwbCheckIncomplete: "\u5F85\u6838\u5B9E",
+      pwbConfirm: "\u786E\u8BA4",
+      pwbCancel: "\u53D6\u6D88",
+      pwbDismiss: "\u5173\u95ED",
+      pwbRetry: "\u91CD\u8BD5",
+      pwbPrdReady: "PRD \u8349\u7A3F\u5DF2\u5C31\u7EEA",
+      pwbPreviewPrd: "\u9884\u89C8\u5E76\u4FDD\u5B58",
+      pwbDiscardPrd: "\u653E\u5F03\u8349\u7A3F",
+      pwbPrdSaved: "PRD \u5DF2\u4FDD\u5B58",
+      pwbOpenPrd: "\u67E5\u770B PRD",
+      pwbPreviewAction: "\u67E5\u770B\u5E76\u786E\u8BA4",
+      pwbDetails: "\u67E5\u770B\u8BE6\u60C5",
+      pwbReviewDetails: "\u6838\u5BF9\u9A8C\u6536",
+      pwbMoveToTrash: "\u79FB\u5230\u56DE\u6536\u7AD9",
+      pwbRestore: "\u6062\u590D\u8349\u7A3F",
+      pwbStart: "\u5F00\u59CB\u5904\u7406",
+      pwbArchitecture: "\u67B6\u6784\u56FE",
+      pwbGenerating: "\u6B63\u5728\u751F\u6210 {name}",
+      pwbStopping: "\u6B63\u5728\u505C\u6B62 {name} \u751F\u6210",
+      pwbGenerationCount: "{n} \u9879\u8D44\u6599\u6B63\u5728\u751F\u6210",
+      pwbResourceReady: "{name} \u5DF2\u751F\u6210",
+      pwbOpenResource: "\u6253\u5F00 {name}",
+      pwbResourceIdle: "{name} \u5C1A\u672A\u751F\u6210"
+    },
+    en: {
+      workbenchMention: "Use Project Workbench in this workspace",
+      workbenchHint: "Type /pwb for commands, or start a message with @workbench.",
+      workbenchConversation: "Project Workbench in chat",
+      openWorkbenchObject: "View in Workbench",
+      openAcceptance: "Open task and acceptance",
+      removePrompt: "Move this draft to Trash?",
+      restorePrompt: "Restore this draft to the requirement pool?",
+      startPrompt: "Start this task?",
+      prdMarkdown: "PRD draft (Markdown)",
+      prds: "Related PRDs",
+      savePrd: "Save PRD",
+      checkPrdVersion: "Review the saved version",
+      prdBefore: "Changed lines in the saved version",
+      prdAfter: "Changed lines in the draft",
+      prdDiff: "Compare versions",
+      noPrdDiff: "No content changes",
+      pwbCheckPassed: "Passed",
+      pwbCheckFailed: "Failed",
+      pwbCheckIncomplete: "Unverified",
+      pwbConfirm: "Confirm",
+      pwbCancel: "Cancel",
+      pwbDismiss: "Dismiss",
+      pwbRetry: "Retry",
+      pwbPrdReady: "PRD draft ready",
+      pwbPreviewPrd: "Preview and save",
+      pwbDiscardPrd: "Discard draft",
+      pwbPrdSaved: "PRD saved",
+      pwbOpenPrd: "View PRD",
+      pwbPreviewAction: "Review and confirm",
+      pwbDetails: "View details",
+      pwbReviewDetails: "Review acceptance",
+      pwbMoveToTrash: "Move to Trash",
+      pwbRestore: "Restore draft",
+      pwbStart: "Start task",
+      pwbArchitecture: "architecture diagram",
+      pwbGenerating: "Generating {name}",
+      pwbStopping: "Stopping {name} generation",
+      pwbGenerationCount: "{n} items generating",
+      pwbResourceReady: "{name} ready",
+      pwbOpenResource: "Open {name}",
+      pwbResourceIdle: "{name} has not been generated"
+    }
+  };
+  var workbenchMentionSource = (t, icon) => ({
+    trigger: "@",
+    name: "project-workbench",
+    order: 20,
+    showGroupTitle: false,
+    async candidates(_session, req) {
+      if (req.quoted || req.position !== "leading" || !"workbench".startsWith(req.query.toLowerCase())) return [];
+      return [{ name: "workbench", label: t("panel"), description: t("workbenchMention"), icon }];
+    },
+    onPick({ candidate }) {
+      if (candidate.name !== "workbench") return void 0;
+      return { insert: { source: "project-workbench", ref: "workbench", label: "@workbench", clipboardText: "@workbench:" } };
+    },
+    codec: {
+      clipboardText: () => "@workbench:",
+      serialize: async () => "@workbench:"
+    }
+  });
+  function openConversationTarget(card, workspaces, uiMemory2, openMain) {
+    if (!card.root) return;
+    const workspace = workspaces.find((item) => item.path === card.root);
+    const id = workspace ? projectIdOf(workspace) : null;
+    const key = id ? "id:" + id : "path:" + card.root;
+    uiMemory2.picked = { id, path: card.root };
+    const view = normalizeViewState(uiMemory2.views[key]);
+    if (card.reqId) uiMemory2.views[key] = openDetail(view, {
+      reqId: card.reqId,
+      issueId: card.issueId ?? null,
+      ...card.prdId && { prdId: card.prdId }
+    }, statusPage(card.status ?? "backlog"));
+    else if (card.type) uiMemory2.views[key] = { ...view, page: card.type === "wiki" ? "wiki" : "arch", params: null, history: [] };
+    else uiMemory2.views[key] = view;
+    openMain();
+  }
+  function relevantEvent(entry) {
+    if (entry.type !== "event") return false;
+    const { type, data } = entry.event;
+    return type === "turn/end" || type === "tool/result" || type === "tool/ptc-dispatch" || type === "command/run" && data?.name?.startsWith("pwb-") || type === "command/done";
+  }
+  function ConversationDock(props) {
+    return h21(SessionConversationDock, { ...props, key: props.sessionId });
+  }
+  function SessionConversationDock({ sessionId, eventSource, t, useWorkspaces, openMain, enterSession, uiMemory: uiMemory2, css: css2 }) {
+    const [cards, setCards] = useState13([]);
+    const [error, setError] = useState13(null);
+    const [toast, setToast] = useState13(null);
+    const shown = useRef9(/* @__PURE__ */ new Set());
+    const generation = useRef9(0);
+    const workspaces = (useWorkspaces ?? useNoWorkspaces3)((state) => state?.items) ?? [];
+    const refreshRef = useRef9(null);
+    useEffect12(() => {
+      setError(null);
+      let disposed = false;
+      let timer;
+      let watch;
+      const refresh = async () => {
+        clearTimeout(watch);
+        if (document.hidden || disposed) return;
+        const seq = ++generation.current;
+        const res = await rpc("conversation/view", { sessionId });
+        if (disposed || seq !== generation.current) return;
+        if (!res.ok) {
+          watch = setTimeout(refresh, 3e3);
+          return;
+        }
+        setCards(res.data.cards);
+        const running2 = res.data.cards.some(resourceRunning);
+        watch = setTimeout(refresh, running2 ? 1200 : 3e3);
+      };
+      refreshRef.current = refresh;
+      const schedule = () => {
+        clearTimeout(timer);
+        timer = setTimeout(refresh, 60);
+      };
+      const off = eventSource?.subscribe(() => {
+        const { change } = eventSource.getSnapshot();
+        if (change?.kind === "replace" || change?.kind === "append" && change.entries.some(relevantEvent)) schedule();
+      });
+      document.addEventListener("visibilitychange", schedule);
+      refresh();
+      return () => {
+        disposed = true;
+        refreshRef.current = null;
+        clearTimeout(timer);
+        clearTimeout(watch);
+        off?.();
+        document.removeEventListener("visibilitychange", schedule);
+      };
+    }, [sessionId, eventSource]);
+    useEffect12(() => {
+      const ids = new Set(cards.map((card) => card.id));
+      for (const id of shown.current) if (!ids.has(id)) shown.current.delete(id);
+      if (toast) return;
+      const next = cards.find((card) => isReceipt(card) && !shown.current.has(card.id));
+      if (!next) return;
+      shown.current.add(next.id);
+      setToast(next);
+      void rpc("conversation/act", { sessionId, cardId: next.id, action: "dismiss" });
+    }, [cards, sessionId, toast]);
+    const running = cards.filter(resourceRunning);
+    const pending = cards.filter((card) => card.kind !== "resource" && !isReceipt(card));
+    const open = (card) => openConversationTarget(card, workspaces, uiMemory2, openMain);
+    const perform = async (card, action, extra = {}) => {
+      const res = await rpc("conversation/act", { sessionId, cardId: card.id, action, ...extra });
+      setError(res.ok ? null : { cardId: card.id, ...res });
+      if (refreshRef.current && res.ok && res.data.sessionId) await enterSession(res.data.sessionId);
+      await refreshRef.current?.();
+      return res;
+    };
+    const dock = running.length > 0 || pending.length > 0 ? h21(
+      "section",
+      { className: "pw-conversation", "aria-label": t("workbenchConversation") },
+      h21("style", null, css2 + conversationCss),
+      pending.map((card) => h21(ConversationAction, {
+        key: card.id,
+        card,
+        t,
+        sessionId,
+        uiMemory: uiMemory2,
+        error: error?.cardId === card.id ? error : null,
+        perform,
+        open: () => open(card)
+      })),
+      running.length > 0 && h21(ResourceProgress, { cards: running, t })
+    ) : null;
+    return h21(
+      import_react21.default.Fragment,
+      null,
+      dock,
+      toast && h21(ConversationToast, { key: toast.id, card: toast, t, open: () => open(toast), dismiss: () => setToast(null) })
+    );
+  }
+  function resourceRunning(card) {
+    return card.kind === "resource" && generating.has(card.state);
+  }
+  function isReceipt(card) {
+    return card.kind === "resource" ? !resourceRunning(card) : card.kind === "receipt" || card.failed || card.kind === "open" && !!card.message;
+  }
+  function resourceName(card, t) {
+    return card.type === "wiki" ? "Wiki" : t("pwbArchitecture");
+  }
+  function ConversationToast({ card, t, open, dismiss }) {
+    const resource = card.kind === "resource";
+    const name = resource ? resourceName(card, t) : null;
+    const stopped = resource && card.message === "stopped by user";
+    const failed = !stopped && (card.failed || card.state === "failed");
+    const canOpen = card.kind === "open" || resource && card.state === "done";
+    let message = card.message;
+    if (resource && failed) message = generationStartMessage(card, message, (key) => key === message ? message : t(key));
+    else if (resource && stopped) message = t("wikiStopped");
+    else if (resource && card.state === "done") message = t("pwbResourceReady", { name });
+    else if (resource && card.state === "idle") message = t("pwbResourceIdle", { name });
+    else if (card.kind === "open" && card.prdId) message = t("pwbPrdSaved");
+    const label = resource ? t("pwbOpenResource", { name }) : t(card.prdId ? "pwbOpenPrd" : "openWorkbenchObject");
+    return h21(import_dsh_client_ui_primitives.Toast, {
+      text: message,
+      onDone: dismiss,
+      ...failed ? { icon: h21(import_dsh_client_ui_primitives.IconWarningOutlineRegular), holdMs: 6e3 } : (canOpen || card.kind === "receipt" && !card.pending) && { tone: "success" },
+      actions: canOpen ? [{ label, prefix: " \xB7 ", onClick: () => {
+        dismiss();
+        open();
+      } }] : void 0
+    });
+  }
+  function ResourceProgress({ cards, t }) {
+    const label = (card) => t(card.state === "stopping" ? "pwbStopping" : "pwbGenerating", { name: resourceName(card, t) });
+    const spinner = h21("span", { className: "pw-conversation-spinner", "aria-hidden": true });
+    if (cards.length === 1) return h21(
+      "div",
+      { className: "pw-conversation-row pw-conversation-progress", role: "status" },
+      spinner,
+      h21("span", null, label(cards[0]))
+    );
+    return h21(
+      "details",
+      { className: "pw-conversation-group" },
+      h21(
+        "summary",
+        { className: "pw-conversation-row pw-conversation-progress" },
+        spinner,
+        h21("span", { role: "status" }, t("pwbGenerationCount", { n: cards.length }))
+      ),
+      h21("ul", null, cards.map((card) => h21("li", { key: card.id }, label(card))))
+    );
+  }
+  function ConversationAction({ card, t, sessionId, uiMemory: uiMemory2, error, perform, open }) {
+    const isPrd = card.kind === "prd";
+    const canConfirm = Object.hasOwn(confirmActions, card.kind);
+    const drafts = uiMemory2.drafts ??= {};
+    const draftKey = "conversation-prd:" + sessionId;
+    const [expanded, setExpanded] = useState13(false);
+    const [busy, setBusy] = useState13(false);
+    const [markdown, setMarkdown] = useState13(() => isPrd && drafts[draftKey]?.id === card.id ? drafts[draftKey].markdown : card.markdown ?? "");
+    const [reason, setReason] = useState13("");
+    const launch = async (action, extra) => {
+      if (busy) return;
+      setBusy(true);
+      try {
+        const res = await perform(card, action, extra);
+        if (res.ok && action === "openTask") setExpanded(false);
+        if (res.ok && isPrd && (action === "confirm" || action === "dismiss") && drafts[draftKey]?.id === card.id) {
+          delete drafts[draftKey];
+        }
+      } finally {
+        setBusy(false);
+      }
+    };
+    const close = () => {
+      if (!busy) setExpanded(false);
+    };
+    const confirmation = confirmPrompts[card.kind];
+    const direct = card.kind === "open" || card.kind === "openTask" && !card.evidence;
+    const label = isPrd ? "pwbPreviewPrd" : card.kind === "open" ? "openWorkbenchObject" : direct ? "openAcceptance" : canConfirm ? "pwbPreviewAction" : card.evidence ? "pwbReviewDetails" : "pwbDetails";
+    const row = h21(
+      "div",
+      { className: "pw-conversation-row" },
+      h21("span", { className: "pw-conversation-label", title: card.title }, isPrd ? t("pwbPrdReady") : card.title),
+      h21(import_dsh_client_ui_primitives.Button, {
+        size: "sm",
+        disabled: busy,
+        "aria-haspopup": direct ? void 0 : "dialog",
+        onClick: card.kind === "open" ? open : direct ? () => launch("openTask") : () => setExpanded(true)
+      }, t(label)),
+      !isPrd && h21(import_dsh_client_ui_primitives.Button, {
+        size: "sm",
+        disabled: busy,
+        "aria-label": t("pwbDismiss"),
+        title: t("pwbDismiss"),
+        icon: h21(import_dsh_client_ui_primitives.IconCloseOutlineRegular, { size: 14, "aria-hidden": true }),
+        onClick: () => launch("dismiss")
+      }),
+      !expanded && error && h21("p", { role: "alert", className: "pw-error" }, error.message)
+    );
+    if (!expanded) return row;
+    const footer = h21(
+      import_react21.default.Fragment,
+      null,
+      isPrd && error?.code === "PRD_CONFLICT" && card.previous !== void 0 && h21(import_dsh_client_ui_primitives.Button, { disabled: busy, onClick: () => launch("reloadPrd") }, t("checkPrdVersion")),
+      h21(
+        import_dsh_client_ui_primitives.Button,
+        { disabled: busy, onClick: canConfirm ? () => launch("dismiss") : close },
+        t(isPrd ? "pwbDiscardPrd" : canConfirm ? "pwbCancel" : "pwbDismiss")
+      ),
+      card.kind === "openTask" && h21(import_dsh_client_ui_primitives.Button, { variant: "primary", disabled: busy, onClick: () => launch("openTask") }, t("openAcceptance")),
+      canConfirm && h21(import_dsh_client_ui_primitives.Button, {
+        variant: "primary",
+        disabled: busy || isPrd && !markdown.trim() || card.kind === "reviewEdit" && !reason.trim(),
+        onClick: () => launch("confirm", { ...isPrd && { markdown }, ...card.kind === "reviewEdit" && { reason } })
+      }, t(confirmActions[card.kind]))
+    );
+    return h21(
+      import_react21.default.Fragment,
+      null,
+      row,
+      h21(
+        import_dsh_client_ui_primitives.Modal,
+        {
+          open: expanded,
+          onClose: close,
+          title: card.title,
+          closeLabel: t("pwbDismiss"),
+          footer,
+          className: "pw-conversation-dialog" + (isPrd ? " pw-prd-editor" : ""),
+          contentClassName: "pw-conversation-dialog-content",
+          tone: card.kind === "remove" ? "warning" : void 0,
+          description: isPrd ? card.requirements.join(" \xB7 ") : confirmation ? t(confirmation) : card.evidence || canConfirm ? card.message : void 0
+        },
+        card.kind === "note" && h21("p", null, card.message),
+        card.evidence && h21(TaskEvidence, { data: card.evidence, t }),
+        card.kind === "reviewEdit" && h21(
+          import_react21.default.Fragment,
+          null,
+          h21("p", null, t("confirmReviewEditBody")),
+          h21("ul", null, card.changes.map(({ label: label2, value }) => h21("li", { key: label2 }, label2, " \xB7 ", value))),
+          h21(
+            "label",
+            { className: "pw-field" },
+            h21("span", null, t("reasonTitle")),
+            h21("input", { className: "pw-input", value: reason, onChange: (event) => setReason(event.target.value) })
+          )
+        ),
+        isPrd && h21(
+          import_react21.default.Fragment,
+          null,
+          h21(
+            "label",
+            { className: "pw-field" },
+            h21("span", null, t("prdMarkdown")),
+            h21("textarea", { className: "pw-textarea", rows: 10, value: markdown, onChange: (event) => {
+              setMarkdown(event.target.value);
+              drafts[draftKey] = { id: card.id, markdown: event.target.value };
+            } })
+          ),
+          card.previous !== void 0 && h21(PrdDiff, { before: card.previous, after: markdown, t })
+        ),
+        error && h21("p", { role: "alert", className: "pw-error" }, error.message)
+      )
+    );
+  }
+  function TaskEvidence({ data, t }) {
+    const { verification, currentEvidence } = data;
+    const counts = verification && t("checksPassed", { n: verification.passed }) + " \xB7 " + t("checksFailed", { n: verification.failed });
+    const outcomeLabels = { passed: "pwbCheckPassed", failed: "pwbCheckFailed", incomplete: "pwbCheckIncomplete" };
+    return h21(
+      "details",
+      { open: true },
+      h21("summary", null, t("verify")),
+      h21("p", null, t("acceptanceField"), " \xB7 ", data.acceptance || t("noLimits")),
+      counts && h21("p", null, counts),
+      verification?.status === "unverified" && h21("p", null, t("noChecks")),
+      (verification?.incomplete > 0 || verification?.unconfirmedChanges > 0) && h21("p", null, t("checksIncomplete")),
+      data.currentLimits && h21("p", null, data.currentLimits),
+      data.checks?.length > 0 && h21("ul", null, data.checks.map((check) => h21("li", { key: check.command }, t(outcomeLabels[check.status]), " \xB7 ", h21("code", null, check.command), " \xB7 ", check.outcome))),
+      currentEvidence && h21("pre", null, currentEvidence)
+    );
+  }
+  function changedLines(before, after) {
+    const a = before.trim().split(/\r?\n/), b = after.trim().split(/\r?\n/);
+    let start = 0;
+    let end = 0;
+    const min = Math.min(a.length, b.length);
+    while (start < min && a[start] === b[start]) start++;
+    while (end < min - start && a[a.length - 1 - end] === b[b.length - 1 - end]) end++;
+    return [a.slice(start, a.length - end).join("\n"), b.slice(start, b.length - end).join("\n")];
+  }
+  function PrdDiff({ before, after, t }) {
+    const [removed, added] = changedLines(before, after);
+    return h21(
+      "details",
+      { className: "pw-prd-diff", open: true },
+      h21("summary", null, t("prdDiff")),
+      !removed && !added ? h21("p", null, t("noPrdDiff")) : h21(
+        "div",
+        { className: "pw-prd-diff-columns" },
+        h21("div", null, h21("span", null, t("prdBefore")), h21("pre", null, removed)),
+        h21("div", null, h21("span", null, t("prdAfter")), h21("pre", null, added))
+      )
+    );
+  }
+  var conversationCss = [
+    ".pw-conversation{box-sizing:border-box;width:calc(100% - 2 * var(--dsh-composer-side-clearance,16px));max-width:var(--dsh-composer-card-max-width,920px);margin:0 auto 6px;border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md,10px);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);font-size:13px}",
+    ".pw-conversation>*+*{border-top:1px solid var(--dsw-alias-border-l3)}.pw-conversation>style+*{border-top:0}",
+    ".pw-conversation-row{display:flex;align-items:center;gap:8px;min-height:34px;padding:2px 10px}",
+    ".pw-conversation-label{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+    ".pw-conversation-row .pw-error{overflow-wrap:anywhere}",
+    ".pw-conversation-progress{font-size:inherit}.pw-conversation-group>summary{cursor:pointer;display:list-item;list-style-position:inside;padding-block:8px;min-height:0}",
+    ".pw-conversation-group>summary .pw-conversation-spinner{display:inline-block;margin:0 6px;vertical-align:-1px}",
+    ".pw-conversation-group ul{margin:0;padding:0 12px 8px 32px;line-height:1.6}",
+    ".pw-conversation-spinner{flex:none;width:12px;height:12px;border:2px solid var(--dsw-alias-border-l2);border-top-color:var(--dsw-alias-brand-primary);border-radius:50%;animation:pw-conversation-spin .85s linear infinite}",
+    "@keyframes pw-conversation-spin{to{transform:rotate(1turn)}}",
+    "@media(prefers-reduced-motion:reduce){.pw-conversation-spinner{animation:none}}",
+    ".pw-conversation-dialog.pw-conversation-dialog{width:min(560px,100%);max-height:100%;font-size:14px}",
+    ".pw-conversation-dialog.pw-prd-editor{width:min(720px,100%)}",
+    ".pw-conversation-dialog-content{min-height:0;overflow:auto}",
+    ".pw-conversation-dialog p,.pw-conversation-dialog pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0}",
+    ".pw-conversation-dialog li{overflow-wrap:anywhere}",
+    ".pw-prd-diff-columns{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:12px}",
+    ".pw-conversation-dialog details pre{max-height:150px;overflow:auto}",
+    ".pw-conversation-dialog .pw-field{display:block}.pw-conversation-dialog textarea{box-sizing:border-box;max-height:40vh}"
+  ].join("\n");
+
   // client-src/index.js
-  var h21 = import_react21.default.createElement;
+  var h22 = import_react22.default.createElement;
   var NS = "projectWorkbench";
   var PANEL_ID = "project-workbench";
   var en = {
     ...workbenchContentLocale.en,
     ...rightbarLocale.en,
     ...acceptanceAssistLocale.en,
+    ...conversationLocale.en,
     requirementActions: "More options",
     resumeReopen: "Resume reopening",
     reopenProgress: "{done} of {total} tasks prepared",
@@ -6941,6 +7473,8 @@ ${detail.trim()}` : value);
     kind_stalled: "Stalled",
     kind_wiki_drift: "Wiki drift",
     wikiTryAgain: "Wiki generation did not finish. You can try again.",
+    wikiStagingFailed: "Could not prepare the temporary copy. Check the project and file permissions, then try again.",
+    wikiSourceUnsupported: "This project uses a Git worktree, submodules, symbolic links, or a Git index that Wiki generation does not support.",
     wikiShowingPrevious: "Showing the Wiki saved before this update.",
     wikiPreviousUnavailable: "The unfinished update has no saved earlier version; these pages may have changed.",
     wikiSnapshotFailed: "Could not safely save the Wiki. Check file permissions, metadata, size and system support before retrying.",
@@ -6950,11 +7484,15 @@ ${detail.trim()}` : value);
     wikiNoSavedExternal: "The Wiki changed or cannot be verified, and no earlier saved version is available.",
     wikiExternalChangeBlocked: "The current Wiki changed or cannot be verified. Check its update state before starting another update.",
     wikiRootNotTopLevel: "Open the Git repository\u2019s top-level folder as the project before generating a wiki.",
-    wikiRootUnavailable: "Cannot find the Git repository root. Check that Git is available and this project is a Git repository.",
+    wikiNeedsGit: "Wiki generation requires a Git repository. Initialize Git in this project and try again. You can commit later.",
+    wikiGitMissing: "Git is unavailable. Install Git or check its setup and try again.",
+    wikiRootUnavailable: "Cannot read the Git working directory. Check that Git is available and open the repository\u2019s top-level folder with the project files.",
     wikiStateUnreadable: "Cannot safely read the existing Wiki or its unfinished update. Check the files before trying again.",
     wikiMetadataUnsafe: "The Wiki contains system companion files that the generator may misinterpret. Check them before trying again.",
     wikiCheckpointUnsafe: "The unfinished Wiki update lists system companion files as pages. Check the update record before trying again; existing files are preserved.",
     archTryAgain: "The architecture diagram could not be generated. You can try again.",
+    archSourceRequired: "No project source could be cited. Check that this project contains readable source files, then try again.",
+    archSourceInvalid: "The diagram references a file or line range that cannot be verified. Check the project files and try again.",
     generationNeedsSession: "Open a conversation in this project and try again.",
     generationStatusUnavailable: "The status of this run is unavailable. Try again to check it.",
     generationStopFailed: "The stop request did not complete. You can try again.",
@@ -7022,6 +7560,7 @@ ${detail.trim()}` : value);
     ...workbenchContentLocale.zh,
     ...rightbarLocale.zh,
     ...acceptanceAssistLocale.zh,
+    ...conversationLocale.zh,
     requirementActions: "\u66F4\u591A\u9009\u9879",
     resumeReopen: "\u7EE7\u7EED\u91CD\u5F00",
     reopenProgress: "\u5DF2\u5904\u7406 {done}/{total} \u9879\u4EFB\u52A1",
@@ -7283,11 +7822,15 @@ ${detail.trim()}` : value);
     wikiNoSavedExternal: "\u5F53\u524D Wiki \u72B6\u6001\u53D1\u751F\u53D8\u5316\u6216\u6682\u65F6\u65E0\u6CD5\u6838\u9A8C\uFF0C\u6CA1\u6709\u53EF\u8BFB\u53D6\u7684\u8F83\u65E9\u4FDD\u5B58\u7248\u672C\u3002",
     wikiExternalChangeBlocked: "\u5F53\u524D Wiki \u72B6\u6001\u53D1\u751F\u53D8\u5316\u6216\u6682\u65F6\u65E0\u6CD5\u6838\u9A8C\uFF1B\u8BF7\u5148\u68C0\u67E5\u66F4\u65B0\u72B6\u6001\uFF0C\u518D\u542F\u52A8\u65B0\u7684\u66F4\u65B0\u3002",
     wikiRootNotTopLevel: "\u8BF7\u5C06 Git \u4ED3\u5E93\u7684\u9876\u5C42\u6587\u4EF6\u5939\u4F5C\u4E3A\u9879\u76EE\u6253\u5F00\u540E\uFF0C\u518D\u751F\u6210 Wiki\u3002",
-    wikiRootUnavailable: "\u65E0\u6CD5\u786E\u8BA4 Git \u4ED3\u5E93\u6839\u76EE\u5F55\uFF0C\u8BF7\u68C0\u67E5 Git \u53EF\u7528\u4E14\u5F53\u524D\u9879\u76EE\u662F Git \u4ED3\u5E93\u3002",
+    wikiNeedsGit: "\u751F\u6210 Wiki \u9700\u8981 Git \u4ED3\u5E93\u3002\u8BF7\u5148\u5728\u5F53\u524D\u9879\u76EE\u521D\u59CB\u5316 Git\uFF0C\u65E0\u9700\u63D0\u4EA4\u3002",
+    wikiGitMissing: "\u627E\u4E0D\u5230 Git\u3002\u8BF7\u5B89\u88C5 Git \u6216\u68C0\u67E5\u5176\u914D\u7F6E\u540E\u91CD\u8BD5\u3002",
+    wikiRootUnavailable: "\u65E0\u6CD5\u8BFB\u53D6\u9879\u76EE\u7684 Git \u5DE5\u4F5C\u76EE\u5F55\u3002\u8BF7\u786E\u8BA4 Git \u53EF\u7528\uFF0C\u5E76\u6253\u5F00\u5305\u542B\u9879\u76EE\u6587\u4EF6\u7684\u4ED3\u5E93\u9876\u5C42\u6587\u4EF6\u5939\u3002",
     wikiStateUnreadable: "\u65E0\u6CD5\u5B89\u5168\u8BFB\u53D6\u73B0\u6709 Wiki \u6216\u672A\u5B8C\u6210\u7684\u66F4\u65B0\uFF0C\u8BF7\u68C0\u67E5\u6587\u4EF6\u540E\u91CD\u8BD5\u3002",
     wikiMetadataUnsafe: "Wiki \u4E2D\u6709\u7CFB\u7EDF\u4F34\u968F\u6587\u4EF6\uFF0C\u5F53\u524D\u751F\u6210\u5668\u53EF\u80FD\u8BEF\u5904\u7406\u3002\u4E3A\u4FDD\u62A4\u6587\u4EF6\uFF0C\u6682\u65F6\u4E0D\u80FD\u66F4\u65B0\uFF0C\u8BF7\u68C0\u67E5\u540E\u91CD\u8BD5\u3002",
     wikiCheckpointUnsafe: "\u4E0A\u6B21 Wiki \u66F4\u65B0\u8BB0\u5F55\u628A\u7CFB\u7EDF\u4F34\u968F\u6587\u4EF6\u5F53\u6210\u4E86\u9875\u9762\u3002\u4E3A\u4FDD\u62A4\u8D44\u6599\uFF0C\u6682\u65F6\u4E0D\u80FD\u7EE7\u7EED\uFF0C\u8BF7\u68C0\u67E5\u66F4\u65B0\u8BB0\u5F55\u3002",
     archTryAgain: "\u67B6\u6784\u56FE\u6682\u65F6\u65E0\u6CD5\u751F\u6210\uFF0C\u53EF\u4EE5\u91CD\u8BD5\u3002",
+    archSourceRequired: "\u8FD9\u6B21\u751F\u6210\u6CA1\u6709\u627E\u5230\u53EF\u5F15\u7528\u7684\u9879\u76EE\u6E90\u7801\u3002\u8BF7\u786E\u8BA4\u9879\u76EE\u4E2D\u5DF2\u6709\u53EF\u8BFB\u53D6\u7684\u6E90\u7801\uFF0C\u518D\u8BD5\u4E00\u6B21\u3002",
+    archSourceInvalid: "\u67B6\u6784\u56FE\u5F15\u7528\u7684\u6587\u4EF6\u6216\u884C\u53F7\u65E0\u6CD5\u6838\u5BF9\u3002\u8BF7\u68C0\u67E5\u9879\u76EE\u6E90\u7801\u540E\u91CD\u8BD5\u3002",
     generationNeedsSession: "\u8BF7\u6253\u5F00\u8FD9\u4E2A\u9879\u76EE\u4E2D\u7684\u4F1A\u8BDD\u540E\u91CD\u8BD5\u3002",
     generationStatusUnavailable: "\u6682\u65F6\u65E0\u6CD5\u786E\u8BA4\u5904\u7406\u8FDB\u5EA6\u3002\u91CD\u8BD5\u53EF\u91CD\u65B0\u786E\u8BA4\u3002",
     generationStopFailed: "\u505C\u6B62\u8BF7\u6C42\u672A\u5B8C\u6210\uFF0C\u53EF\u4EE5\u91CD\u8BD5\u3002",
@@ -7670,12 +8213,12 @@ ${detail.trim()}` : value);
 @media(prefers-reduced-motion:reduce){.pw-page *{transition:none!important}}
 `;
   function WorkbenchIcon({ size = 16 }) {
-    return h21(
+    return h22(
       "svg",
       { width: size, height: size, viewBox: "0 0 20 20", fill: "none", "aria-hidden": true },
-      h21("rect", { x: 2, y: 3, width: 4, height: 11, rx: 1, stroke: "currentColor", strokeWidth: 1.4 }),
-      h21("rect", { x: 8, y: 3, width: 4, height: 14, rx: 1, stroke: "currentColor", strokeWidth: 1.4 }),
-      h21("rect", { x: 14, y: 3, width: 4, height: 8, rx: 1, stroke: "currentColor", strokeWidth: 1.4 })
+      h22("rect", { x: 2, y: 3, width: 4, height: 11, rx: 1, stroke: "currentColor", strokeWidth: 1.4 }),
+      h22("rect", { x: 8, y: 3, width: 4, height: 14, rx: 1, stroke: "currentColor", strokeWidth: 1.4 }),
+      h22("rect", { x: 14, y: 3, width: 4, height: 8, rx: 1, stroke: "currentColor", strokeWidth: 1.4 })
     );
   }
   var shellCss = `
@@ -7933,14 +8476,24 @@ ${detail.trim()}` : value);
       });
       ctx.slots.inject("main", () => ctx.slots.register({ name: "main", key: PANEL_ID, locale: NS, inject: () => injected() }, MainShell));
       ctx.slots.inject("sidebar.panellist", () => ctx.slots.register({ name: "sidebar.panellist", id: PANEL_ID, order: 20, label: () => t("panel"), locale: NS }, WorkbenchIcon));
+      ctx.inject(["inputTriggers", "sessions"], (conversation) => {
+        conversation.effect(() => conversation.inputTriggers.registerSource(workbenchMentionSource(t, WorkbenchIcon)), "project-workbench: @ candidate");
+        conversation.slots.inject("conversation.input.dock", () => conversation.slots.register({
+          name: "conversation.input.dock",
+          id: PANEL_ID,
+          locale: NS,
+          order: 20,
+          inject: (sessionId) => ({ ...injected(), sessionId, eventSource: conversation.sessions.binding(sessionId)?.eventSource })
+        }, ConversationDock));
+      });
       ctx.inject(["sidebarRight", "sidebarRightTabs"], (right) => {
         right.effect(() => right.sidebarRightTabs.register({
-          id: "dsh-project-workbench/right",
+          id: "@local/project-workbench/right",
           kind: PANEL_ID,
           title: () => t("panel"),
           guide: [{ id: PANEL_ID, order: 20, title: () => t("panel"), description: () => t("fallbackDescription"), icon: WorkbenchIcon }]
         }), "project-workbench: right tab type");
-        right.slots.inject("sidebar.right.pane.tab", () => right.slots.register({ name: "sidebar.right.pane.tab", key: "dsh-project-workbench/right", locale: NS, inject: () => injected() }, TaskPane));
+        right.slots.inject("sidebar.right.pane.tab", () => right.slots.register({ name: "sidebar.right.pane.tab", key: "@local/project-workbench/right", locale: NS, inject: () => injected() }, TaskPane));
       });
     }
   };

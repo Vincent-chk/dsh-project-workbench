@@ -1,5 +1,5 @@
 // Build the browser plugin artifact: client-src/index.js -> client.js.
-// The host supplies React through the factory's require(); nothing else is bundled.
+// The host supplies React and its UI primitives through the factory's require().
 // `node scripts/build.mjs --check` compares without writing (used by npm run check).
 import { build } from 'esbuild'
 import { readFile, writeFile } from 'node:fs/promises'
@@ -16,7 +16,7 @@ const result = await build({
   write: false,
   format: 'iife',
   globalName: '__projectWorkbenchModule',
-  external: ['react'], // resolved at runtime by factory(require)
+  external: ['react', '@deepseek-ai/dsh-client-ui-primitives'],
   legalComments: 'none',
   logLevel: 'silent',
 })

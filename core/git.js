@@ -9,7 +9,7 @@ const exec = promisify(execFile)
 
 async function git(root, args) {
   try {
-    const { stdout } = await exec('git', args, { cwd: root, timeout: 15000 })
+    const { stdout } = await exec('git', args, { cwd: root, timeout: 15000, env: { ...process.env, LC_ALL: 'C' } })
     return stdout
   } catch (e) {
     const msg = (e.stderr || e.message || '').toString().trim()
@@ -35,8 +35,10 @@ export async function wikiGitRoot(root) {
     const top = await realpath((await git(root, ['rev-parse', '--show-toplevel'])).trim())
     if (selected !== top) return { ok: false, code: 'WIKI_ROOT_NOT_TOPLEVEL', message: '请选择 Git 仓库的顶层文件夹后再生成 Wiki。' }
     return { ok: true }
-  } catch {
-    return { ok: false, code: 'WIKI_ROOT_UNAVAILABLE', message: '无法确认 Git 仓库根目录，请检查 Git 可用且当前项目是 Git 仓库。' }
+  } catch (error) {
+    if (error.code === 'NOT_GIT') return { ok: false, code: 'NOT_GIT', message: '生成 Wiki 需要 Git 仓库。请先在当前项目初始化 Git，无需提交。' }
+    if (error.code === 'GIT_MISSING') return { ok: false, code: 'GIT_MISSING', message: '找不到 Git。请安装 Git 或检查其配置后重试。' }
+    return { ok: false, code: 'WIKI_ROOT_UNAVAILABLE', message: '无法读取项目的 Git 工作目录。请确认 Git 可用，并打开包含项目文件的仓库顶层文件夹。' }
   }
 }
 

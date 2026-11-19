@@ -116,6 +116,8 @@ export function renderMarkdown(src, t, wiki) {
 export function generationStartMessage(error, fallback, t) {
   if (error?.code === 'SESSION_NOT_LIVE') return t('generationNeedsSession')
   if (error?.code === 'WORKSPACE_MISMATCH') return t('errWrongWorkspace')
+  if (error?.code === 'NOT_GIT') return t('wikiNeedsGit')
+  if (error?.code === 'GIT_MISSING') return t('wikiGitMissing')
   if (error?.code === 'WIKI_BUSY') return t('wikiBusy')
   if (error?.code === 'WIKI_ROOT_NOT_TOPLEVEL') return t('wikiRootNotTopLevel')
   if (error?.code === 'WIKI_ROOT_UNAVAILABLE') return t('wikiRootUnavailable')
@@ -127,6 +129,8 @@ export function generationStartMessage(error, fallback, t) {
   if (error?.code === 'WIKI_EXTERNAL_CHANGE') return t('wikiExternalChangeBlocked')
   if (error?.code === 'WIKI_STAGING_FAILED') return t('wikiStagingFailed')
   if (error?.code === 'WIKI_SOURCE_UNSUPPORTED') return t('wikiSourceUnsupported')
+  if (error?.code === 'ARCH_SOURCE_REQUIRED') return t('archSourceRequired')
+  if (error?.code === 'ARCH_SOURCE_INVALID') return t('archSourceInvalid')
   return t(fallback)
 }
 
@@ -282,10 +286,10 @@ export function WikiView({ root, sessionId, t, target, onPageChange, uiMemory })
     try {
       const res = await fetch('/api/project-workbench/wiki-generate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ root, sessionId }) })
       const j = await res.json()
-      if (!j.ok) { setGenState({ busy: false, failed: true, message: generationStartMessage(j, 'wikiTryAgain', t) }); return }
+      if (!j.ok) { setGenState({ busy: false, failed: true, startFailed: true, message: generationStartMessage(j, 'wikiTryAgain', t) }); return }
       setGenState({ busy: true, message: t('wikiGenerating') })
       pollGen() // a job that is already running also lands here
-    } catch { setGenState({ busy: false, failed: true, message: t('wikiTryAgain') }) }
+    } catch { setGenState({ busy: false, failed: true, startFailed: true, message: t('wikiTryAgain') }) }
   }
   const stopGen = async () => {
     setGenState({ busy: true, message: t('wikiStopping') })
@@ -304,12 +308,13 @@ export function WikiView({ root, sessionId, t, target, onPageChange, uiMemory })
   // Keep the previous page in state so it can be reopened after a view change,
   // but never present it (or its Claims) under a different view's label.
   const visiblePage = !statusError && page && (!status?.viewVersion || !page.viewVersion || page.viewVersion === status.viewVersion) ? page : null
+  const genError = gen?.startFailed && genMessage ? h('div', { className: 'pw-banner pw-error', role: 'alert' }, genMessage) : null
   const genBar = h('div', { className: 'pw-banner', role: 'status' },
     h('button', { className: 'pw-button primary', onClick: generate, disabled: genChecked === false || gen?.busy }, status?.exists ? t('wikiUpdate') : t('wikiGenerate')),
     gen?.busy && h('button', { className: 'pw-button', onClick: stopGen }, t('wikiStop')),
-    genMessage && h('span', { style: { marginLeft: 10 } }, genMessage))
+    !genError && genMessage && h('span', { style: { marginLeft: 10 } }, genMessage))
   if (!status && !page) return h('div', { className: 'pw-init' }, readError || h('p', null, t('loading')))
-  if (!status?.exists && !page) return h('div', { className: 'pw-init' }, h('h2', null, t('wikiTitle')), h('p', { className: 'pw-note' }, t('wikiEmpty')), readError, pageError, genBar)
+  if (!status?.exists && !page) return h('div', { className: 'pw-init' }, h('h2', null, t('wikiTitle')), h('p', { className: 'pw-note' }, t('wikiEmpty')), readError, pageError, genBar, genError)
   // Hierarchical nav: group pages by top-level directory; root pages stay top-level.
   const needle = query.trim().toLowerCase()
   const pages = (status?.pages ?? []).filter(p => !needle || p.toLowerCase().includes(needle))
@@ -320,7 +325,7 @@ export function WikiView({ root, sessionId, t, target, onPageChange, uiMemory })
     else { const g = p.slice(0, slash); if (!groups.has(g)) groups.set(g, []); groups.get(g).push(p) }
   }
   const pageBtn = p => h('button', { key: p, className: 'pw-wiki-item' + (page?.path === p ? ' active' : ''), onClick: () => open(p), title: p }, p.split('/').pop())
-  return h('div', { className: 'pw-wiki-wrap' }, genBar,
+  return h('div', { className: 'pw-wiki-wrap' }, genBar, genError,
     h('div', { className: 'pw-note' }, t('wikiRebuildNotice')), readError,
     status?.viewExternalChanged ? h('div', { className: 'pw-note', role: 'status' }, t(status.viewUnavailable ? 'wikiNoSavedExternal' : 'wikiExternalChangeView'))
       : (page ? page.viewIsSnapshot : status?.viewIsSnapshot) && h('div', { className: 'pw-note', role: 'status' }, t('wikiShowingPrevious')),
@@ -381,6 +386,10 @@ export function ArchView({ root, sessionId, t }) {
     setReadError(res.ok ? null : res)
     if (res.ok) setArch(res.data)
   }, [root])
+  const showRunFailure = useCallback(data => {
+    const stopped = data.error === 'stopped by user'
+    setRun({ busy: false, failed: !stopped, message: stopped ? t('wikiStopped') : generationStartMessage(data, 'archTryAgain', t) })
+  }, [t])
   const poll = useCallback(() => {
     stopPoll()
     timer.current = setInterval(async () => {
@@ -390,12 +399,12 @@ export function ArchView({ root, sessionId, t }) {
       if (st?.data?.phase === 'rendering') setRun({ busy: true, message: t('archRendering') })
       else if (st?.data?.phase === 'repairing') setRun({ busy: true, message: t('archRepairing') })
       if (s === 'done') { stopPoll(); setRun({ busy: false, message: t('archDone') }); load() }
-      else if (s === 'failed') { stopPoll(); setRun({ busy: false, message: t(st.data.error === 'stopped by user' ? 'wikiStopped' : 'archTryAgain') }) }
+      else if (s === 'failed') { stopPoll(); showRunFailure(st.data) }
       else if (s === 'stopping') { setRun({ busy: true, message: t('wikiStopping') }) }
       else if (s === 'idle') { stopPoll(); setRun(null) }
       else if (!st?.ok) { stopPoll(); setRun({ busy: false, message: t('generationStatusUnavailable') }) }
     }, 4000)
-  }, [root, t, load, stopPoll])
+  }, [root, t, load, stopPoll, showRunFailure])
   // On mount: load the last diagram AND resume polling if a job is still running
   // (survives sidebar collapse / session switch, since the Host job persists).
   useEffect(() => {
@@ -411,16 +420,16 @@ export function ArchView({ root, sessionId, t }) {
       } else if (st?.data?.status === 'stopping') {
         setRun({ busy: true, message: t('wikiStopping') }); poll()
       } else if (st?.data?.status === 'failed') {
-        setRun({ busy: false, message: t(st.data.error === 'stopped by user' ? 'wikiStopped' : 'archTryAgain') })
+        showRunFailure(st.data)
       }
     }).catch(() => {})
     return () => { alive = false; mounted.current = false; stopPoll() }
-  }, [root, load, poll, stopPoll, t])
+  }, [root, load, poll, stopPoll, t, showRunFailure])
   const generate = async () => {
     setRun({ busy: true, starting: true, message: t('archAuthoring') })
     const res = await fetch('/api/project-workbench/arch-generate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ root, sessionId }) }).then(r => r.json()).catch(() => null)
     if (!mounted.current) return
-    if (!res?.ok) { setRun({ busy: false, message: generationStartMessage(res, 'archTryAgain', t) }); return }
+    if (!res?.ok) { showRunFailure(res ?? {}); return }
     setRun({ busy: true, message: t('archAuthoring') })
     poll()
   }
@@ -446,7 +455,8 @@ export function ArchView({ root, sessionId, t }) {
       h('button', { className: 'pw-button primary', onClick: generate, disabled: run?.busy }, arch?.exists ? t('archRegenerate') : t('archGenerate')),
       run?.busy && h('button', { className: 'pw-button', onClick: stop, disabled: run.starting }, t('wikiStop')),
       h('span', { className: 'pw-count', style: { marginLeft: 8 } }, t('archHint')),
-      run && h('span', { style: { marginLeft: 10 } }, run.message)),
+      run && !run.failed && h('span', { style: { marginLeft: 10 } }, run.message)),
+    run?.failed && h('div', { className: 'pw-banner pw-error', role: 'alert' }, run.message),
     readError && h('div', { className: 'pw-banner pw-error', role: 'alert' },
       h(ErrorDetails, { error: readError, t, showRaw: false }),
       h('button', { className: 'pw-button', onClick: load }, t('retryRead'))),

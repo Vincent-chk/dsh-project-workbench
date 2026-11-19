@@ -3,6 +3,7 @@ import { MainShell } from './shell/main-shell.js'
 import { TaskPane, rightbarLocale } from './rightbar/task-pane.js'
 import { workbenchContentLocale } from './workbench-content.js'
 import { acceptanceAssistLocale } from './detail/acceptance-assist.js'
+import { ConversationDock, conversationLocale, workbenchMentionSource } from './conversation.js'
     const h = React.createElement
     const NS = 'projectWorkbench'
     const PANEL_ID = 'project-workbench'
@@ -10,6 +11,7 @@ import { acceptanceAssistLocale } from './detail/acceptance-assist.js'
       ...workbenchContentLocale.en,
       ...rightbarLocale.en,
       ...acceptanceAssistLocale.en,
+      ...conversationLocale.en,
       requirementActions: 'More options', resumeReopen: 'Resume reopening',
       reopenProgress: '{done} of {total} tasks prepared',
       confirmIssueTitle: 'Confirm task completion',
@@ -74,6 +76,8 @@ import { acceptanceAssistLocale } from './detail/acceptance-assist.js'
       syncTitle: 'Reconciliation proposals', syncRun: 'Review progress', syncRunning: 'Collecting evidence…', syncDone: 'Progress review finished.', syncNone: 'The review found no changes to suggest.', syncEmpty: 'No pending suggestions. Review progress to check for updates.', syncDismiss: 'Dismiss', syncEvidence: 'Sources', syncSaved: '{n} new proposals', syncPending: '{n} pending', syncAcceptRate: 'Acceptance rate: {rate}% ({accepted}/{total})',
       kind_advance: 'Advance state', kind_review: 'Review state', kind_capture: 'Capture new work', kind_clarify: 'Needs clarification', kind_stalled: 'Stalled', kind_wiki_drift: 'Wiki drift',
       wikiTryAgain: 'Wiki generation did not finish. You can try again.',
+      wikiStagingFailed: 'Could not prepare the temporary copy. Check the project and file permissions, then try again.',
+      wikiSourceUnsupported: 'This project uses a Git worktree, submodules, symbolic links, or a Git index that Wiki generation does not support.',
       wikiShowingPrevious: 'Showing the Wiki saved before this update.',
       wikiPreviousUnavailable: 'The unfinished update has no saved earlier version; these pages may have changed.',
       wikiSnapshotFailed: 'Could not safely save the Wiki. Check file permissions, metadata, size and system support before retrying.',
@@ -83,11 +87,15 @@ import { acceptanceAssistLocale } from './detail/acceptance-assist.js'
       wikiNoSavedExternal: 'The Wiki changed or cannot be verified, and no earlier saved version is available.',
       wikiExternalChangeBlocked: 'The current Wiki changed or cannot be verified. Check its update state before starting another update.',
       wikiRootNotTopLevel: 'Open the Git repository’s top-level folder as the project before generating a wiki.',
-      wikiRootUnavailable: 'Cannot find the Git repository root. Check that Git is available and this project is a Git repository.',
+      wikiNeedsGit: 'Wiki generation requires a Git repository. Initialize Git in this project and try again. You can commit later.',
+      wikiGitMissing: 'Git is unavailable. Install Git or check its setup and try again.',
+      wikiRootUnavailable: 'Cannot read the Git working directory. Check that Git is available and open the repository’s top-level folder with the project files.',
       wikiStateUnreadable: 'Cannot safely read the existing Wiki or its unfinished update. Check the files before trying again.',
       wikiMetadataUnsafe: 'The Wiki contains system companion files that the generator may misinterpret. Check them before trying again.',
       wikiCheckpointUnsafe: 'The unfinished Wiki update lists system companion files as pages. Check the update record before trying again; existing files are preserved.',
       archTryAgain: 'The architecture diagram could not be generated. You can try again.',
+      archSourceRequired: 'No project source could be cited. Check that this project contains readable source files, then try again.',
+      archSourceInvalid: 'The diagram references a file or line range that cannot be verified. Check the project files and try again.',
       generationNeedsSession: 'Open a conversation in this project and try again.',
       generationStatusUnavailable: 'The status of this run is unavailable. Try again to check it.',
       generationStopFailed: 'The stop request did not complete. You can try again.',
@@ -109,6 +117,7 @@ import { acceptanceAssistLocale } from './detail/acceptance-assist.js'
       ...workbenchContentLocale.zh,
       ...rightbarLocale.zh,
       ...acceptanceAssistLocale.zh,
+      ...conversationLocale.zh,
       requirementActions: '更多选项', resumeReopen: '继续重开',
       reopenProgress: '已处理 {done}/{total} 项任务',
       confirmIssueTitle: '确认任务完成',
@@ -190,11 +199,15 @@ import { acceptanceAssistLocale } from './detail/acceptance-assist.js'
       wikiNoSavedExternal: '当前 Wiki 状态发生变化或暂时无法核验，没有可读取的较早保存版本。',
       wikiExternalChangeBlocked: '当前 Wiki 状态发生变化或暂时无法核验；请先检查更新状态，再启动新的更新。',
       wikiRootNotTopLevel: '请将 Git 仓库的顶层文件夹作为项目打开后，再生成 Wiki。',
-      wikiRootUnavailable: '无法确认 Git 仓库根目录，请检查 Git 可用且当前项目是 Git 仓库。',
+      wikiNeedsGit: '生成 Wiki 需要 Git 仓库。请先在当前项目初始化 Git，无需提交。',
+      wikiGitMissing: '找不到 Git。请安装 Git 或检查其配置后重试。',
+      wikiRootUnavailable: '无法读取项目的 Git 工作目录。请确认 Git 可用，并打开包含项目文件的仓库顶层文件夹。',
       wikiStateUnreadable: '无法安全读取现有 Wiki 或未完成的更新，请检查文件后重试。',
       wikiMetadataUnsafe: 'Wiki 中有系统伴随文件，当前生成器可能误处理。为保护文件，暂时不能更新，请检查后重试。',
       wikiCheckpointUnsafe: '上次 Wiki 更新记录把系统伴随文件当成了页面。为保护资料，暂时不能继续，请检查更新记录。',
       archTryAgain: '架构图暂时无法生成，可以重试。',
+      archSourceRequired: '这次生成没有找到可引用的项目源码。请确认项目中已有可读取的源码，再试一次。',
+      archSourceInvalid: '架构图引用的文件或行号无法核对。请检查项目源码后重试。',
       generationNeedsSession: '请打开这个项目中的会话后重试。',
       generationStatusUnavailable: '暂时无法确认处理进度。重试可重新确认。',
       generationStopFailed: '停止请求未完成，可以重试。',
@@ -683,12 +696,19 @@ export default {
         })
         ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID, locale: NS, inject: () => injected() }, MainShell))
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: PANEL_ID, order: 20, label: () => t('panel'), locale: NS }, WorkbenchIcon))
+        ctx.inject(['inputTriggers', 'sessions'], conversation => {
+          conversation.effect(() => conversation.inputTriggers.registerSource(workbenchMentionSource(t, WorkbenchIcon)), 'project-workbench: @ candidate')
+          conversation.slots.inject('conversation.input.dock', () => conversation.slots.register({
+            name: 'conversation.input.dock', id: PANEL_ID, locale: NS, order: 20,
+            inject: sessionId => ({ ...injected(), sessionId, eventSource: conversation.sessions.binding(sessionId)?.eventSource }),
+          }, ConversationDock))
+        })
         ctx.inject(['sidebarRight', 'sidebarRightTabs'], right => {
           right.effect(() => right.sidebarRightTabs.register({
-            id: 'dsh-project-workbench/right', kind: PANEL_ID, title: () => t('panel'),
+            id: '@local/project-workbench/right', kind: PANEL_ID, title: () => t('panel'),
             guide: [{ id: PANEL_ID, order: 20, title: () => t('panel'), description: () => t('fallbackDescription'), icon: WorkbenchIcon }],
           }), 'project-workbench: right tab type')
-          right.slots.inject('sidebar.right.pane.tab', () => right.slots.register({ name: 'sidebar.right.pane.tab', key: 'dsh-project-workbench/right', locale: NS, inject: () => injected() }, TaskPane))
+          right.slots.inject('sidebar.right.pane.tab', () => right.slots.register({ name: 'sidebar.right.pane.tab', key: '@local/project-workbench/right', locale: NS, inject: () => injected() }, TaskPane))
         })
       },
     }

@@ -65,7 +65,7 @@ test('architecture read errors are distinct from a missing diagram', async t => 
 
 test('architecture start is single-flight and stop during activation settles before another start', async t => {
   const { apply } = await import('../index.js')
-  const { stubSpawnHost, waitFor } = await import('./util.js')
+  const { childReply, stubSpawnHost, waitFor } = await import('./util.js')
   const root = await makeRoot(t)
   const { ctx } = stubSpawnHost(root)
   const routes = new Map()
@@ -108,4 +108,10 @@ test('architecture start is single-flight and stop during activation settles bef
   assert.equal((await call('arch-generate', { root, sessionId })).ok, false)
   assert.equal((await call('arch-generate', { root, sessionId })).ok, false)
   assert.equal(count, 3)
+  for (const output of [{ arch_error: 'ARCH_SOURCE_REQUIRED' }, { components: [] }]) {
+    ctx.subagents.startActivation = async () => ({ result: Promise.resolve(childReply(output)) })
+    assert.equal((await call('arch-generate', { root, sessionId })).ok, true)
+    await waitFor(async () => (await call('arch-status', { root })).data.status === 'failed')
+    assert.equal((await call('arch-status', { root })).data.code, 'ARCH_SOURCE_REQUIRED')
+  }
 })

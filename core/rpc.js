@@ -5,6 +5,7 @@ import * as store from './store.js'
 import { gitStatus, gitCommitProject } from './git.js'
 import { wikiStatus, wikiPage, wikiEvidence } from './wiki.js'
 import { readArchitecture } from './architecture.js'
+import { listPrds, readPrd } from './prd.js'
 import * as proposals from './proposals.js'
 import { deriveRequirement, currentDoing, todaySuggestion, rankSuggestions, homeSummary } from './derive.js'
 
@@ -68,6 +69,8 @@ const routes = {
   'wiki/page': async i => { assertRoot(i.root); return wikiPage(i.root, i.path, i.viewVersion) },
   'wiki/evidence': async i => { assertRoot(i.root); return wikiEvidence(i.root, i.path, i.viewVersion) },
   'architecture/read': async i => { assertRoot(i.root); return readArchitecture(i.root) },
+  'prd/list': async i => { assertRoot(i.root); return listPrds(i.root, i.reqId) },
+  'prd/read': async i => { assertRoot(i.root); return readPrd(i.root, i.id) },
   'sync/proposals': async i => { assertRoot(i.root); return { proposals: await proposals.listProposals(i.root), baseline: await proposals.readBaseline(i.root) } },
   'sync/submit': async i => { assertRoot(i.root); return (await proposals.submitProposals(i.root, i.proposals)).data },
   'sync/apply': async i => { assertRoot(i.root); return (await proposals.adoptProposal(i.root, i.proposalId, i.patch)).data },
