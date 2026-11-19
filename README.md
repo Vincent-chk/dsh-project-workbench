@@ -65,6 +65,7 @@ flowchart LR
 | `/pwb-help` | 查看操作和用法，可询问当前任务为何不能开始 |
 | `/pwb-requirement` | 查找、记录、完善、移除或恢复需求草稿 |
 | `/pwb-task` | 建议拆分、新建、开始、记录结果、提交或核对验收 |
+| `/pwb-update` | 把当前会话的新进展和已确认决定记到关联任务的进展记录，也可指定需求或任务 |
 | `/pwb-prd` | 从已有需求生成 PRD 草稿，或更新一份已有 PRD |
 | `/pwb-wiki-update` | 按现有 Git 条件生成或更新 Wiki，可带「查看进度」 |
 | `/pwb-architecture-update` | 用本地源码更新架构图，可带「查看进度」 |

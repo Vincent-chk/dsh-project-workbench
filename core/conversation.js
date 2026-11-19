@@ -12,20 +12,22 @@ import { effectiveEvidence, requirementOverview, startBlockers, taskOverview } f
 import * as store from './store.js'
 
 const stop = /^(?:取消(?:这次操作)?|算了|到此为止|先聊别的|换个话题|不用了)[。！.!]?$/u
-const noWrite = /(?:先(?:别|不要|不用)(?:记录|记|保存|写入|修改)|只读|先讨论|先聊聊|别保存|别记|不要保存|不写入|不要修改|\bread.only\b|\b(?:don't|do not)\s+(?:save|write|record)\b)|^(?:为什么|为何|如何|怎么|怎样|why\b|how\b)/iu
-const followOnly = new Set(['read', 'addRequirement', 'editRequirement', 'addTask', 'taskRecord', 'prdPreview', 'remember', 'finish'])
+const noWrite = /(?:先(?:别|不要|不用)(?:记录|记|保存|写入|修改|同步)|只读|先讨论|先聊聊|别保存|别记|不要保存|不写入|不要修改|\bread.only\b|\b(?:don't|do not)\s+(?:save|write|record)\b)|^(?:为什么|为何|如何|怎么|怎样|why\b|how\b)/iu
+const followOnly = new Set(['read', 'addRequirement', 'editRequirement', 'addTask', 'taskRecord', 'recordUpdate', 'prdPreview', 'remember', 'finish'])
 const groups = {
   help: ['read', 'status', 'resourceStatus'],
   status: ['read', 'status', 'resourceStatus'],
   requirement: ['read', 'addRequirement', 'editRequirement', 'removeRequirement', 'restoreRequirement', 'remember', 'finish'],
   task: ['read', 'split', 'addTask', 'taskStart', 'taskRecord', 'taskSubmit', 'taskReview', 'taskConfirm', 'remember', 'finish'],
+  update: ['read', 'recordUpdate', 'remember', 'finish'],
   prd: ['read', 'prdPreview', 'remember', 'finish'],
   'wiki-update': ['generate', 'resourceStatus'],
   'architecture-update': ['generate', 'resourceStatus'],
 }
 const actions = [...new Set(Object.values(groups).flat())]
+const mentionActions = actions.filter(action => action !== 'recordUpdate')
 const generating = new Set(['starting', 'running', 'stopping'])
-const writes = new Set(['addRequirement', 'editRequirement', 'removeRequirement', 'restoreRequirement', 'split', 'addTask', 'taskStart', 'taskRecord', 'taskSubmit', 'generate'])
+const writes = new Set(['addRequirement', 'editRequirement', 'removeRequirement', 'restoreRequirement', 'split', 'addTask', 'taskStart', 'taskRecord', 'taskSubmit', 'recordUpdate', 'generate'])
 const reqFields = ['title', 'overview', 'goal', 'scope', 'acceptance', 'audience']
 const reqFieldKeys = { title: 'title', overview: 'q_pain', goal: 'goal', scope: 'scope', acceptance: 'acceptance', audience: 'q_who' }
 const taskFields = ['title', 'overview', 'acceptance', 'steps']
@@ -46,7 +48,8 @@ const titleOf = root => basename(root) || root
 function publicReq(req) {
   return { id: req.id, title: req.title, status: states[req.status] ?? req.status, overview: requirementOverview(req),
     audience: req.q_who, goal: req.goal, scope: req.scope, acceptance: req.acceptance || req.q_success,
-    outOfScope: req.q_out, tasks: req.issues.map(({ id, title, status }) => ({ id, title, status: states[status] ?? status })) }
+    outOfScope: req.q_out, recentActivity: req.activity.slice(0, 5),
+    tasks: req.issues.map(({ id, title, status }) => ({ id, title, status: states[status] ?? status })) }
 }
 
 function publicTask(req, issue) {
@@ -176,7 +179,7 @@ export function installConversation(ctx, { links, routes, resources }) {
     const issueId = args.issueId || (state.target?.reqId === reqId ? state.target.issueId : undefined) || (link?.reqId === reqId ? link.issueId : undefined)
     const issue = req.issues.find(item => item.id === issueId)
     if (needIssue && !issue) throw new WorkbenchError('TASK_REQUIRED', '请选择该需求中的一项任务。')
-    return { req, issue }
+    return { req, issue, issueId }
   }
 
   async function summary(args, project, signal) {
@@ -276,12 +279,15 @@ export function installConversation(ctx, { links, routes, resources }) {
     const turn = state.active
     if (!turn) throw new WorkbenchError('COMMAND_REQUIRED', '请先发送 /pwb 命令或 @workbench 请求。')
     const action = args.action
-    if (!actions.includes(action) || (turn.kind !== 'mention' && !groups[turn.kind]?.includes(action))
-      || (turn.followUp && !followOnly.has(action))) {
+    const available = turn.kind === 'mention' ? mentionActions : groups[turn.kind]
+    if (!available?.includes(action) || (turn.followUp && !followOnly.has(action))) {
       throw new WorkbenchError('ACTION_NOT_AVAILABLE', '这个动作需要单独发起。请使用对应的 /pwb 命令。')
     }
     const signal = exec.signal
     signal?.throwIfAborted()
+    // A fresh sync starts with the session link, independent of a target left
+    // behind by an earlier workbench operation.
+    const targetState = turn.kind === 'update' ? { target: turn.followUp ? turn.target : null } : state
     if (action === 'finish') {
       state.waiting = null
       state.active = null
@@ -290,14 +296,15 @@ export function installConversation(ctx, { links, routes, resources }) {
     }
     if (action === 'remember') {
       if (args.reqId || args.issueId) {
-        const { req, issue } = await selected(agent, state, args, await projectOf(agent), !!args.issueId)
+        const { req, issue } = await selected(agent, targetState, args, await projectOf(agent), !!args.issueId)
         if (turn.followUp && turn.target && req.id !== turn.target.reqId) {
           throw new WorkbenchError('TARGET_CHANGED', '本轮只跟进刚才的对象。')
         }
-        state.target = { reqId: req.id, ...(issue && { issueId: issue.id }) }
+        state.target = { reqId: req.id, ...(issue && (turn.kind !== 'update' || args.issueId) && { issueId: issue.id }) }
       }
-      state.waiting = { kind: turn.kind, target: state.target, readOnly: turn.readOnly, time: Date.now() }
-      return { message: '可在回复里提问。用户可直接回答。', target: state.target }
+      const target = turn.kind === 'update' && !args.reqId && !args.issueId ? targetState.target : state.target
+      state.waiting = { kind: turn.kind, target, readOnly: turn.readOnly, time: Date.now() }
+      return { message: '可在回复里提问。用户可直接回答。', target }
     }
     if (writes.has(action)) writeAllowed(agent, turn)
     if (action === 'generate' || action === 'resourceStatus') {
@@ -308,7 +315,7 @@ export function installConversation(ctx, { links, routes, resources }) {
     const { root } = project
     const sessionId = agent.session.id
     if (writes.has(action)) assertProjectWritable(project)
-    if (action === 'read') return read(agent, state, args, project)
+    if (action === 'read') return read(agent, targetState, args, project)
     if (action === 'status') return summary(args, project, signal)
     if (turn.followUp && turn.target && (args.reqId && args.reqId !== turn.target.reqId || args.issueId && args.issueId !== turn.target.issueId)) {
       throw new WorkbenchError('TARGET_CHANGED', '本轮只跟进刚才的对象。请用新命令选择其他对象。')
@@ -350,12 +357,32 @@ export function installConversation(ctx, { links, routes, resources }) {
       show(state, { kind: 'restore', root, title: matches[0].title, location: matches[0].location })
       return { message: '已展示要恢复的草稿，等待用户确认。' }
     }
-    const needIssue = ['taskStart', 'taskRecord', 'taskSubmit', 'taskReview', 'taskConfirm'].includes(action)
-    const { req, issue } = await selected(agent, state, args, project, needIssue)
+    const syncing = action === 'recordUpdate'
+    const needIssue = ['taskStart', 'taskRecord', 'taskSubmit', 'taskReview', 'taskConfirm'].includes(action) || (syncing && !!args.issueId)
+    const { req, issue: selectedIssue, issueId } = await selected(agent, targetState, args, project, needIssue)
+    const toRequirement = syncing && !args.issueId && (args.reqId || (targetState.target && !targetState.target.issueId))
+    const issue = toRequirement ? undefined : selectedIssue
+    if (syncing && !toRequirement && issueId && !issue) {
+      throw new WorkbenchError('TASK_REQUIRED', '原来关联的任务已不可用。请重新指定需求或任务。')
+    }
     if (writes.has(action)) {
       await safePath(root, ['.project', 'requirements', req.id, 'requirement.md'])
-      if (needIssue) await safePath(root, ['.project', 'requirements', req.id, 'issues', issue.id + '.md'])
+      if (needIssue || (syncing && issue)) await safePath(root, ['.project', 'requirements', req.id, 'issues', issue.id + '.md'])
       signal?.throwIfAborted()
+    }
+    if (syncing) {
+      if (turn.followUp && turn.target && (req.id !== turn.target.reqId || issue?.id !== turn.target.issueId)) {
+        throw new WorkbenchError('TARGET_CHANGED', '本轮只同步刚才选定的需求或任务。')
+      }
+      const text = typeof args.text === 'string' ? args.text.replace(/\r\n?/g, '\n').trim() : ''
+      if (!text || text.length > 4000) throw new WorkbenchError('INVALID_FIELD', '请用 4000 字符以内记录本会话中已有依据的进展、决定或待验证事项。')
+      const note = '[会话同步] ' + text
+      const options = { syncKey: creationOf(agent, turn, action).key }
+      const { data } = issue ? await store.addIssueUpdate(root, req.id, issue.id, note, options)
+        : await store.addRequirementUpdate(root, req.id, note, options)
+      const message = data.reused ? '这次同步已记录。' : '已同步到进展记录。'
+      showTarget(state, project, req, issue, 'open', message)
+      return { ...data, reqId: req.id, title: issue?.title ?? req.title, message }
     }
     if (action === 'editRequirement') {
       const patch = fieldsFrom(args.fields, reqFields, reqFieldKeys)
@@ -485,6 +512,11 @@ export function installConversation(ctx, { links, routes, resources }) {
               const result = await simple(agent, state, directive, signal, commandId)
               return { kind: 'success', text: result }
             }
+            if (kind === 'update') {
+              writeAllowed(agent, { readOnly: noWrite.test(text) })
+              assertProjectWritable(await projectOf(agent))
+              signal?.throwIfAborted()
+            }
             const content = [{ type: 'text', text: '/pwb-' + kind + (text ? ' ' + text : '') }]
             await ctx.sessionController.prompt({ sessionId: agent.session.id, requestId: commandId, mode: 'queue', content }, signalOf(signal))
             return { kind: 'success' }
@@ -556,7 +588,15 @@ export function installConversation(ctx, { links, routes, resources }) {
     text: ({ agent }) => {
       const active = isMain(agent) && sessions.get(agent.session)?.active
       if (!active) return ''
-      const available = active.kind === 'mention' ? actions : groups[active.kind]
+      if (active.kind === 'update') return [
+        '用户发起 /pwb-update，要把这次会话中已发生的工作和已确认的决策同步到项目工作台的进展记录。',
+        '先调用 workbench_conversation 的 read，核对当前关联任务、已有进展和用户指定的需求或任务。用户未指定时默认用关联任务。没有关联时只选择本会话中能唯一核对的对象，多项匹配或归属不明时调用 remember 后请用户选。不要新建需求或任务。',
+        '根据本会话里的用户确认和实际处理证据，只同步该对象尚未记录的新进展。若决定发生变化，简明写出原决定、新决定和影响。明确区分已确认决定、尚未核对的验证结果和待决定事项；不要将建议写成决定，或将计划写成已完成。没有新内容时告诉用户，无需调用写入工具。',
+        '用 recordUpdate 一次写入同一对象的全部摘要。传 issueId 同步到任务，或只传 reqId 同步到需求。只记录可给项目成员看的内容。这个操作只追加进展记录，正式字段修改和评审、验收仍通过各自入口。只有工具返回成功后才说明已同步，并告诉用户同步到了哪个对象。',
+        active.followUp ? '用户在回答上次追问。沿用已选定的对象，尚未选择时根据答复核对对象。' : '',
+        active.readOnly ? '用户要求先讨论，本轮只读。' : '',
+      ].filter(Boolean).join('\n')
+      const available = active.kind === 'mention' ? mentionActions : groups[active.kind]
       return [
         '当前用户发起项目工作台操作。先调用 workbench_conversation 读取必要的项目数据，再处理用户明确要求的动作。当前主会话目录决定项目。',
         '可用操作 ' + available.join(', ') + '。' + (active.target ? '上次对象 ' + JSON.stringify(active.target) + '。' : ''),
@@ -582,7 +622,7 @@ export function installConversation(ctx, { links, routes, resources }) {
       reqId: { type: 'string' }, issueId: { type: 'string' }, prdId: { type: 'string' }, version: { type: 'string' },
       reqIds: { type: 'array', items: { type: 'string' } },
       type: { type: 'string', enum: ['wiki', 'arch'] },
-      text: { type: 'string', description: '任务的实际结果或拆分要求' },
+      text: { type: 'string', description: '任务的实际结果、拆分要求或本会话需要同步的进展摘要' },
       fields: { type: 'object', additionalProperties: false, properties: Object.fromEntries(Object.keys(limits).map(key => [key, { type: 'string' }])) },
       markdown: { type: 'string', description: 'PRD 草稿全文' },
     } },
