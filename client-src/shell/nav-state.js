@@ -3,12 +3,13 @@
 import { TERMINAL_ISSUE } from '../../core/state.js'
 import { reviewRecords } from '../workbench-content.js'
 
-export const PAGES = ['home', 'pool', 'review', 'ready', 'dev', 'blocked', 'board', 'pending', 'records', 'wiki', 'arch', 'prds', 'sync']
+export const PAGES = ['home', 'board', 'pool', 'review', 'ready', 'dev', 'blocked', 'pending', 'records', 'wiki', 'arch', 'prds', 'sync']
 // PRD §7.1 internal menu. 'sync' (进展建议) stays an auxiliary top-bar entry, not a menu page.
 export const MENU = [
   { page: 'home', label: 'navHome' },
+  { page: 'board', label: 'navBoard' },
   { group: 'navRequirements', items: [{ page: 'pool', label: 'navPool' }, { page: 'review', label: 'navReview' }, { page: 'ready', label: 'navReady' }] },
-  { group: 'navDevelopment', items: [{ page: 'dev', label: 'navDev' }, { page: 'blocked', label: 'navBlocked' }, { page: 'board', label: 'navBoard' }] },
+  { group: 'navDevelopment', items: [{ page: 'dev', label: 'navDev' }, { page: 'blocked', label: 'navBlocked' }] },
   { group: 'navAcceptance', items: [{ page: 'pending', label: 'navPending' }, { page: 'records', label: 'navRecords' }] },
   { group: 'navResources', items: [{ page: 'wiki', label: 'navWiki' }, { page: 'arch', label: 'navArch' }, { page: 'prds', label: 'navPrds' }] },
 ]

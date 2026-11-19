@@ -1840,11 +1840,12 @@ ${detail.trim()}` : value);
   }
 
   // client-src/shell/nav-state.js
-  var PAGES = ["home", "pool", "review", "ready", "dev", "blocked", "board", "pending", "records", "wiki", "arch", "prds", "sync"];
+  var PAGES = ["home", "board", "pool", "review", "ready", "dev", "blocked", "pending", "records", "wiki", "arch", "prds", "sync"];
   var MENU = [
     { page: "home", label: "navHome" },
+    { page: "board", label: "navBoard" },
     { group: "navRequirements", items: [{ page: "pool", label: "navPool" }, { page: "review", label: "navReview" }, { page: "ready", label: "navReady" }] },
-    { group: "navDevelopment", items: [{ page: "dev", label: "navDev" }, { page: "blocked", label: "navBlocked" }, { page: "board", label: "navBoard" }] },
+    { group: "navDevelopment", items: [{ page: "dev", label: "navDev" }, { page: "blocked", label: "navBlocked" }] },
     { group: "navAcceptance", items: [{ page: "pending", label: "navPending" }, { page: "records", label: "navRecords" }] },
     { group: "navResources", items: [{ page: "wiki", label: "navWiki" }, { page: "arch", label: "navArch" }, { page: "prds", label: "navPrds" }] }
   ];
@@ -5959,25 +5960,23 @@ ${detail.trim()}` : value);
         onClose: () => setWsMenu(false)
       }, { fallback: wsDropdown }) : wsDropdown
     ) : h21("h1", { className: "pw-title" }, t("title"));
+    const menuButton = (item) => h21("button", {
+      key: item.page,
+      type: "button",
+      className: "pw-menu-item",
+      "aria-current": page === item.page ? "page" : void 0,
+      onClick: () => navigate(item.page)
+    }, t(item.label));
     const menu = h21(
       "nav",
       { className: "pw-menu", "aria-label": t("title") },
-      MENU.map((entry) => entry.group ? h21(
+      h21("div", { className: "pw-menu-primary" }, MENU.filter((entry) => !entry.group).map(menuButton)),
+      MENU.filter((entry) => entry.group).map((entry) => h21(
         "div",
-        { key: entry.group, className: "pw-menu-group" },
-        h21("span", { className: "pw-menu-grouptitle" }, t(entry.group)),
-        entry.items.map((item) => h21("button", {
-          key: item.page,
-          className: "pw-menu-item" + (page === item.page && (!params || item.page === "prds" && params.prdId) ? " active" : ""),
-          "aria-current": page === item.page ? "page" : void 0,
-          onClick: () => navigate(item.page)
-        }, t(item.label)))
-      ) : h21("button", {
-        key: entry.page,
-        className: "pw-menu-item" + (page === entry.page && !params ? " active" : ""),
-        "aria-current": page === entry.page ? "page" : void 0,
-        onClick: () => navigate(entry.page)
-      }, t(entry.label)))
+        { key: entry.group, className: "pw-menu-group", role: "group", "aria-label": t(entry.group) },
+        h21("span", { className: "pw-menu-grouptitle", "aria-hidden": true }, t(entry.group)),
+        entry.items.map(menuButton)
+      ))
     );
     const topBar = h21(
       "div",
@@ -8834,12 +8833,15 @@ ${detail.trim()}` : value);
   }
   var shellCss = `
 .pw-shell-body{flex:1;display:flex;gap:12px;min-height:0}
-.pw-menu{flex:none;width:170px;overflow:auto;display:flex;flex-direction:column;gap:2px;padding:8px;border:1px solid var(--dsw-alias-border-l3);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}
-.pw-menu-group{display:flex;flex-direction:column;gap:2px;margin-top:8px}
-.pw-menu-grouptitle{font-size:11px;color:var(--dsw-alias-label-tertiary);padding:2px 8px}
-.pw-menu-item{border:none;background:none;text-align:left;font:inherit;font-size:13px;color:var(--dsw-alias-label-secondary);padding:7px 10px;border-radius:6px;cursor:pointer;min-height:32px}
+.pw-menu{flex:none;width:170px;overflow:auto;display:flex;flex-direction:column;padding:8px;border:1px solid var(--dsw-alias-border-l3);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}
+.pw-menu-primary,.pw-menu-group{display:flex;flex-direction:column;gap:2px}
+.pw-menu-group{margin-block-start:7px;padding-block-start:7px;border-block-start:1px solid var(--dsw-alias-border-l3)}
+.pw-menu-grouptitle{padding:2px 10px;font-size:11px;line-height:1.5;font-weight:600;color:var(--dsw-alias-label-secondary)}
+.pw-menu-item{position:relative;flex:none;border:none;background:none;text-align:start;font:inherit;font-size:13px;line-height:1.4;color:var(--dsw-alias-label-secondary);padding:5px 8px;padding-inline-start:22px;border-radius:6px;cursor:pointer;min-height:30px}
+.pw-menu-primary .pw-menu-item{min-height:34px;padding-inline-start:12px;font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary)}
 .pw-menu-item:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.pw-menu-item.active{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary);font-weight:500}
+.pw-menu-item[aria-current="page"]{background:var(--dsw-alias-interactive-bg-active);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 12%,var(--dsw-alias-bg-layer-1));color:var(--dsw-alias-label-primary);font-weight:600}
+.pw-menu-item[aria-current="page"]::before{content:"";position:absolute;inset-block:7px;inset-inline-start:4px;width:2px;border-radius:2px;background:var(--dsw-alias-brand-primary)}
 .pw-menu-item:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
 .pw-content{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 .pw-content>.pw-breadcrumb{flex:none}
@@ -8874,7 +8876,14 @@ ${detail.trim()}` : value);
 .pw-source-view{margin:0;padding:10px 12px;border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:var(--dsw-alias-bg-base);font-family:var(--dsh-font-family-mono,monospace);font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;max-height:50vh;overflow:auto}
 .pw-blocked-section{margin-bottom:4px}
 .pw-issue .pw-order{flex:none}
-@media(max-width:767px){.pw-shell-body{flex-direction:column}.pw-menu{width:auto;flex-direction:row;flex-wrap:wrap;flex:none}.pw-menu-group{flex-direction:row;flex-wrap:wrap;margin-top:0;align-items:center}.pw-menu-grouptitle{display:none}}
+@media(max-width:767px){
+  .pw-shell-body{flex-direction:column}
+  .pw-menu{width:auto;max-height:38vh;flex-direction:row;align-items:flex-start;gap:8px}
+  .pw-menu-primary,.pw-menu-group{flex:none}
+  .pw-menu-primary{min-width:64px}
+  .pw-menu-group{margin-block-start:0;padding-block-start:0;border-block-start:0;border-inline-start:1px solid var(--dsw-alias-border-l3);padding-inline-start:8px}
+  .pw-menu-item{white-space:nowrap}
+}
 `;
   var uiMemory = { picked: null, views: {}, drafts: {}, newRequirements: {}, wikiGen: {}, taskReviews: {} };
   var shellLocale = {

@@ -687,20 +687,17 @@ export function MainShell(props) {
         : wsDropdown)
     : h('h1', { className: 'pw-title' }, t('title'))
 
+  const menuButton = item => h('button', {
+    key: item.page, type: 'button', className: 'pw-menu-item',
+    'aria-current': page === item.page ? 'page' : undefined,
+    onClick: () => navigate(item.page),
+  }, t(item.label))
   const menu = h('nav', { className: 'pw-menu', 'aria-label': t('title') },
-    MENU.map(entry => entry.group
-      ? h('div', { key: entry.group, className: 'pw-menu-group' },
-        h('span', { className: 'pw-menu-grouptitle' }, t(entry.group)),
-        entry.items.map(item => h('button', {
-          key: item.page, className: 'pw-menu-item' + (page === item.page && (!params || (item.page === 'prds' && params.prdId)) ? ' active' : ''),
-          'aria-current': page === item.page ? 'page' : undefined,
-          onClick: () => navigate(item.page),
-        }, t(item.label))))
-      : h('button', {
-        key: entry.page, className: 'pw-menu-item' + (page === entry.page && !params ? ' active' : ''),
-        'aria-current': page === entry.page ? 'page' : undefined,
-        onClick: () => navigate(entry.page),
-      }, t(entry.label))))
+    h('div', { className: 'pw-menu-primary' }, MENU.filter(entry => !entry.group).map(menuButton)),
+    MENU.filter(entry => entry.group).map(entry =>
+      h('div', { key: entry.group, className: 'pw-menu-group', role: 'group', 'aria-label': t(entry.group) },
+        h('span', { className: 'pw-menu-grouptitle', 'aria-hidden': true }, t(entry.group)),
+        entry.items.map(menuButton))))
 
   const topBar = h('div', { className: 'pw-top', 'data-window-drag': true },
     wsSwitch,
