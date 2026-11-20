@@ -9,6 +9,10 @@ import { requirementReviewLocale } from './detail/requirement-review.js'
 import { requirementContentLocale } from './detail/requirement-content.js'
 import { requirementLayoutLocale } from './detail/requirement-layout.js'
 import { requirementLogLocale } from './detail/requirement-log.js'
+import { readingDrawerCss, readingDrawerLocale } from './shared/reading-drawer.js'
+import { taskDetailCss, taskDetailLocale } from './detail/task-detail.js'
+import { requirementDetailCss } from './detail/requirement-detail.js'
+import { listCss, listLocale } from './shared/list.js'
 import { ConversationDock, conversationLocale, workbenchMentionSource } from './conversation.js'
     const h = React.createElement
     const NS = 'projectWorkbench'
@@ -20,6 +24,9 @@ import { ConversationDock, conversationLocale, workbenchMentionSource } from './
       ...requirementReviewLocale.en,
       ...requirementContentLocale.en,
       ...requirementLayoutLocale.en,
+      ...readingDrawerLocale.en,
+      ...taskDetailLocale.en,
+      ...listLocale.en,
       ...requirementLogLocale.en,
       ...conversationLocale.en,
       ...prdLocale.en,
@@ -132,6 +139,9 @@ import { ConversationDock, conversationLocale, workbenchMentionSource } from './
       ...requirementReviewLocale.zh,
       ...requirementContentLocale.zh,
       ...requirementLayoutLocale.zh,
+      ...readingDrawerLocale.zh,
+      ...taskDetailLocale.zh,
+      ...listLocale.zh,
       ...requirementLogLocale.zh,
       ...conversationLocale.zh,
       ...prdLocale.zh,
@@ -597,23 +607,12 @@ import { ConversationDock, conversationLocale, workbenchMentionSource } from './
 .pw-home-count span{font-size:12px;color:var(--dsw-alias-label-secondary)}
 .pw-list{flex:1;min-height:0;display:flex;flex-direction:column;gap:10px;overflow:auto}
 .pw-list-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:none}
-.pw-list-rows{display:flex;flex-direction:column;gap:8px}
-.pw-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:var(--dsw-alias-bg-layer-1)}
-.pw-row-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;border:none;background:none;color:var(--dsw-alias-label-primary);font:inherit;text-align:left;cursor:pointer;padding:4px 6px;border-radius:6px;min-height:44px}
-.pw-row-main:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.pw-row-main:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
-.pw-row-static{cursor:default}
-.pw-row-static:hover{background:none}
-.pw-row-actions{display:flex;align-items:center;gap:6px;flex:none}
 .pw-order{display:inline-flex;flex-direction:column;gap:2px}
 .pw-orderbtn{border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-secondary);border-radius:4px;width:22px;height:18px;line-height:1;cursor:pointer;font-size:11px;padding:0}
 .pw-orderbtn:disabled{opacity:.4;cursor:not-allowed}
 .pw-orderbtn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
-.pw-dev-progress{display:flex;align-items:center;gap:8px;min-width:0}
-.pw-dev-progress .pw-bar{max-width:120px;flex:none;width:120px}
 .pw-startbtn{flex:none}
 .pw-source-view{margin:0;padding:10px 12px;border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:var(--dsw-alias-bg-base);font-family:var(--dsh-font-family-mono,monospace);font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;max-height:50vh;overflow:auto}
-.pw-blocked-section{margin-bottom:4px}
 .pw-issue .pw-order{flex:none}
 .pw-requirement-fields .pw-field{display:block}
 .pw-requirement-fields .pw-textarea[rows="1"]{min-height:34px;padding-block:6px}
@@ -719,7 +718,7 @@ export default {
           subscribe: listener => ctx.uiSession.adapter.current.subscribe(listener),
         }
         const injected = () => ({
-          hooks: { currentSession }, uiMemory, css: css + shellCss,
+          hooks: { currentSession }, uiMemory, css: css + shellCss + readingDrawerCss + requirementDetailCss + taskDetailCss + listCss,
           showConversation: () => { ctx.layout.selectPanel(null) },
           openMain: () => { ctx.layout.selectPanel(PANEL_ID) },
           // V-1: open the session first; openTab needs the session ON SCREEN, so

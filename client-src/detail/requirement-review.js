@@ -40,7 +40,17 @@ function ReviewSource({ source, t }) {
       : h('p', { className: 'pw-note' }, t('aiReviewNoPrd')))
 }
 
-export function RequirementReview({ req, root, t, busy, sessionId, onApprove, onReject, onReportSnapshot }) {
+export function RequirementReviewHistory({ reports, t }) {
+  return reports.map((record, index) => ({ record, index })).reverse().map(({ record, index }) =>
+    h(Disclosure, { key: record.marker, id: 'pw-requirement-record-report-' + record.marker,
+      label: t('aiReviewRound').replace('{n}', String(index + 1)) },
+    record.at && h('p', { className: 'pw-note' }, t('aiReviewAt'), ' ',
+      h('time', { dateTime: record.at, title: record.at }, String(record.at).replace('T', ' ').slice(0, 16))),
+    h(ReviewSource, { source: record.source, t }),
+    h(ReadText, { value: record.opinion })))
+}
+
+export function RequirementReview({ req, root, t, busy, sessionId, onApprove, onReject, onReportSnapshot, recentOnly = false, snapshotOnly = false }) {
   const [details, setDetails] = useState(null)
   const [failure, setFailure] = useState(null)
   const [readError, setReadError] = useState(null)
@@ -69,8 +79,8 @@ export function RequirementReview({ req, root, t, busy, sessionId, onApprove, on
   const savedReports = details?.reportsUnavailable ? undefined : details?.reports
   const reports = savedReports ?? aiReviewReports(req.reviews)
   const reportState = readError || details?.reportsUnavailable ? 'unavailable' : details ? 'loaded' : 'loading'
-  useEffect(() => { onReportSnapshot?.({ reports: savedReports, state: reportState }) },
-    [onReportSnapshot, savedReports, reportState])
+  useEffect(() => { onReportSnapshot?.({ reports: savedReports, state: reportState, retry: load }) },
+    [onReportSnapshot, savedReports, reportState, load])
   const latest = reports.at(-1)
   const reviewing = req.status === 'reviewing' && (!details || details.status === 'reviewing')
   const running = details?.state === 'running'
@@ -113,14 +123,16 @@ export function RequirementReview({ req, root, t, busy, sessionId, onApprove, on
     }
   }
 
+  if (snapshotOnly) return null
   if (!reviewing && !reports.length && !running && !saveFailed && !readError && !dataUnavailable) return null
   const startLabel = saveFailed ? 'aiReviewRetrySave' : latest ? 'aiReviewAgain' : 'aiReview'
   const advice = latest?.opinion.split('\n').find(line => /^[\s#*>-]*建议\**[：:]/u.test(line))
   const preview = advice ? advice.replace(/^[\s#*>-]+/u, '').replaceAll('**', '') : latest?.opinion
   const helpId = 'pw-approve-review-help-' + req.id
   const needsReport = reviewing && details?.hasPrd && !details.hasReview && !dataUnavailable
-  return h('section', { className: 'pw-reading-block pw-reading-divider', 'aria-label': t('aiReviewRecords') },
-    h('h3', { className: 'pw-reading-label' }, t('aiReviewRecords')),
+  const title = t(recentOnly ? 'reqReviewCurrent' : 'aiReviewRecords')
+  return h('section', { className: 'pw-reading-block pw-reading-divider', 'aria-label': title },
+    h('h3', { className: 'pw-reading-label' }, title),
     h('div', { className: 'pw-actions' },
       (reviewing || saveFailed) && h('button', { className: 'pw-button', disabled: !canStart || submitting, onClick: start }, t(startLabel)),
       reviewing && onApprove && h('button', { className: 'pw-button primary', disabled: !canApprove,
@@ -136,11 +148,5 @@ export function RequirementReview({ req, root, t, busy, sessionId, onApprove, on
     (readError || dataUnavailable) && !saveFailed &&
       h('button', { className: 'pw-button pw-quiet', onClick: load }, t('retryRead')),
     reviewing && latest && h(ReadText, { value: preview, preview: true }),
-    reports.map((record, index) => ({ record, index })).reverse().map(({ record, index }) =>
-      h(Disclosure, { key: record.marker, id: 'pw-requirement-record-report-' + record.marker,
-        label: t('aiReviewRound').replace('{n}', String(index + 1)) },
-        record.at && h('p', { className: 'pw-note' }, t('aiReviewAt'), ' ',
-          h('time', { dateTime: record.at, title: record.at }, String(record.at).replace('T', ' ').slice(0, 16))),
-        h(ReviewSource, { source: record.source, t }),
-        h(ReadText, { value: record.opinion }))))
+    !recentOnly && h(RequirementReviewHistory, { reports, t }))
 }

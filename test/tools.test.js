@@ -292,7 +292,12 @@ test('after continue-modify, old evidence alone cannot resubmit; new verificatio
   agent.session.snapshotEvents = from => events.filter(e => e.seq >= from)
   agent.session.seq = 5
   await call('workbench_task_submit', { summary: '第一轮结果' })
-  await store.continueIssue(root, reqId, issueId, { text: '请补充全空格场景' })
+  const feedback = '请补充全空格场景\n增加一条回归测试'
+  await store.continueIssue(root, reqId, issueId, { text: feedback })
+  for (const note of ['补充记录一', '补充记录二', '补充记录三']) await store.addIssueUpdate(root, reqId, issueId, note)
+  const returned = JSON.parse(await call('workbench_task_get'))
+  assert.equal(returned.reworkReason, feedback)
+  assert.ok(!returned.recent.some(entry => entry.includes(feedback)))
   const since = (await issueOf(root, reqId, issueId)).deliveryStartedAt
   // Only OLD evidence arrives after the reset → stale.
   events = [...events, ...bashEvents(agent.session.id, 5, since - 1000, 'echo old-check')]
@@ -303,6 +308,7 @@ test('after continue-modify, old evidence alone cannot resubmit; new verificatio
   agent.session.seq = 10
   await call('workbench_task_submit', { summary: '第二轮结果' })
   assert.equal((await issueOf(root, reqId, issueId)).status, 'in_review')
+  assert.equal(JSON.parse(await call('workbench_task_get')).reworkReason, undefined)
 })
 
 test('task_propose previews never change formal objects; adoption is the human decision', async t => {

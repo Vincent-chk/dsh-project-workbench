@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import * as store from './store.js'
-import { taskResult } from '../client-src/workbench-content.js'
+import { taskReworkReason, taskResult } from '../client-src/workbench-content.js'
 import { parseFrontmatter } from './frontmatter.js'
 import { WorkbenchError, atomicWrite } from './files.js'
 import { normalizeToolCalls, extractFacts, isEvidenceCommand } from './extract.js'
@@ -87,18 +87,20 @@ export function installTools(ctx, links) {
 
   ctx.effect(() => {
     const disposers = [
-      tool('workbench_task_get', '读取当前会话关联任务的概述、完成标准、补充信息、状态、结果与最近进展；未核实的历史限制不能作为本轮事实。', {}, [], async (_args, exec) => {
+      tool('workbench_task_get', '读取关联任务的概述、完成标准、本轮修改意见、状态、结果与最近进展。未核实的历史限制不能作为本轮事实。', {}, [], async (_args, exec) => {
         const { root, link } = await linked(exec)
         if (!link) return '当前会话未关联任务'
         const { req, issue } = await issueOf(root, link.issueId)
         const since = Math.max(Number(req.deliveryStartedAt) || 0, Number(issue.deliveryStartedAt) || 0)
         const currentLimits = issue.knownLimitsAt > 0 && issue.knownLimitsAt >= since
         const result = taskResult(issue, since)
+        const reworkReason = taskReworkReason(issue)
         return JSON.stringify({
           title: issue.title, status: STATUS_TEXT[issue.status] ?? issue.status,
           requirement: req.title, reqStatus: REQ_STATUS_TEXT[req.status] ?? req.status,
           problemOverview: taskOverview(issue), triggerPath: issue.triggerPath, rootCause: issue.rootCause, acceptance: issue.acceptance,
           ...(issue.description?.trim() && issue.description.trim() !== taskOverview(issue) ? { description: issue.description } : {}),
+          ...(reworkReason ? { reworkReason } : {}),
           resultSummary: result.recordedSummary,
           unverifiedResultContext: result.unverifiedResultContext,
           ...(result.unverifiedResultContext ? { unverifiedResultContextNote: '此前结果或轮次未知的文字，不能作为本轮结果。' } : {}),

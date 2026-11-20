@@ -76,7 +76,7 @@ function outcomeText(outcome, t) {
 
 const notify = entry => { for (const listener of entry.listeners) listener() }
 
-export function AcceptanceAssist({ req, issue, root, sessionId, t, busy = false, onRunningChange, memory, compact = false }) {
+export function AcceptanceAssist({ req, issue, root, sessionId, t, busy = false, onRunningChange, memory, compact = false, showInstructions = true }) {
   const localMemory = useRef({})
   const cache = (memory ?? localMemory.current).acceptanceAssist ??= {}
   const entry = cache[JSON.stringify([root, req.id, issue.id])] ??= { pending: '', results: {}, error: null, listeners: new Set() }
@@ -119,8 +119,12 @@ export function AcceptanceAssist({ req, issue, root, sessionId, t, busy = false,
     const stale = !!result.stale || !!result.outdated || result.context !== context || !!(sessionId && result.sessionId && sessionId !== result.sessionId)
     const staleNotice = stale && h('p', { className: 'pw-note', role: 'status' }, t(result.outdated ? 'acceptanceRetryStale' : 'acceptanceStale'))
     if (kind === 'guide') {
-      if (result.guideStatus !== 'steps') return h(React.Fragment, null, staleNotice,
-        h('p', { className: 'pw-note', role: 'status' }, t(result.guideStatus === 'not_needed' ? 'acceptanceGuideNotNeeded' : 'acceptanceGuideUnknown')))
+      if (result.guideStatus !== 'steps') {
+        const notNeeded = result.guideStatus === 'not_needed'
+        return h(React.Fragment, null, staleNotice,
+          h('p', { className: notNeeded ? 'pw-note pw-assist-hint' : 'pw-note', role: 'status' },
+            t(notNeeded ? 'acceptanceGuideNotNeeded' : 'acceptanceGuideUnknown')))
+      }
       const sources = result.sources ?? []
       return h('section', { className: 'pw-reading-block pw-assist-report', 'aria-label': t('acceptanceGuideSteps') },
         staleNotice,
@@ -176,8 +180,8 @@ export function AcceptanceAssist({ req, issue, root, sessionId, t, busy = false,
     h('h3', { className: 'pw-reading-label' }, t('acceptanceHelp')),
     compact ? h(React.Fragment, null,
       h('div', { className: 'pw-assist-actions' }, button('verify', 'acceptanceVerify'), button('guide', 'acceptanceGuide')),
-      help('acceptanceRunHint'),
-      h('details', { className: 'pw-disclosure pw-assist-disclosure' },
+      h('p', { className: 'pw-note pw-assist-hint' }, t('acceptanceRunHint')),
+      showInstructions && h('details', { className: 'pw-disclosure pw-assist-disclosure' },
         h('summary', null, t('acceptanceHelpDetails')),
         h('div', { className: 'pw-assist-report' }, help('acceptanceVerifyNotice'), help('acceptanceGuideNotice'), help('acceptanceStayOpen'))))
       : h(React.Fragment, null,

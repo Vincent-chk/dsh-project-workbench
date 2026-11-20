@@ -83,7 +83,7 @@ export const workbenchContentLocale = {
     requirementOverview: 'Requirement overview', requirementScope: 'Scope', requirementCriteria: 'Completion criteria',
     requirementMissing: 'Still missing: {fields}', requirementExtra: 'Additional information', requirementBackground: 'Background', decisionNotes: 'Decision notes', fieldSeparator: ', ',
     reviewRecords: 'Review and acceptance records', reviewOpinion: 'Decision notes',
-    taskWhat: 'What to do', taskSteps: 'Steps or use cases', taskMissing: 'No task description has been recorded.',
+    taskSteps: 'Steps or use cases', taskMissing: 'No task description has been recorded.',
     sidebarTaskDescription: 'Task description', sidebarFinding: 'Recorded finding', sidebarNotRecorded: 'Nothing recorded yet.',
     sidebarRequirementScope: 'Current scope of the parent requirement', sidebarReviewDetails: 'Review information',
     taskOverviewField: 'Task overview', taskCriteriaOptional: 'Completion criteria (can be added later)',
@@ -148,7 +148,7 @@ export const workbenchContentLocale = {
     requirementOverview: '需求概述', requirementScope: '边界', requirementCriteria: '完成标准',
     requirementMissing: '还缺少{fields}。', requirementExtra: '补充信息', requirementBackground: '背景', decisionNotes: '决策记录', fieldSeparator: '、',
     reviewRecords: '评审与验收记录', reviewOpinion: '意见',
-    taskWhat: '要做什么', taskSteps: '操作步骤或使用场景', taskMissing: '尚未记录任务说明。',
+    taskSteps: '操作步骤或使用场景', taskMissing: '尚未记录任务说明。',
     sidebarTaskDescription: '任务描述', sidebarFinding: '已记录的发现', sidebarNotRecorded: '尚未记录。',
     sidebarRequirementScope: '所属需求的当前边界', sidebarReviewDetails: '核对信息',
     taskOverviewField: '任务概述', taskCriteriaOptional: '完成标准（可后补）',
@@ -364,6 +364,22 @@ export function cancellationReason(task) {
     const reason = textOf(metadata.match(/^\s*[（(]([\s\S]*)[）)]\s*$/)?.[1])
       .replace(/^(人工|AI|系统)[：:]\s*/, '')
     return /^(人工|AI|系统|proposal:prop-[a-z0-9-]+)$/i.test(reason) ? '' : reason
+  }
+  return ''
+}
+
+export function taskReworkReason(task) {
+  if (!['todo', 'doing', 'blocked'].includes(task.status)) return ''
+  for (const line of task.activity ?? []) {
+    const { states } = activityParts(line, 'issue')
+    if (!states) continue
+    const [, from, to, detail] = states
+    if (from === 'in_review' && to === 'doing') {
+      return textOf(detail.match(/^（继续修改）\r?\n([\s\S]*)$/)?.[1] ?? detail.match(/^（继续修改：(.*)）$/s)?.[1])
+    }
+    // The previous main pane returned a rejected task to Todo and saved the reason below the move.
+    if (from === 'in_review' && to === 'todo') return detail.split(/\r?\n/).slice(1).join('\n').trim()
+    if (to === 'in_review' || to === 'todo') break
   }
   return ''
 }

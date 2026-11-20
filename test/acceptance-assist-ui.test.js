@@ -93,6 +93,11 @@ test('a zero-exit command with failing tests remains visibly failed', async t =>
   assert.ok(report && !report.props.open)
   assert.ok(find(report, node => node.props?.children?.includes('not ok 1')))
   assert.ok(find(sidebar, node => node.props?.role === 'status' && node.props.children.includes('acceptanceTestFailed')))
+  const instructions = node => node.type === 'summary' && node.props.children.includes('acceptanceHelpDetails')
+  assert.ok(find(sidebar, instructions))
+  const detail = env.render(View, { ...props, compact: true, showInstructions: false })
+  assert.equal(find(detail, instructions), null)
+  assert.ok(find(detail, button('acceptanceVerify')) && find(detail, button('acceptanceGuide')))
 })
 
 test('a previous report is marked stale during and after an unsuccessful retry', async t => {

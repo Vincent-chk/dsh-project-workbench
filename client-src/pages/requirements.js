@@ -2,71 +2,92 @@ import React from 'react'
 import { requirementOverview } from '../../core/state.js'
 import { poolItems, reviewItems, readyItems } from '../shell/nav-state.js'
 import { reviewRecords } from '../workbench-content.js'
-import { ListPage, dateText } from '../shared/list.js'
+import { ListPage, boardLocator, dateText, firstLine, listTitle } from '../shared/list.js'
 
 const h = React.createElement
 
-const Row = ({ req, page, wb, meta, actions }) => {
-  const { t, openDetail, locateBoard } = wb
-  return h('div', { className: 'pw-row', key: req.id },
-    h('button', { className: 'pw-row-main', onClick: () => openDetail({ reqId: req.id, issueId: null }, page), title: req.title },
-      h('strong', { className: 'pw-preview' }, req.title),
-      meta),
-    h('div', { className: 'pw-row-actions' },
-      actions,
-      h('button', { className: 'pw-button pw-quiet', onClick: () => locateBoard(req) }, t('locateBoard'))))
-}
+const openRequirement = (wb, req, page) => listTitle(req.title, req.id, () => wb.openDetail({ reqId: req.id, issueId: null }, page))
+const date = value => h('span', { className: 'pw-list-muted pw-list-value' }, dateText(value) || '—')
 
-// 需求池：标题、需求概述、最近更新、送审缺项提示；新建/编辑/整理/草稿删除在详情。
 export function PoolPage({ wb }) {
   const { t, requirements, setModal } = wb
-  const query = (wb.nav.filters.pool ?? {}).query ?? ''
-  const items = poolItems(requirements, query)
+  const items = poolItems(requirements, wb.nav.filters.pool?.query)
   return h(ListPage, {
-    wb, page: 'pool', items,
-    toolbar: h('button', { className: 'pw-button', onClick: () => setModal({ kind: 'createRequirement' }) }, t('newRequirement')),
+    wb, page: 'pool', title: t('navPool'), items,
+    columns: [t('listRequirement'), t('requirementOverview'), t('updated'), t('listActions')],
+    toolbar: h('button', { type: 'button', className: 'pw-button primary', onClick: () => setModal({ kind: 'createRequirement' }) }, t('newRequirement')),
     emptyText: t('homeFirstRequirement'),
-    emptyAction: h('button', { className: 'pw-button primary', style: { marginLeft: 8 }, onClick: () => setModal({ kind: 'createRequirement' }) }, t('newRequirement')),
-    renderRow: req => h(Row, { req, page: 'pool', wb, key: req.id,
-      meta: h(React.Fragment, null,
-        h('span', { className: 'pw-preview pw-note' }, requirementOverview(req) || t('requirementMissing').replace('{fields}', t('requirementOverview'))),
-        h('span', { className: 'pw-count' }, t('updated'), ' ', dateText(req.updated),
-          req.derived?.needsClarification && h('span', { className: 'pw-flag clarify', style: { marginLeft: 8 } }, t('flag_clarify')))) }),
+    renderRow: req => ({
+      key: req.id,
+      cells: [
+        h(React.Fragment, null, openRequirement(wb, req, 'pool'),
+          req.derived?.needsClarification && h('span', { className: 'pw-flag clarify pw-list-parent' }, t('flag_clarify'))),
+        h('span', { className: 'pw-list-preview' },
+          firstLine(requirementOverview(req)) || t('requirementMissing').replace('{fields}', t('requirementOverview'))),
+        date(req.updated),
+        boardLocator(wb, req),
+      ],
+    }),
   })
 }
 
-// 需求评审：按送审时间从早到晚；标题、送审时间、最近意见。
 export function ReviewPage({ wb }) {
   const { t, requirements, navigate } = wb
-  const query = (wb.nav.filters.review ?? {}).query ?? ''
-  const items = reviewItems(requirements, query)
+  const items = reviewItems(requirements, wb.nav.filters.review?.query)
   return h(ListPage, {
-    wb, page: 'review', items,
+    wb, page: 'review', title: t('navReview'), items,
+    columns: [t('listRequirement'), t('submittedAt'), t('listOpinion'), t('listActions')],
     emptyText: t('reviewEmpty'),
-    emptyAction: h('button', { className: 'pw-button', style: { marginLeft: 8 }, onClick: () => navigate('board') }, t('locateBoard')),
+    emptyAction: h('button', { type: 'button', className: 'pw-button', onClick: () => navigate('board') }, t('locateBoard')),
     renderRow: req => {
-      const latest = reviewRecords(req.reviews).find(r => r.kind === 'review')
-      return h(Row, { req, page: 'review', wb, key: req.id,
-        meta: h(React.Fragment, null,
-          h('span', { className: 'pw-count' }, t('submittedAt'), ' ', dateText(req.submittedAt)),
-          h('span', { className: 'pw-preview pw-note' }, latest?.opinion?.trim() || t('noOpinion'))) })
+      const latest = reviewRecords(req.reviews).find(record => record.kind === 'review')
+      return {
+        key: req.id,
+        cells: [
+          openRequirement(wb, req, 'review'),
+          date(req.submittedAt),
+          h('span', { className: 'pw-list-preview pw-list-review-note' }, firstLine(latest?.opinion) || t('noOpinion')),
+          boardLocator(wb, req),
+        ],
+      }
     },
   })
 }
 
-// 待开发：顺序、标题、评审通过时间；上移下移保留顺序，实质修改在详情确认重审。
 export function ReadyPage({ wb }) {
-  const { t, requirements, navigate, reorder } = wb
-  const query = (wb.nav.filters.ready ?? {}).query ?? ''
-  const items = readyItems(requirements, query)
+  const { t, requirements, navigate, reorder, projectKey, saving } = wb
+  const [sortProject, setSortProject] = React.useState(null)
+  const sorting = sortProject === projectKey
+  const order = readyItems(requirements)
+  const query = wb.nav.filters.ready?.query
+  const items = query ? readyItems(requirements, query) : order
+  const positions = new Map(order.map((req, index) => [req.id, index]))
   return h(ListPage, {
-    wb, page: 'ready', items,
+    wb, page: 'ready', title: t('navReady'), items,
+    columns: [t('listRequirement'), t('listPriority'), t('reviewedAt'), t('listActions')],
+    toolbar: order.length > 1 && h('button', { type: 'button', className: 'pw-button', 'aria-pressed': sorting,
+      onClick: () => setSortProject(sorting ? null : projectKey) }, t(sorting ? 'listFinishReorder' : 'listReorder')),
     emptyText: t('readyEmpty'),
-    emptyAction: h('button', { className: 'pw-button', style: { marginLeft: 8 }, onClick: () => navigate('board') }, t('locateBoard')),
-    renderRow: (req, index) => h(Row, { req, page: 'ready', wb, key: req.id,
-      meta: h('span', { className: 'pw-count' }, t('reviewedAt'), ' ', dateText(req.reviewedAt)),
-      actions: h('span', { className: 'pw-order' },
-        h('button', { className: 'pw-orderbtn', disabled: index === 0, 'aria-label': t('moveUp'), title: t('moveUp'), onClick: () => reorder('requirement', null, items, req.id, 'up') }, '↑'),
-        h('button', { className: 'pw-orderbtn', disabled: index === items.length - 1, 'aria-label': t('moveDown'), title: t('moveDown'), onClick: () => reorder('requirement', null, items, req.id, 'down') }, '↓')) }),
+    emptyAction: h('button', { type: 'button', className: 'pw-button', onClick: () => navigate('board') }, t('locateBoard')),
+    renderRow: req => {
+      const index = positions.get(req.id)
+      return {
+        key: req.id,
+        cells: [
+          openRequirement(wb, req, 'ready'),
+          h('span', { className: 'pw-list-value' }, index + 1),
+          date(req.reviewedAt),
+          h('div', { className: 'pw-list-actions' },
+            sorting && h(React.Fragment, null,
+              h('button', { type: 'button', className: 'pw-orderbtn', disabled: saving || index === 0,
+                'aria-label': t('moveUp') + ' · ' + req.title, title: t('moveUp'),
+                onClick: () => reorder('requirement', null, order, req.id, 'up') }, '↑'),
+              h('button', { type: 'button', className: 'pw-orderbtn', disabled: saving || index === order.length - 1,
+                'aria-label': t('moveDown') + ' · ' + req.title, title: t('moveDown'),
+                onClick: () => reorder('requirement', null, order, req.id, 'down') }, '↓')),
+            boardLocator(wb, req)),
+        ],
+      }
+    },
   })
 }

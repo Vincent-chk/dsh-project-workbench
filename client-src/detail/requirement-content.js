@@ -64,9 +64,10 @@ export function RequirementReviewDecisions({ req, t }) {
   return h(RequirementDecisionRecords, { records, group: 'review', t })
 }
 
-export function RequirementDevelopment({ req, t, onAdd }) {
+export function RequirementDevelopment({ req, t, onAdd, writeOnly = false }) {
   const notes = progressRecords(req.activity, t, 'requirement').filter(entry => !entry.event)
   const canAdd = !req.pendingReopen && !['pending', 'completed'].includes(req.status) && onAdd
+  if (writeOnly) return canAdd ? h(UpdateLog, { onAdd, t, kind: 'requirement', userFacing: true, initiallyEditing: true }) : null
   const occurrences = new Map()
   const disclosures = notes.reverse().map(note => {
     const raw = req.activity[note.key]
@@ -82,24 +83,24 @@ export function RequirementDevelopment({ req, t, onAdd }) {
     canAdd && h(UpdateLog, { onAdd, t, kind: 'requirement', userFacing: true }))
 }
 
-export function DeliveryResult({ req, t, compact = false, userFacing = false, showAcceptance = true }) {
+export function DeliveryResult({ req, t, compact = false, userFacing = false, showAcceptance = true, foldTasks = false }) {
   const result = requirementResult(req)
   const tasks = req.issues ?? []
   const relevant = req.status === 'pending' || req.status === 'completed'
   const hasCancelled = tasks.some(issue => issue.status === 'cancelled') || !!req.hasCancelled
   const currentImpact = hasCancelled ? result.cancelImpact : ''
   if (userFacing && relevant) {
+    const taskResults = foldTasks ? [] : tasks.map(task => h('div', { key: task.id, className: 'pw-result' },
+          h('strong', null, task.title), ' · ', t('st_' + task.status),
+          task.status === 'cancelled'
+            ? h(ReadingText, { label: t('taskCancelReason'), value: cancellationReason(task) || t('taskNoReason') })
+            : h(TaskResult, { task, t, since: req.deliveryStartedAt, userFacing: true, showAcceptance: false })))
     return h('section', { className: 'pw-reading pw-reading-delivery', 'aria-label': t('demoDeliverySummary') },
       h(ReadingText, { label: t('demoDeliverySummary'), value: result.summary || t('missingDeliverySummary') }),
       showAcceptance && h(ReadingText, { label: t('requirementCriteria'), value: req.acceptance?.trim() || req.q_success?.trim() || t('missingCriteria') }),
       hasCancelled && h(ReadingText, { label: t('demoCancelImpact'), value: currentImpact || t('missingCancelImpact') }),
-      tasks.length > 0 && h('section', { className: 'pw-reading-block' },
-        h('h3', { className: 'pw-reading-label' }, t('deliveredTaskResults')),
-        tasks.map(task => h('div', { key: task.id, className: 'pw-result' },
-          h('strong', null, task.title), ' · ', t('st_' + task.status),
-          task.status === 'cancelled'
-            ? h(ReadingText, { label: t('taskCancelReason'), value: cancellationReason(task) || t('taskNoReason') })
-            : h(TaskResult, { task, t, since: req.deliveryStartedAt, userFacing: true, showAcceptance: false })))),
+      !foldTasks && taskResults.length > 0 && h('section', { className: 'pw-reading-block' },
+        h('h3', { className: 'pw-reading-label' }, t('deliveredTaskResults')), taskResults),
       (result.previousSummary || result.previousCancelImpact) && h(Disclosure, { label: t('previousResult') },
         h(ReadingText, { value: result.previousSummary }),
         h(ReadingText, { label: t('demoCancelImpact'), value: result.previousCancelImpact })))

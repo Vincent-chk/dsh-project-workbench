@@ -1,61 +1,69 @@
 import React from 'react'
 import { pendingItems, recordItems } from '../shell/nav-state.js'
 import { requirementResult, reviewRecords } from '../workbench-content.js'
-import { ListPage, dateText } from '../shared/list.js'
+import { ListPage, boardLocator, dateText, firstLine, listTitle } from '../shared/list.js'
 
 const h = React.createElement
 
-// 待验收：标题、交付结论预览、完成与取消数、提交时间和打回情况；
-// 点击阅读本轮验收详情，通过或打回在看板发起（PRD §7.6）。
 export function PendingPage({ wb }) {
   const { t, requirements, navigate, openDetail } = wb
-  const query = (wb.nav.filters.pending ?? {}).query ?? ''
-  const items = pendingItems(requirements, query)
+  const items = pendingItems(requirements, wb.nav.filters.pending?.query)
   return h(ListPage, {
-    wb, page: 'pending', items,
+    wb, page: 'pending', title: t('navPending'), items,
+    columns: [t('listRequirement'), t('listDelivery'), t('listAttention'), t('listActions')],
     emptyText: t('pendingEmpty'),
-    emptyAction: h('button', { className: 'pw-button', style: { marginLeft: 8 }, onClick: () => navigate('board') }, t('locateBoard')),
+    emptyAction: h('button', { type: 'button', className: 'pw-button', onClick: () => navigate('board') }, t('locateBoard')),
     renderRow: req => {
       const result = requirementResult(req)
       const d = req.derived ?? {}
-      const returned = reviewRecords(req.reviews).find(r => r.kind === 'acceptance' && r.decision === 'returned')
-      return h('div', { className: 'pw-row', key: req.id },
-        h('button', { className: 'pw-row-main', onClick: () => openDetail({ reqId: req.id, issueId: null }, 'pending'), title: req.title },
-          h('strong', { className: 'pw-preview' }, req.title),
-          h('span', { className: 'pw-preview pw-note' }, (result.summary || result.previousSummary).split(/\r?\n/)[0] || t('missingDeliverySummary')),
-          h('span', { className: 'pw-count' },
-            t('taskCount').replace('{total}', String((req.issues ?? []).length)).replace('{done}', String(d.doneCount ?? 0)),
-            d.cancelledCount > 0 && ' · ' + t('cancelledCount').replace('{n}', String(d.cancelledCount)),
-            ' · ', t('submittedAt'), ' ', dateText(req.updated),
-            returned && ' · ' + t('wasReturned'))),
-        h('div', { className: 'pw-row-actions' },
-          h('button', { className: 'pw-button pw-quiet', onClick: () => wb.locateBoard(req) }, t('locateBoard'))))
+      const returned = reviewRecords(req.reviews).some(record => record.kind === 'acceptance' && record.decision === 'returned')
+      return {
+        key: req.id,
+        cells: [
+          h(React.Fragment, null,
+            listTitle(req.title, req.id, () => openDetail({ reqId: req.id, issueId: null }, 'pending')),
+            dateText(req.updated) && h('span', { className: 'pw-list-parent pw-list-value' }, t('submittedAt'), ' ', dateText(req.updated))),
+          h('span', { className: 'pw-list-preview' }, firstLine(result.summary) || t('missingDeliverySummary')),
+          h('div', { className: 'pw-list-alerts' },
+            !result.summary && result.previousSummary && h('span', { className: 'pw-list-muted' }, t('previousResult')),
+            d.cancelledCount > 0 && h('span', { className: 'pw-list-muted' }, t('cancelledCount').replace('{n}', String(d.cancelledCount))),
+            returned && h('span', { className: 'pw-istatus st-blocked' }, t('wasReturned')),
+            h('span', { className: 'pw-list-muted' }, t('taskCount')
+              .replace('{total}', String((req.issues ?? []).length)).replace('{done}', String(d.doneCount ?? 0)))),
+          boardLocator(wb, req),
+        ],
+      }
     },
   })
 }
 
-// 验收记录：每行一个决定；支持查找与筛选；只读详情（PRD §7.6）。
 export function RecordsPage({ wb }) {
   const { t, requirements, openDetail, setFilter } = wb
-  const filters = wb.nav.filters.records ?? {}
-  const query = filters.query ?? ''
-  const decision = filters.decision ?? ''
+  const { query = '', decision = '' } = wb.nav.filters.records ?? {}
   const items = recordItems(requirements, { query, decision })
   return h(ListPage, {
-    wb, page: 'records', items,
+    wb, page: 'records', title: t('navRecords'), items, hasActions: false,
+    columns: [t('listRequirement'), t('recordDecision'), t('decisionAt'), t('listOpinion')],
     toolbar: h('select', { className: 'pw-select', value: decision, 'aria-label': t('recordDecision'), onChange: e => setFilter('records', { decision: e.target.value }) },
       h('option', { value: '' }, t('allDecisions')),
       h('option', { value: 'approved' }, t('deliveryAccepted')),
       h('option', { value: 'returned' }, t('deliveryReturned'))),
+    filtersActive: !!decision,
+    onClear: () => setFilter('records', { query: '', decision: '' }),
     emptyText: t('recordsEmpty'),
-    renderRow: record => h('div', { className: 'pw-row', key: record.reqId + '|' + (record.marker || record.round) },
-      h('button', { className: 'pw-row-main', onClick: () => openDetail({ record: { reqId: record.reqId, marker: record.marker, round: record.round } }, 'records'), title: record.reqTitle },
-        h('strong', { className: 'pw-preview' }, record.reqTitle),
-        h('span', { className: 'pw-count' },
-          dateText(record.at), ' · ', t(record.decision === 'approved' ? 'deliveryAccepted' : 'deliveryReturned')),
-        h('span', { className: 'pw-preview pw-note' }, (record.opinion || record.summary || '').split(/\r?\n/)[0] || t('noOpinion'))),
-      h('div', { className: 'pw-row-actions' },
-        h('span', { className: 'pw-istatus ' + (record.decision === 'approved' ? 'st-done' : 'st-blocked') },
-          t(record.decision === 'approved' ? 'deliveryAccepted' : 'deliveryReturned')))),
+    renderRow: record => {
+      const identity = record.marker || record.round || JSON.stringify([record.at, record.decision, record.opinion, record.summary])
+      const key = record.reqId + '|' + identity
+      const approved = record.decision === 'approved'
+      return {
+        key,
+        cells: [
+          listTitle(record.reqTitle, key, () => openDetail({ record: { reqId: record.reqId, marker: record.marker, round: record.round } }, 'records')),
+          h('span', { className: 'pw-istatus ' + (approved ? 'st-done' : 'st-blocked') }, t(approved ? 'deliveryAccepted' : 'deliveryReturned')),
+          h('span', { className: 'pw-list-muted pw-list-value' }, dateText(record.at) || '—'),
+          h('span', { className: 'pw-list-preview' }, firstLine(record.opinion || record.summary) || t('noOpinion')),
+        ],
+      }
+    },
   })
 }

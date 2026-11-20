@@ -1205,7 +1205,7 @@ export async function continueIssue(root, reqId, id, { text, fileHash } = {}) {
     doc.setPlain('evidenceAt', 0)
     doc.setPlain('objectiveAt', 0)
     doc.setPlain('updated', nowIso())
-    appendActivity(doc, `${nowIso()} ${from} → doing（继续修改：${String(text).trim().replace(/\n+/g, ' ')}）`)
+    appendActivity(doc, `${nowIso()} ${from} → doing（继续修改）`, String(text).trim().replace(/\r\n?/g, '\n'))
     await atomicWrite(file, doc.toString())
     return { ok: true, data: { id, from, to: 'doing' } }
   })

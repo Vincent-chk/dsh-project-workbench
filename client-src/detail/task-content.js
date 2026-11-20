@@ -8,11 +8,12 @@ import { Disclosure, ErrorDetails, ReadText } from '../shared/ui.js'
 const h = React.createElement
 const { useState } = React
 
-export function UpdateLog({ activity, onAdd, t, kind = 'issue', showRecords = true, userFacing = false, reviews, timeline, openWikiPage }) {
+export function UpdateLog({ activity, onAdd, t, kind = 'issue', showRecords = true, userFacing = false, reviews, timeline, openWikiPage,
+  onReadProgress, initialProgress, showTimelineHeading = true, initiallyEditing = false }) {
   const [text, setText] = useState('')
   const [detail, setDetail] = useState('')
   const [busy, setBusy] = useState(false)
-  const [editing, setEditing] = useState(false)
+  const [editing, setEditing] = useState(initiallyEditing)
   const add = async () => {
     const value = text.trim()
     if (!value || busy) return
@@ -30,7 +31,7 @@ export function UpdateLog({ activity, onAdd, t, kind = 'issue', showRecords = tr
   }
   const cancel = () => { setEditing(false); setText(''); setDetail('') }
   if (timeline) {
-    return h(ProgressTimeline, { records: taskProgressRecords(activity, t), t, openWikiPage, onAdd },
+    return h(ProgressTimeline, { records: taskProgressRecords(activity, t), t, openWikiPage, onAdd, initialProgress, showTimelineHeading },
       editing ? h('form', { className: 'pw-progress-form', onSubmit: event => { event.preventDefault(); add() } },
         h('label', { className: 'pw-field' }, h('span', { className: 'pw-label' }, t('progressSummary')),
           h('input', { className: 'pw-input', autoFocus: true, required: true, readOnly: busy, value: text, onChange: event => setText(event.target.value) })),
@@ -55,6 +56,15 @@ export function UpdateLog({ activity, onAdd, t, kind = 'issue', showRecords = tr
     if (!records.length && !onAdd) return null
     const latest = kind === 'issue' && records.find(entry => !entry.event)
     const earlier = records.filter(entry => entry !== latest)
+    const preview = latest?.text.split(/\r?\n/).find(line => line.trim())
+    if (onReadProgress) return h('section', { className: 'pw-task-progress-preview', 'aria-label': t('progressRecords') },
+      latest && h('div', null,
+        h('h3', { className: 'pw-reading-label' }, t('latestProgress')),
+        h('p', { className: 'pw-text pw-preview' }, preview)),
+      h('div', { className: 'pw-actions' },
+        records.length > 0 && h('button', { type: 'button', className: 'pw-button pw-quiet', onClick: event => onReadProgress(event, latest?.key) }, t('taskReadProgress')),
+        onAdd && !editing && h('button', { type: 'button', className: 'pw-button pw-quiet', onClick: () => setEditing(true) }, t('recordProgress'))),
+      onAdd && editing && form)
     return h('section', { className: 'pw-updates', 'aria-label': t('progressRecords') },
       latest && h(ReadingText, { label: t('latestProgress'), value: latest.text }),
       earlier.length > 0 && h(Disclosure, { label: t('progressRecords') }, list(earlier)),
@@ -69,10 +79,10 @@ export function UpdateLog({ activity, onAdd, t, kind = 'issue', showRecords = tr
     form)
 }
 
-function ProgressTimeline({ records, t, openWikiPage, onAdd, children }) {
-  const [expanded, setExpanded] = useState(() => new Set())
+function ProgressTimeline({ records, t, openWikiPage, onAdd, children, initialProgress, showTimelineHeading }) {
+  const [expanded, setExpanded] = useState(() => new Set(initialProgress ? [initialProgress] : []))
   const [showOlder, setShowOlder] = useState(false)
-  if (!records.length && !onAdd) return null
+  if (!records.length && !onAdd && showTimelineHeading) return null
   const older = records.slice(3)
   const olderVisible = showOlder || older.some(entry => expanded.has(entry.id))
   const rows = records.map(entry => {
@@ -81,6 +91,7 @@ function ProgressTimeline({ records, t, openWikiPage, onAdd, children }) {
       links.push(path.trim()); return ''
     })
     return h('details', { className: 'pw-progress-item', key: entry.id, open: expanded.has(entry.id),
+      id: entry.id === initialProgress ? 'pw-task-current-progress' : undefined,
       onToggle: event => {
         const isOpen = event.currentTarget.open
         setExpanded(current => {
@@ -98,8 +109,8 @@ function ProgressTimeline({ records, t, openWikiPage, onAdd, children }) {
       h(ReadingText, { value: detail }),
       links.length > 0 && h(TaskReferences, { refs: [...new Set(links)], openWikiPage })))
   })
-  return h('section', { className: 'pw-progress', 'aria-label': t('progressRecords') },
-    h('div', { className: 'pw-progress-head' }, h('h3', null, t('progressRecords')),
+  return h('section', { className: showTimelineHeading ? 'pw-progress' : 'pw-task-progress-records', 'aria-label': t('progressRecords') },
+    showTimelineHeading && h('div', { className: 'pw-progress-head' }, h('h3', null, t('progressRecords')),
       children?.type === 'button' && children),
     !records.length && h('p', { className: 'pw-note' }, t('noTaskProgress')),
     rows.slice(0, 3), older.length > 0 && h('button', { className: 'pw-button pw-quiet', 'aria-expanded': olderVisible,
@@ -133,18 +144,70 @@ export function Verification({ verification, t }) {
     hasManualEvidence && h('p', { className: 'pw-text' }, t('manualEvidence')))
 }
 
-export function TaskResult({ task, t, children, since, userFacing = false, showAcceptance = true, showSummary = true }) {
+export function hasTaskVerificationRecords(task, result) {
+  return !!(result.fullSummary || result.fullLimits || task.evidence?.trim() || task.objective?.trim())
+}
+
+export function TaskVerificationRecords({ task, t, since }) {
+  const result = taskResult(task, since)
+  const roundStart = Math.max(Number(since) || 0, Number(task.deliveryStartedAt) || 0, Number(task.requirementDeliveryStartedAt) || 0)
+  return h('section', { className: 'pw-task-evidence', 'aria-label': t('verify') },
+    h(ReadingText, { label: t(result.previousSummary ? 'previousResultUnverified' : 'fullResult'), value: result.fullSummary }),
+    h(ReadingText, { label: t(result.unverifiedLimits ? 'previousLimits' : 'demoLimits'), value: result.fullLimits }),
+    h(ReadingText, { label: t((Number(task.evidenceAt) || 0) < roundStart ? 'taskPreviousEvidence' : 'demoEvidence'), value: task.evidence }),
+    h(ReadingText, { label: t('taskObjectiveRecords'), value: task.objective }),
+    !hasTaskVerificationRecords(task, result) && h('p', { className: 'pw-note' }, t('taskNoVerificationRecords')))
+}
+
+export function TaskResult({ task, t, children, since, userFacing = false, showAcceptance = true, showSummary = true, onReadEvidence, evidenceOpen, reviewTools }) {
   const result = taskResult(task, since)
   const reviewing = task.status === 'in_review'
   if (userFacing) {
     const summary = result.recordedSummary
     const earlier = (result.previousSummary || result.earlierSummary).replace(/\r?\n\r?\n\[AI 补充\] /g, '\n\n')
+    const criteria = showAcceptance && h(ReadingText, {
+      label: t('requirementCriteria'), value: task.acceptance?.trim() || t('missingCriteria'), className: 'pw-reading-criteria',
+    })
+    if (reviewTools) {
+      const { passed, failed, incomplete, unconfirmedChanges, hasManualEvidence } = result.verification
+      const checks = [
+        failed > 0 && t('checksFailed').replace('{n}', String(failed)),
+        incomplete > 0 && t('taskReviewIncomplete').replace('{n}', String(incomplete)),
+        unconfirmedChanges > 0 && t('taskReviewUnverified').replace('{n}', String(unconfirmedChanges)),
+        passed > 0 && t('checksPassed').replace('{n}', String(passed)),
+      ].filter(Boolean)
+      return h('section', { className: 'pw-reading pw-reading-result pw-task-acceptance', 'aria-label': t('demoResult') },
+        h('div', { className: 'pw-task-review-compare' },
+          criteria,
+          h(ReadingText, { label: t('demoResult'), value: summary || t(result.previousSummary ? 'taskReviewOldResult' : 'demoNoResult') })),
+        h(ReadingText, { label: t('demoLimits'), value: result.limits, className: 'pw-reading-reason pw-reading-warning' }),
+        h('div', { className: 'pw-task-review-checks' },
+          h('div', null,
+            h('h3', { className: 'pw-reading-label' }, t('taskReviewChecks')),
+            h('p', { className: 'pw-note' }, checks.join(' · ') || t(hasManualEvidence ? 'manualEvidence' : 'noChecks'))),
+          hasTaskVerificationRecords(task, result) && h('button', { type: 'button', className: 'pw-button', onClick: onReadEvidence,
+            'aria-expanded': evidenceOpen }, t('taskOpenRecords'), h('span', { className: 'pw-reading-chevron', 'aria-hidden': true }, '›'))),
+        reviewTools)
+    }
+    if (onReadEvidence) return h('section', { className: 'pw-reading pw-reading-result pw-task-acceptance', 'aria-label': t('demoResult') },
+      h(ReadingText, { label: t('demoResult'), value: summary || t('demoNoResult'), className: 'pw-reading-lead' }),
+      h('div', { className: 'pw-task-verification-pair' },
+        criteria,
+        h('div', { className: 'pw-task-verification' },
+          h(Verification, { verification: result.verification, t }),
+          hasTaskVerificationRecords(task, result) &&
+            h('button', { type: 'button', className: 'pw-button pw-quiet', onClick: onReadEvidence }, t('verifyRecords')))),
+      (summary && !result.summary || !summary && result.previousSummary) &&
+        h('p', { className: 'pw-note' }, t(summary ? 'resultUnverified' : 'previousResultUnverified')),
+      h(ReadingText, {
+        label: t('demoLimits'), value: result.limits || t(result.unverifiedLimits ? 'limitsUnverified' : 'noLimits'),
+        className: result.limits || result.unverifiedLimits ? 'pw-reading-reason pw-reading-warning' : '',
+      }),
+      children)
     return h('section', { className: 'pw-reading pw-reading-result' + (showSummary ? '' : ' pw-sidebar-review'),
       'aria-label': t(showSummary ? 'demoResult' : 'sidebarReviewDetails') },
       showSummary && h(ReadingText, { label: t('demoResult'), value: summary || t('demoNoResult'), className: 'pw-reading-lead' }),
-      showAcceptance && h(ReadingText, {
-        label: t('requirementCriteria'), value: task.acceptance?.trim() || t('missingCriteria'), className: 'pw-reading-criteria',
-      }),
+      criteria,
       h(Verification, { verification: result.verification, t }),
       result.verification.hasManualEvidence && h(ReadingText, { label: t('demoEvidence'), value: task.evidence }),
       task.hasObjective && !result.verification.hasManualEvidence && result.summary && h('p', { className: 'pw-note pw-evidence-note' }, t('useRecordedEvidence')),
@@ -179,7 +242,7 @@ export function TaskResult({ task, t, children, since, userFacing = false, showA
         h(ReadText, { value: task.objective })))
 }
 
-function TaskReferences({ refs, openWikiPage }) {
+export function TaskReferences({ refs, openWikiPage }) {
   return h('div', null, refs.map(ref => {
     const wiki = /^(?:openwiki\/|wiki:)/.test(ref)
     return wiki && openWikiPage
@@ -188,15 +251,16 @@ function TaskReferences({ refs, openWikiPage }) {
   }))
 }
 
-export function TaskReading({ task, requirement, t, openWikiPage, onAdd, sidebar = false, resultActions, children, since }) {
-  const overview = taskOverview(task)
-  const description = task.description?.trim()
-  const supplementary = description !== overview ? description : ''
+export function TaskReading({ task, requirement, t, openWikiPage, onAdd, sidebar = false, resultActions, children, since, onReadProgress, onReadEvidence,
+  evidenceOpen, reviewTools, hidePriorResult }) {
   const resultFirst = ['in_review', 'done'].includes(task.status)
   const result = taskResult(task, since)
   const hasResult = result.fullSummary || result.fullLimits || result.verification.failed ||
     result.verification.incomplete || result.verification.unconfirmedChanges
   if (sidebar) {
+    const overview = taskOverview(task)
+    const description = task.description?.trim()
+    const supplementary = description !== overview ? description : ''
     const scope = requirement?.scope?.trim()
     const exclusions = requirement?.q_out?.trim()
     return h('div', { className: 'pw-reading' },
@@ -222,28 +286,19 @@ export function TaskReading({ task, requirement, t, openWikiPage, onAdd, sidebar
         h(ReadingText, { label: t('taskSupplement'), value: supplementary }),
         task.refs?.length > 0 && h(TaskReferences, { refs: task.refs, openWikiPage })))
   }
-  const progress = h(UpdateLog, { activity: task.activity, t, onAdd: ['done', 'cancelled'].includes(task.status) ? null : onAdd, userFacing: true,
-    timeline: sidebar, openWikiPage })
-  return h('div', { className: 'pw-reading' },
+  const progress = h(UpdateLog, { activity: task.activity, t, onAdd: ['done', 'cancelled'].includes(task.status) ? null : onAdd, userFacing: true, onReadProgress })
+  return h('div', { className: 'pw-reading pw-task-reading' },
     task.status === 'blocked' && h(ReadingText, {
       label: t('blockedReason'), value: task.blocked_reason?.trim() || t('taskNoReason'), className: 'pw-reading-reason pw-reading-warning',
     }),
     task.status === 'cancelled' && h(ReadingText, {
       label: t('taskCancelReason'), value: cancellationReason(task) || t('taskNoReason'), className: 'pw-reading-reason',
     }),
-    resultFirst && h(TaskResult, { task, t, since, userFacing: true }, resultActions),
-    h(ReadingText, { label: t('taskWhat'), value: overview || t('taskMissing'), className: 'pw-reading-lead' }),
-    !sidebar && h(ReadingText, { label: t('taskSteps'), value: task.triggerPath, className: 'pw-reading-divider' }),
-    !resultFirst && h(ReadingText, { label: t('requirementCriteria'), value: task.acceptance, className: 'pw-reading-criteria' }),
-    !resultFirst && task.status !== 'cancelled' && !!hasResult && h(TaskResult, { task, t, since, userFacing: true, showAcceptance: false }),
+    resultFirst && h(TaskResult, { task, t, since, userFacing: true, onReadEvidence, evidenceOpen, reviewTools }, resultActions),
+    !resultFirst && h(ReadingText, { label: t('requirementCriteria'), value: task.acceptance?.trim() || t('missingCriteria'), className: 'pw-reading-criteria' }),
+    !resultFirst && task.status !== 'cancelled' && !hidePriorResult && !!hasResult && h(TaskResult, { task, t, since, userFacing: true, showAcceptance: false, onReadEvidence }),
     children,
-    sidebar && progress,
-    (supplementary || (sidebar && task.triggerPath?.trim()) || task.rootCause?.trim() || task.refs?.length > 0) && h(Disclosure, { label: t('taskAdditional') },
-      sidebar && h(ReadingText, { label: t('taskSteps'), value: task.triggerPath }),
-      h(ReadingText, { label: t('taskSupplement'), value: supplementary }),
-      h(ReadingText, { label: t('taskCause'), value: task.rootCause }),
-      task.refs?.length > 0 && h(TaskReferences, { refs: task.refs, openWikiPage })),
-    !sidebar && progress)
+    progress)
 }
 
 export function DraftSuggestions({ proposals, act, root, t, busy, dismissMethod = 'sync/dismiss', showHeading = true, rememberEdits, adoptDisabled = false }) {

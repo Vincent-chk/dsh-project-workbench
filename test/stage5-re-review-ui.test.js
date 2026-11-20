@@ -117,12 +117,12 @@ test('board confirmation rejects an older round and accepts a current result', a
   const ReasonModal = await component('../client-src/shared/modals.js', 'ReasonModal')
   const props = { modal: { kind: 'confirmIssue', req, reqId: req.id, issue: oldTask }, t: x => x, setModal() {}, root: '/tmp/test' }
   let tree = h.render(ReasonModal, props)
-  assert.equal(find(tree, button('demoConfirm')).props.disabled, true)
+  assert.equal(find(tree, button('taskAccept')).props.disabled, true)
   assert.equal(find(tree, named('TaskResult')).props.since, 200)
   const h2 = host(); globalThis.__roundReact = h2.api
   const CurrentModal = await component('../client-src/shared/modals.js', 'ReasonModal')
   tree = h2.render(CurrentModal, { ...props, modal: { ...props.modal, issue: newTask } })
-  assert.equal(find(tree, button('demoConfirm')).props.disabled, false)
+  assert.equal(find(tree, button('taskAccept')).props.disabled, false)
 })
 
 test('after a confirmation conflict, the refreshed requirement round is reviewed with the task', async t => {
@@ -134,11 +134,11 @@ test('after a confirmation conflict, the refreshed requirement round is reviewed
   const props = { modal: { kind: 'confirmIssue', req: { ...req, deliveryStartedAt: 50 }, reqId: req.id, issue: oldTask },
     t: x => x, setModal() {}, root: '/tmp/test', mutate: async () => ({ ok: false, code: 'CONFLICT' }) }
   let tree = h.render(ReasonModal, props)
-  assert.equal(find(tree, button('demoConfirm')).props.disabled, false)
-  await find(tree, button('demoConfirm')).props.onClick()
+  assert.equal(find(tree, button('taskAccept')).props.disabled, false)
+  await find(tree, button('taskAccept')).props.onClick()
   tree = h.render(ReasonModal, props)
   assert.equal(find(tree, named('TaskResult')).props.since, 200)
-  assert.equal(find(tree, button('demoConfirm')).props.disabled, true)
+  assert.equal(find(tree, button('taskAccept')).props.disabled, true)
 })
 
 test('current verification survives a newer requirement round', () => {
@@ -186,6 +186,195 @@ test('terminal tasks under a completed requirement point back to reopening devel
     t: x => x, root: '/tmp/test', sessionId: 's', projectKey: 'p', uiMemory: { drafts: {} }, busy: false,
     leaveRef: { current: null }, toolbar: () => null, notices: null }
   assert.match(JSON.stringify(bar.render(LinkedTaskDetails, barProps)), /errNotActive/)
+})
+
+test('task table opens the selected acceptance without changing its status', async t => {
+  const h = host(); globalThis.__roundReact = h.api
+  t.after(() => { delete globalThis.__roundReact })
+  const IssueSidebar = await component('../client-src/detail/requirement-detail.js', 'IssueSidebar')
+  const opened = []
+  const props = { req: { ...req, issues: [newTask] }, onOpenIssue: (...args) => opened.push(args), t: x => x }
+  let tree = h.render(IssueSidebar, props)
+  find(tree, button('taskGoToAcceptance')).props.onClick()
+  assert.deepEqual(opened, [[newTask.id, true]])
+  tree = h.render(IssueSidebar, { ...props, readOnly: true })
+  assert.equal(find(tree, button('taskGoToAcceptance')), null)
+})
+
+test('every task page previews its overview under the title and opens fuller information in the reading drawer', async t => {
+  const h = host(); globalThis.__roundReact = h.api
+  t.after(() => { delete globalThis.__roundReact })
+  const IssueDetail = await component('../client-src/detail/task-detail.js', 'IssueDetail')
+  const base = { req, t: x => x, root: '/tmp/test', projectKey: 'p', uiMemory: { drafts: {} }, rootRef: { current: '/tmp/test' } }
+  const issue = { ...newTask, problemOverview: '已记录概述', triggerPath: '完整复现步骤', rootCause: '已定位根因',
+    description: '独立补充说明', refs: ['wiki:guide'] }
+  for (const status of ['todo', 'doing', 'blocked', 'in_review', 'done', 'cancelled']) {
+    let tree = h.render(IssueDetail, { ...base, issue: { ...issue, status } })
+    const page = find(tree, node => node.props?.['aria-label'] === 'issueDetail')
+    const [header, info] = page.props.children
+    assert.equal(header.type, 'header', status)
+    assert.equal(info.props['aria-labelledby'], 'pw-task-info-heading', status)
+    assert.ok(find(info, node => node.type === 'p' && node.props.children.includes(issue.problemOverview)), status)
+    assert.equal(find(page, node => node.props?.value === issue.rootCause), null, status)
+    const trigger = {}
+    const openInfo = find(info, button('taskOpenInfo'))
+    assert.equal(openInfo.props['aria-expanded'], false)
+    openInfo.props.onClick({ currentTarget: trigger })
+    tree = h.render(IssueDetail, { ...base, issue: { ...issue, status } })
+    const { drawer } = tree.props
+    assert.equal(drawer.key, 'info')
+    assert.equal(drawer.trigger, trigger)
+    assert.equal(find(tree, button('taskOpenInfo')).props['aria-expanded'], true)
+    for (const [label, value] of [
+      ['taskOverviewField', issue.problemOverview], ['taskSteps', issue.triggerPath],
+      ['taskCause', issue.rootCause], ['taskSupplement', issue.description],
+    ]) assert.ok(find(drawer.body, node => node.props?.label === label && node.props.value === value), label)
+    const refs = find(drawer.body, named('TaskReferences'))
+    assert.deepEqual(refs.props.refs, issue.refs)
+    tree.props.onClose()
+  }
+
+  const legacy = { ...newTask, problemOverview: '', description: '仅有旧说明', rootCause: '根因' }
+  let tree = h.render(IssueDetail, { ...base, issue: legacy })
+  assert.ok(find(tree, node => node.type === 'p' && node.props.children.includes(legacy.description)))
+  find(tree, button('taskOpenInfo')).props.onClick({ currentTarget: {} })
+  tree = h.render(IssueDetail, { ...base, issue: legacy })
+  assert.ok(find(tree.props.drawer.body, node => node.props?.label === 'taskOverviewField' && node.props.value === legacy.description))
+  assert.equal(find(tree.props.drawer.body, node => node.props?.label === 'taskSupplement').props.value, '')
+  tree.props.onClose()
+  const shortOverview = { ...legacy, rootCause: '' }
+  tree = h.render(IssueDetail, { ...base, issue: shortOverview })
+  find(tree, button('taskOpenInfo')).props.onClick({ currentTarget: {} })
+  tree = h.render(IssueDetail, { ...base, issue: shortOverview })
+  assert.ok(find(tree.props.drawer.body, node => node.props?.label === 'taskOverviewField' && node.props.value === legacy.description))
+  assert.ok(find(tree.props.drawer.body, node => node.type === 'p' && node.props.children.includes('taskInfoEmpty')))
+})
+
+test('task review prominently exposes decisions and assistance while retaining earlier evidence in the drawer', async t => {
+  const h = host(); globalThis.__roundReact = h.api
+  t.after(() => { delete globalThis.__roundReact })
+  const IssueDetail = await component('../client-src/detail/task-detail.js', 'IssueDetail')
+  const moves = []
+  const issue = { ...newTask, knownLimits: '刷新后仍待核实', knownLimitsAt: 201, evidence: '以前的验证', evidenceAt: 100,
+    objective: '本轮测试命令的完整记录', objectiveAt: 201, requirementDeliveryStartedAt: 200,
+    verification: { passed: 3, failed: 0, incomplete: 1, unconfirmedChanges: 0, hasManualEvidence: false } }
+  const props = { issue, req, t: x => x, root: '/tmp/test', projectKey: 'p', uiMemory: { drafts: {} }, rootRef: { current: '/tmp/test' },
+    onMoveIssue: (...args) => moves.push(args) }
+  const renderResult = tree => {
+    const reading = find(tree, named('TaskReading'))
+    const result = find(reading.type(reading.props), named('TaskResult'))
+    return result.type(result.props)
+  }
+  let tree = h.render(IssueDetail, props)
+  let result = renderResult(tree)
+  const comparison = find(result, node => node.props?.className === 'pw-task-review-compare')
+  assert.ok(find(comparison, node => node.props?.label === 'requirementCriteria' && node.props.value === '标准'))
+  assert.ok(find(comparison, node => node.props?.label === 'demoResult' && node.props.value === '本轮摘要'))
+  assert.match(JSON.stringify(result), /taskReviewIncomplete · checksPassed/)
+  assert.ok(find(result, named('AcceptanceAssist')).props.compact)
+  assert.equal(find(result, named('AcceptanceAssist')).props.showInstructions, false)
+  assert.ok(find(result, node => node.props?.label === 'demoLimits' && node.props.value === '刷新后仍待核实'))
+  assert.equal(find(result, node => node.props?.value === '本轮测试命令的完整记录'), null)
+  assert.equal(find(tree, button('taskAccept')).props.disabled, false)
+  find(tree, button('taskReject')).props.onClick()
+  find(tree, button('taskAccept')).props.onClick()
+  assert.deepEqual(moves, [['doing', 'pw-task-reject'], ['done', 'pw-task-accept']])
+  const trigger = {}
+  find(result, button('taskOpenRecords')).props.onClick({ currentTarget: trigger })
+  tree = h.render(IssueDetail, props)
+  const { drawer } = tree.props
+  assert.equal(drawer.trigger, trigger)
+  assert.equal(find(renderResult(tree), button('taskOpenRecords')).props['aria-expanded'], true)
+  const evidence = drawer.body.type(drawer.body.props)
+  assert.ok(find(evidence, node => node.props?.label === 'taskPreviousEvidence' && node.props.value === '以前的验证'))
+  assert.ok(find(evidence, node => node.props?.label === 'taskObjectiveRecords' && node.props.value === '本轮测试命令的完整记录'))
+  tree.props.onClose()
+  tree = h.render(IssueDetail, { ...props, issue: oldTask })
+  assert.equal(tree.props.drawer, null)
+  assert.equal(find(tree, button('taskAccept')).props.disabled, true)
+  assert.ok(find(tree, node => node.props?.role === 'status' && node.props.children.includes('taskReviewNeedsResult')))
+  assert.equal(find(tree, button('taskReject')).props.disabled, false)
+  tree = h.render(IssueDetail, { ...props, runFact: { sessionRunning: true } })
+  for (const action of ['taskAccept', 'taskReject']) assert.equal(find(tree, button(action)).props.disabled, true)
+})
+
+test('rejecting acceptance records the feedback against the reviewed snapshot and leaves the next action on the task', async t => {
+  const dialog = host(); globalThis.__roundReact = dialog.api
+  t.after(() => { delete globalThis.__roundReact })
+  const ReasonModal = await component('../client-src/shared/modals.js', 'ReasonModal')
+  const calls = [], focus = []
+  const issue = { ...newTask, hash: 'reviewed' }
+  const modal = { kind: 'rejectTaskAcceptance', req, reqId: req.id, issue, restoreFocus: saved => focus.push(saved) }
+  const props = { modal, t: x => x, root: '/tmp/test', setModal() {}, mutate: async (...args) => { calls.push(args); return { ok: true } } }
+  const reason = '刷新后未保留修改。\n补上回归测试。'
+  let tree = dialog.render(ReasonModal, props)
+  assert.equal(find(tree, button('taskConfirmReject')).props.disabled, true)
+  find(tree, node => node.type === 'textarea').props.onChange({ target: { value: reason } })
+  tree = dialog.render(ReasonModal, props)
+  await find(tree, button('taskConfirmReject')).props.onClick()
+  assert.deepEqual(calls, [['issue/continue', { root: '/tmp/test', reqId: req.id, id: issue.id, fileHash: issue.hash, text: reason }, { inlineError: true }]])
+  assert.deepEqual(focus, [true])
+
+  const detail = host(); globalThis.__roundReact = detail.api
+  const IssueDetail = await component('../client-src/detail/task-detail.js', 'IssueDetail')
+  const returned = { ...issue, status: 'doing', deliveryStartedAt: 203, activity: [`in_review → doing（继续修改）\n${reason}`] }
+  const detailProps = { issue: returned, req, t: x => x, root: '/tmp/test', projectKey: 'p', uiMemory: { drafts: {} },
+    rootRef: { current: '/tmp/test' }, onStartTask: (...args) => calls.push(args) }
+  tree = detail.render(IssueDetail, detailProps)
+  const rework = find(tree, node => node.props?.['aria-labelledby'] === 'pw-task-rework')
+  assert.ok(find(rework, node => node.props?.children.includes(reason)))
+  assert.ok(find(rework, node => node.props?.children.includes('taskReworkNext')))
+  assert.equal(find(rework, button('submitTaskAcceptance')), null)
+  find(rework, button('demoContinue')).props.onClick()
+  assert.deepEqual(calls.at(-1), [issue.id])
+  tree = detail.render(IssueDetail, { ...detailProps, issue: { ...returned, resultAt: 204, evidenceAt: 204 } })
+  assert.equal(find(tree, button('submitTaskAcceptance')).props.className, 'pw-button primary')
+})
+
+test('the task progress preview shows a first line and opens the exact saved record for reading', async t => {
+  const h = host(); globalThis.__roundReact = h.api
+  t.after(() => { delete globalThis.__roundReact })
+  const IssueDetail = await component('../client-src/detail/task-detail.js', 'IssueDetail')
+  const activity = ['2026-11-20T14:11:00+08:00 人工操作：完成逐人签到\n需要逐条核对重复编号']
+  const issue = { ...newTask, status: 'doing', activity }
+  const props = { issue, req, t: x => x, root: '/tmp/test', projectKey: 'p', uiMemory: { drafts: {} }, rootRef: { current: '/tmp/test' } }
+  const tree = h.render(IssueDetail, props)
+  const reading = find(tree, named('TaskReading'))
+  const updates = find(reading.type(reading.props), named('UpdateLog'))
+  const preview = updates.type(updates.props)
+  assert.match(JSON.stringify(preview), /完成逐人签到/)
+  assert.doesNotMatch(JSON.stringify(preview), /需要逐条核对/)
+  const trigger = {}
+  find(preview, button('taskReadProgress')).props.onClick({ currentTarget: trigger })
+  const { drawer } = h.render(IssueDetail, props).props
+  assert.equal(drawer.trigger, trigger)
+  assert.equal(drawer.focusId, 'pw-task-current-progress')
+  assert.equal(drawer.body.props.onAdd, undefined)
+  assert.match(drawer.body.props.initialProgress, /完成逐人签到/)
+  const timeline = drawer.body.type(drawer.body.props)
+  assert.equal(timeline.props.records[0].detail, '需要逐条核对重复编号')
+  const original = find(timeline.type(timeline.props), node => node.props?.id === drawer.focusId)
+  assert.equal(original.props.open, true)
+})
+
+test('task PRDs restore the selected read-only document while the inactive rail requests only a count', async t => {
+  const h = host(); globalThis.__roundReact = h.api
+  t.after(() => { delete globalThis.__roundReact })
+  const IssueDetail = await component('../client-src/detail/task-detail.js', 'IssueDetail')
+  const props = { issue: newTask, req, t: x => x, root: '/tmp/test', projectKey: 'p', uiMemory: { drafts: {} }, rootRef: { current: '/tmp/test' } }
+  const requested = []
+  let closed = false
+  const renderPrds = (_onSummary, options) => { requested.push(options); return null }
+  const onClosePrds = () => { closed = true }
+  const tree = h.render(IssueDetail, { ...props, renderPrds, onClosePrds, initialPrdId: 'prd-active', modalActive: true })
+  assert.deepEqual(requested, [{ readOnly: true }])
+  assert.equal(tree.props.drawer.scrollKey, 'prd-active')
+  assert.equal(tree.props.modalActive, true)
+  tree.props.onClose()
+  assert.equal(closed, true)
+  const after = h.render(IssueDetail, { ...props, renderPrds, onClosePrds })
+  assert.equal(after.props.drawer, null)
+  assert.deepEqual(requested.at(-1), { summaryOnly: true })
 })
 
 test('sidebar confirmation does not treat the retained task old result as current', async t => {

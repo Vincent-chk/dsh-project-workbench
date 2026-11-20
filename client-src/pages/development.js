@@ -1,58 +1,39 @@
 import React from 'react'
 import { devItems, blockedItems, failureItems, riskItems } from '../shell/nav-state.js'
-import { activityEntry } from '../workbench-content.js'
-import { ListPage, dateText } from '../shared/list.js'
+import { ListPage, boardLocator, dateText, listTable, listTitle, useListScroll } from '../shared/list.js'
 
 const h = React.createElement
 
-// 开发中：需求及任务概况、已完成/待验收/阻塞数量、最近进展；
-// 进度 = 人工确认完成 / 未取消总数，待验收不计完成（PRD §7.5）。
+// 待验收和取消都不计成已完成。取消任务不占有效任务数。
 export function DevPage({ wb }) {
   const { t, requirements, navigate, openDetail } = wb
-  const query = (wb.nav.filters.dev ?? {}).query ?? ''
-  const items = devItems(requirements, query)
+  const items = devItems(requirements, wb.nav.filters.dev?.query)
   return h(ListPage, {
-    wb, page: 'dev', items,
+    wb, page: 'dev', title: t('navDev'), items,
+    columns: [t('listRequirement'), t('listEffectiveProgress'), t('listAttention'), t('listActions')],
     emptyText: t('devEmpty'),
-    emptyAction: h('button', { className: 'pw-button', style: { marginLeft: 8 }, onClick: () => navigate('board') }, t('locateBoard')),
+    emptyAction: h('button', { type: 'button', className: 'pw-button', onClick: () => navigate('board') }, t('locateBoard')),
     renderRow: req => {
-      const d = req.derived ?? {}
-      const total = (req.issues ?? []).length
-      const pct = d.progress == null ? null : Math.round(d.progress * 100)
-      const latest = latestOf(req, t)
-      return h('div', { className: 'pw-row', key: req.id },
-        h('button', { className: 'pw-row-main', onClick: () => openDetail({ reqId: req.id, issueId: null }, 'dev'), title: req.title },
-          h('strong', { className: 'pw-preview' }, req.title),
-          h('span', { className: 'pw-count' },
-            t('taskCount').replace('{total}', String(total)).replace('{done}', String(d.doneCount ?? 0)),
-            d.inReviewCount > 0 && ' · ' + t('devInReview').replace('{n}', String(d.inReviewCount)),
-            d.blockedCount > 0 && ' · ' + t('devBlocked').replace('{n}', String(d.blockedCount)),
-            d.cancelledCount > 0 && ' · ' + t('cancelledCount').replace('{n}', String(d.cancelledCount))),
-          h('span', { className: 'pw-dev-progress' },
-            pct === null
-              ? h('span', { className: 'pw-count' }, t('noProgress'))
-              : h('span', { className: 'pw-bar', title: `${pct}%` }, h('span', { style: { width: pct + '%' } })),
-            latest && h('span', { className: 'pw-preview pw-note' }, latest)))
-        ,
-        h('div', { className: 'pw-row-actions' },
-          h('button', { className: 'pw-button pw-quiet', onClick: () => wb.locateBoard(req) }, t('locateBoard'))))
+      const { progress, doneCount = 0, cancelledCount = 0, blockedCount = 0, inReviewCount = 0 } = req.derived ?? {}
+      const activeCount = (req.issues ?? []).length - cancelledCount
+      return {
+        key: req.id,
+        cells: [
+          listTitle(req.title, req.id, () => openDetail({ reqId: req.id, issueId: null }, 'dev')),
+          activeCount > 0
+            ? h('span', { className: 'pw-list-value', title: progress == null ? undefined : Math.round(progress * 100) + '%' },
+              h('strong', null, doneCount), ' / ', activeCount)
+            : h('span', { className: 'pw-list-muted' }, t('noProgress')),
+          h('div', { className: 'pw-list-alerts' },
+            blockedCount > 0 && h('span', { className: 'pw-istatus st-blocked' }, t('devBlocked').replace('{n}', String(blockedCount))),
+            inReviewCount > 0 && h('span', { className: 'pw-istatus st-in_review' }, t('devInReview').replace('{n}', String(inReviewCount))),
+            (cancelledCount > 0 || (!blockedCount && !inReviewCount)) && h('span', { className: 'pw-list-muted' },
+              cancelledCount > 0 ? t('cancelledCount').replace('{n}', String(cancelledCount)) : t('listNoAlerts'))),
+          boardLocator(wb, req),
+        ],
+      }
     },
   })
-}
-
-function latestOf(req, t) {
-  let best = null
-  for (const line of req.activity ?? []) {
-    const at = Date.parse(String(line).match(/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}\S*/)?.[0] ?? '')
-    if (Number.isFinite(at) && (!best || at > best.at)) best = { at, line, kind: 'requirement' }
-  }
-  for (const issue of req.issues ?? []) {
-    for (const line of issue.activity ?? []) {
-      const at = Date.parse(String(line).match(/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}\S*/)?.[0] ?? '')
-      if (Number.isFinite(at) && (!best || at > best.at)) best = { at, line, kind: 'issue' }
-    }
-  }
-  return best ? activityEntry(best.line, t, best.kind).text : ''
 }
 
 // 阻塞与风险：现有阻塞、待授权、执行失败和有依据的 AI 风险；不另建风险台账。
@@ -77,17 +58,24 @@ export function BlockedPage({ wb }) {
     return !query || title.toLowerCase().includes(query.toLowerCase())
   })
   const total = blockedList.length + authList.length + failures.length + deliveryFailed.length + risks.length
-  const item = (key, title, reqTitle, reason, at, actions) => h('div', { className: 'pw-row', key },
-    h('div', { className: 'pw-row-main pw-row-static' },
-      h('strong', { className: 'pw-preview' }, title),
-      h('span', { className: 'pw-note' }, reqTitle, ' · ', reason),
-      at ? h('span', { className: 'pw-count' }, dateText(new Date(at).toISOString())) : null),
-    h('div', { className: 'pw-row-actions' }, actions))
-  const section = (label, children) => h('section', { className: 'pw-subpage pw-blocked-section', 'aria-label': label },
-    h('h3', { className: 'pw-home-title' }, label), children)
-  return h('div', { className: 'pw-list' },
+  const item = (key, title, reqTitle, reason, at, actions) => ({
+    key,
+    cells: [
+      h(React.Fragment, null, h('strong', { className: 'pw-list-name' }, title),
+        reqTitle && reqTitle !== title && h('span', { className: 'pw-list-parent' }, reqTitle)),
+      h('div', null, reason, at ? h('time', { className: 'pw-list-parent', dateTime: new Date(at).toISOString() },
+        dateText(new Date(at).toISOString())) : null),
+      actions,
+    ],
+  })
+  const scroll = useListScroll(wb, 'blocked')
+  const section = (label, rows) => h('section', { className: 'pw-list-risk' },
+    h('h3', null, label),
+    Array.isArray(rows) ? listTable([t('listTask'), t('listReason'), t('listActions')], rows, label) : rows)
+  return h('section', { ...scroll, className: 'pw-list pw-list-catalog' },
+    h('header', { className: 'pw-list-header' }, h('h2', null, t('navBlocked'))),
     h('div', { className: 'pw-list-toolbar' },
-      h('input', { className: 'pw-input', style: { maxWidth: 220 }, placeholder: t('search'), value: query, 'aria-label': t('search'), onChange: e => setFilter('blocked', { query: e.target.value }) }),
+      h('input', { type: 'search', className: 'pw-input pw-list-search', placeholder: t('search'), value: query, 'aria-label': t('search'), onChange: e => setFilter('blocked', { query: e.target.value }) }),
       h('select', { className: 'pw-select', value: reqId, 'aria-label': t('parentRequirement'), onChange: e => setFilter('blocked', { reqId: e.target.value }) },
         h('option', { value: '' }, t('allRequirements')),
         requirements.map(r => h('option', { key: r.id, value: r.id }, r.title))),
@@ -97,9 +85,6 @@ export function BlockedPage({ wb }) {
       h('button', { className: 'pw-button', onClick: refreshBlocked }, t('retryRead'))),
     !runError && runFacts == null && h('p', { className: 'pw-note', role: 'status' }, t('loading')),
     total === 0 && !runError && runFacts != null && h('div', { className: 'pw-empty' }, query || reqId ? t('noResults') : t('blockedEmpty')),
-    blockedList.length > 0 && section(t('blockedSection'), blockedList.map(b =>
-      item('b' + b.issueId, b.title, b.reqTitle, b.reason || t('taskNoReason'), b.at,
-        h('button', { className: 'pw-button', onClick: () => openDetail({ reqId: b.reqId, issueId: b.issueId }, 'dev') }, t('viewOriginalTask'))))),
     authList.length > 0 && section(t('authSection'), authList.map(a =>
       item('a' + a.issueId, a.title, a.reqTitle, t('runWaiting') + ' · ' + (() => {
         const at = authDetails?.get(a.issueId)?.askedAt
@@ -116,6 +101,9 @@ export function BlockedPage({ wb }) {
       ...deliveryFailed.map(d => item('d' + d.reqId, d.title, t('requirementDelivery'), t('demoDeliveryFailed'), d.at,
         h('button', { className: 'pw-button', onClick: () => openDetail({ reqId: d.reqId, issueId: null }, 'dev') }, t('viewOriginalTask')))),
     ]),
+    blockedList.length > 0 && section(t('blockedSection'), blockedList.map(b =>
+      item('b' + b.issueId, b.title, b.reqTitle, b.reason || t('taskNoReason'), b.at,
+        h('button', { className: 'pw-button', onClick: () => openDetail({ reqId: b.reqId, issueId: b.issueId }, 'dev') }, t('viewOriginalTask'))))),
     blocked?.proposals == null
       ? section(t('riskSection'), h('p', { className: 'pw-note' }, t('loading')))
       : risks.length > 0 && section(t('riskSection'), risks.map(p => {

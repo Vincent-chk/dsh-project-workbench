@@ -6,13 +6,14 @@ import { isRequirementSplit, progressRecords, requirementLogEntries, requirement
 import { ISSUE_MOVES, sortedTasks } from '../shell/nav-state.js'
 import { Disclosure, ErrorDetails, ReadText } from '../shared/ui.js'
 import { DraftSuggestions } from './task-content.js'
-import { RequirementDevelopment, RequirementOverview, RequirementReviewDecisions } from './requirement-content.js'
-import { RequirementReview } from './requirement-review.js'
+import { RequirementDevelopment, RequirementOverview, RequirementReviewDecisions, RequirementDecisionRecords } from './requirement-content.js'
+import { RequirementReview, RequirementReviewHistory } from './requirement-review.js'
 import { RequirementDelivery } from './acceptance-detail.js'
-import { RequirementLayout } from './requirement-layout.js'
+import { RequirementLayout, savedRequirementOrder } from './requirement-layout.js'
 import { RequirementLog } from './requirement-log.js'
 import { RequirementFields, requirementFormError } from '../forms/requirement-form.js'
 import { dateText } from '../shared/list.js'
+import { ReadingLayout, ReadingLink } from '../shared/reading-drawer.js'
 
 const h = React.createElement
 const { useCallback, useEffect, useRef, useState } = React
@@ -116,10 +117,35 @@ function TaskSuggestionReview({ review, req, t, onOpenIssue, hasDrafts, hasLegac
         (hasLegacy || error) && h('button', { type: 'button', className: 'pw-button pw-quiet', disabled: pending, onClick: () => onReview() }, t('splitRetry'))))
 }
 
-export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenIssue, onCreateTask, projectKey, rootRef, onDirty, busy, sessionId, setModal, uiMemory, onReorderTask, onStartTask, onApprove, onReject, onMove, initialPrdId, initialDelivery, focusTarget, renderPrds }) {
+export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenIssue, onCreateTask, projectKey, rootRef, onDirty, busy, sessionId, setModal, uiMemory, onReorderTask, onStartTask, onApprove, onReject, onMove, initialPrdId, initialDelivery, focusTarget, renderPrds, restorePrds, onClosePrds, modalActive }) {
   const layoutKey = reqDraftKey(projectKey, req.id)
   const form = useWorkItemDraft(layoutKey, req, reqDraftFrom, onDirty, uiMemory)
   const [arranging, setArranging] = useState(false)
+  const [linear, setLinear] = useState(false)
+  const [managePrds, setManagePrds] = useState(false)
+  const [addProgress, setAddProgress] = useState(false)
+  const [order, setOrder] = useState(() => savedRequirementOrder(layoutKey, uiMemory.requirementOrders))
+  const [drawer, setDrawer] = useState(() => initialPrdId || restorePrds ? { id: 'prds', trigger: 'pw-req-read-prds',
+    focusId: initialPrdId ? 'pw-prd-open-full' : undefined } : null)
+  const taskFilters = uiMemory.requirementTaskFilters ??= {}
+  const [taskFilter, setTaskFilter] = useState(() => taskFilters[layoutKey] ?? '')
+  const changeFilter = next => {
+    taskFilters[layoutKey] = next
+    setTaskFilter(next)
+  }
+  const showDrawer = (id, trigger) => {
+    if (drawer?.id === 'prds' && id !== 'prds') onClosePrds?.()
+    setDrawer({ id, trigger })
+  }
+  const closeDrawer = () => {
+    if (drawer?.id === 'prds') onClosePrds?.()
+    setDrawer(null)
+  }
+  const openPrdManagement = () => {
+    closeDrawer()
+    setManagePrds(true)
+    setFocus({ block: 'prds', elementId: 'pw-prd-associations-' + req.id })
+  }
   const [focus, setFocus] = useState(null)
   const [prdSummary, setPrdSummary] = useState(null)
   const [reportSnapshot, setReportSnapshot] = useState({ state: 'loading' })
@@ -136,13 +162,19 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
   const proposalSeq = useRef(0)
   const mode = req.status === 'backlog' ? 'organize' : req.status === 'in_progress' ? 'split' : null
   useEffect(() => {
-    if (initialPrdId) setFocus({ block: 'prds' })
-    else if (initialDelivery) setFocus({ block: 'delivery' })
-  }, [initialPrdId, initialDelivery])
+    if (initialPrdId || restorePrds) {
+      setManagePrds(false)
+      setLinear(false)
+      setDrawer(current => current?.id === 'prds' ? current : { id: 'prds', trigger: 'pw-req-read-prds' })
+    } else if (initialDelivery) {
+      setFocus({ block: 'delivery' })
+    }
+  }, [initialPrdId, initialDelivery, restorePrds])
   useEffect(() => {
     if (focusTarget?.startsWith('pw-task-') || focusTarget === 'pw-suggest-' + req.id) {
       setFocus({ block: 'tasks', elementId: focusTarget })
     } else if (focusTarget === 'pw-prd-associations-' + req.id) {
+      setManagePrds(true)
       setFocus({ block: 'prds', elementId: focusTarget })
     }
   }, [focusTarget, req.id])
@@ -237,6 +269,25 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
   const canEdit = !req.pendingReopen && !['pending', 'completed'].includes(req.status)
   const editing = form.editing && canEdit
   const tasks = req.issues ?? []
+  const mainBlock = req.pendingReopen || ['pending', 'completed'].includes(req.status) ? 'delivery'
+    : ({ reviewing: 'review', in_progress: 'tasks' }[req.status] ?? 'basic')
+  const useOrderedLayout = linear || arranging
+  useEffect(() => {
+    if (!focus || useOrderedLayout) return
+    if (focus.block === 'tasks' && mainBlock !== 'tasks') {
+      setDrawer({ id: 'tasks', trigger: 'pw-req-read-tasks', focusId: focus.elementId })
+      setFocus(null)
+      return
+    }
+    if (!focus.elementId) return
+    const targetTask = tasks.find(task => 'pw-task-' + task.id === focus.elementId)
+    const targetId = targetTask && taskFilter && targetTask.status !== taskFilter ? 'pw-req-task-heading' : focus.elementId
+    const element = document.getElementById(targetId)
+    if (!element) return
+    element.focus({ preventScroll: true })
+    element.scrollIntoView({ block: 'nearest' })
+    setFocus(null)
+  }, [focus, mainBlock, useOrderedLayout, taskFilter, managePrds, req.issues])
   const canDelete = req.status === 'backlog' && !tasks.length && !req.devHistory
   const organize = () => actProposal('requirement/organize', { root, id: req.id, sessionId })
   const drafts = mode && h(DraftSuggestions, { proposals: proposals.filter(proposal => !isRequirementSplit(proposal)), act: actProposal, root, t, busy })
@@ -253,9 +304,13 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
     ? t(lastAcceptance.decision === 'approved' ? 'deliveryAccepted' : 'deliveryReturned')
     : t(delivery.previousSummary || delivery.previousCancelImpact ? 'previousResult' : 'reqNoDelivery'))
   const entries = requirementLogEntries(req, t, reports)
-  const openRecord = (block, group, marker) => setFocus({
-    block, elementId: 'pw-requirement-record-' + group + '-' + marker,
-  })
+  const openRecord = (block, group, marker) => {
+    const id = 'pw-requirement-record-' + group + '-' + marker
+    if (useOrderedLayout) setFocus({ block, elementId: id })
+    else setDrawer({ id: block, trigger: 'pw-req-read-log', focusId: id })
+  }
+  const reviewProps = { req, root, t, busy, sessionId, onApprove, onReject, onReportSnapshot: setReportSnapshot }
+  const addDevelopmentNote = canEdit ? text => mutate('requirement/addUpdate', { root, id: req.id, text }) : undefined
   const blocks = {
     basic: {
       label: t('reqBasic'), summary: requirementOverview(req).split(/\r?\n/)[0],
@@ -269,18 +324,19 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
     },
     prds: {
       label: t('reqRelatedPrds'), summary: prdSummary ?? t('reqLoadingPrds'),
-      body: renderPrds(setPrdSummary),
+      body: renderPrds(setPrdSummary, { manage: true }),
     },
     review: {
       label: t('reqReviews'), summary: reviewSummary,
       body: h(React.Fragment, null,
-        h(RequirementReview, { req, root, t, busy, sessionId, onApprove, onReject, onReportSnapshot: setReportSnapshot }),
+        h(RequirementReview, reviewProps),
         h(RequirementReviewDecisions, { req, t }),
         !reviewCount && reportSnapshot.state !== 'unavailable' && h('p', { className: 'pw-note' }, reviewSummary)),
     },
     tasks: {
       label: t('reqTasks'), summary: tasks.length ? t('reqTasksCount').replace('{n}', String(tasks.length)) : t('reqNoTasks'),
       body: h(IssueSidebar, { req, t, moveIssue, onOpenIssue, onCreateTask, busy, onReorderTask, onStartTask,
+        filter: useOrderedLayout || mainBlock !== 'tasks' ? '' : taskFilter, onFilter: changeFilter,
         onSuggest: mode === 'split' && !editing ? () => suggestSplit() : undefined,
         suggestionReview: mode === 'split' && !req.pendingReopen && !editing && h(TaskSuggestionReview, {
           review: split?.review, req, t, onOpenIssue, hasDrafts: !!splitDrafts.length,
@@ -294,8 +350,7 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
     },
     development: {
       label: t('reqDevelopment'), summary: developmentSummary ?? t('reqNoDevelopment'),
-      body: h(RequirementDevelopment, { req, t,
-        onAdd: canEdit ? text => mutate('requirement/addUpdate', { root, id: req.id, text }) : undefined }),
+      body: h(RequirementDevelopment, { req, t, onAdd: addDevelopmentNote }),
     },
     delivery: {
       label: t('reqDelivery'), summary: deliverySummary,
@@ -309,46 +364,184 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
         onOpenAcceptance: marker => openRecord('delivery', 'delivery', marker) }),
     },
   }
-  return h('section', { className: 'pw-subpage pw-read-card', 'aria-label': t('detail') },
+  const readOnlyBodies = {
+    basic: h(RequirementOverview, { req, t }),
+    prds: h(React.Fragment, null,
+      h('div', { className: 'pw-req-drawer-actions' },
+        h('button', { type: 'button', className: 'pw-button pw-quiet', onClick: openPrdManagement }, t('reqManagePrds'))),
+      renderPrds(setPrdSummary, { readOnly: true })),
+    review: h(React.Fragment, null,
+      reportSnapshot.state === 'unavailable' && h('div', { className: 'pw-actions', role: 'status' },
+        h('span', { className: 'pw-note' }, t('errUnreadable')),
+        h('button', { type: 'button', className: 'pw-button pw-quiet', onClick: reportSnapshot.retry }, t('retryRead'))),
+      h(RequirementReviewHistory, { reports, t }), h(RequirementReviewDecisions, { req, t }),
+      !reviewCount && reportSnapshot.state !== 'unavailable' && h('p', { className: 'pw-note' }, reviewSummary)),
+    development: h(RequirementDevelopment, { req, t }),
+    delivery: mainBlock === 'delivery' ? h(React.Fragment, null,
+      !lastAcceptance && h('p', { className: 'pw-note' }, t('reqNoDelivery')),
+      h(RequirementDecisionRecords, { records: decisions.filter(item => item.kind === 'acceptance'), group: 'delivery', t }))
+      : h(RequirementDelivery, { req, t }),
+    tasks: h(IssueSidebar, { req, t, onOpenIssue, busy, readOnly: true }),
+    log: blocks.log.body,
+  }
+  const rail = order.filter(id => id !== mainBlock || ['review', 'delivery'].includes(id)).map(id => {
+    const block = blocks[id]
+    const summary = ['prds', 'review', 'tasks'].includes(id) ? block.summary : undefined
+    return h(ReadingLink, {
+      key: id, id: 'pw-req-read-' + id, label: block.label, summary,
+      onClick: event => showDrawer(id, event.currentTarget),
+    })
+  })
+  const transition = !req.pendingReopen && ({
+    backlog: ['reviewing', 'submitReview'],
+    ready: ['in_progress', 'startDev'],
+    in_progress: ['pending', 'submit'],
+  }[req.status])
+  const transitionButton = transition && h('button', {
+    type: 'button', className: 'pw-button' + (mainBlock === 'basic' ? ' primary' : ''),
+    disabled: busy, onClick: () => onMove(req, transition[0]),
+  }, t(transition[1]))
+  const activeDrawer = !editing && !managePrds && !useOrderedLayout && drawer && {
+    title: blocks[drawer.id].label, key: drawer.id,
+    scrollKey: drawer.id === 'prds' ? 'prds:' + (initialPrdId ?? '') : drawer.id,
+    body: readOnlyBodies[drawer.id], trigger: drawer.trigger, focusId: drawer.focusId,
+  }
+  const regular = !editing && !managePrds && !useOrderedLayout
+  const detailContent = editing ? blocks.basic.body
+    : managePrds ? h(React.Fragment, null,
+      h('button', { type: 'button', className: 'pw-button pw-quiet', onClick: () => setManagePrds(false) }, t('reqReturnToDetail')),
+      blocks.prds.body)
+    : useOrderedLayout ? h(RequirementLayout, { blocks, layoutKey, status: req.status, uiMemory, t, focus, arranging,
+      onFinish: () => setArranging(false), onOrderChange: setOrder })
+    : h(React.Fragment, null,
+      mainBlock !== 'basic' && blocks.basic.summary && h('p', { className: 'pw-text pw-req-lead' }, blocks.basic.summary),
+      renderPrds(setPrdSummary, { summaryOnly: true }),
+      h(RequirementReview, { ...reviewProps, recentOnly: true, snapshotOnly: mainBlock !== 'review' }),
+      mainBlock === 'delivery' ? h('section', null,
+        h('h3', { className: 'pw-requirement-section-title' }, t('reqDeliveryCurrent')),
+        h(RequirementDelivery, { req, t, onMove, busy, showHistory: false }))
+        : mainBlock !== 'review' && blocks[mainBlock].body,
+      mainBlock === 'tasks' && addProgress && h(RequirementDevelopment, { req, t, writeOnly: true,
+        onAdd: addDevelopmentNote && (async text => {
+          const result = await addDevelopmentNote(text)
+          if (result.ok && live.current) setAddProgress(false)
+          return result
+        }) }))
+  const content = h('section', { className: 'pw-subpage pw-read-card pw-requirement-page', 'aria-label': t('detail') },
     h('header', { className: 'pw-subpage-head' },
       h('div', { className: 'pw-read-title' }, h('h2', null, req.title),
         h('span', { className: 'pw-count pw-read-status', 'data-status': req.status }, t('col_' + req.status)),
         req.updated && h('span', { className: 'pw-note' }, t('updated'), ' ', dateText(req.updated))),
-      !arranging && h('div', { className: 'pw-actions' },
-        canEdit && !form.editing && h('button', { className: 'pw-button', onClick: () => {
-          setAttempted(false); form.begin(); setFocus({ block: 'basic' })
+      !arranging && !managePrds && h('div', { className: 'pw-actions pw-req-head-actions' },
+        regular && transitionButton,
+        canEdit && !form.editing && h('button', { type: 'button', className: 'pw-button', onClick: () => {
+          closeDrawer()
+          setAttempted(false)
+          form.begin()
         } }, t('edit')),
         h('details', { className: 'pw-disclosure pw-detail-more' },
           h('summary', null, t('requirementActions')),
           h('div', { className: 'pw-actions' },
-            h('button', { className: 'pw-button', onClick: () => setArranging(true) }, t('reqBlockOrder')),
+            !editing && h('button', { type: 'button', className: 'pw-button', onClick: () => { closeDrawer(); setArranging(true) } }, t('reqBlockOrder')),
+            !editing && h('button', { type: 'button', className: 'pw-button', onClick: () => { closeDrawer(); setLinear(!linear) } },
+              t(linear ? 'reqReturnToDetail' : 'reqReadInOrder')),
+            regular && h('button', { type: 'button', className: 'pw-button', onClick: openPrdManagement }, t('reqManagePrds')),
+            regular && mainBlock === 'tasks' && addDevelopmentNote && h('button', { type: 'button', className: 'pw-button',
+              onClick: () => setAddProgress(!addProgress), 'aria-expanded': addProgress }, t('recordProgress')),
             req.status === 'backlog' && !editing && h('button', { className: 'pw-button', disabled: busy, onClick: organize }, t('aiOrganize')),
             canDelete && !editing && h('button', { className: 'pw-button danger', disabled: busy, onClick: onDelete }, t('delete')))))),
-    h(RequirementLayout, { blocks, layoutKey, status: req.status, uiMemory, t, focus, arranging, onFinish: () => setArranging(false) }))
+    detailContent)
+  return h(ReadingLayout, { t, rail: regular && rail, drawer: activeDrawer, onClose: closeDrawer, modalActive,
+    scrollMemory: uiMemory.detailScroll ??= {}, scrollKey: layoutKey }, content)
 }
 
 // 任务栏：标题是独立详情入口（≥44px），每行一个状态控件；开发中可排序、
-// 新建、AI 拆分，并开始/继续处理（PRD §7.5）。其他阶段任务状态只读。
-export function IssueSidebar({ req, t, moveIssue, onOpenIssue, onCreateTask, busy, onSuggest, onReorderTask, onStartTask, suggestionReview, children }) {
-  const locked = req.status !== 'in_progress' || !!req.pendingReopen
+// 新建、AI 拆分，并进入处理或验收（PRD §7.5）。其他阶段任务状态只读。
+export function IssueSidebar({ req, t, moveIssue, onOpenIssue, onCreateTask, busy, onSuggest, onReorderTask, onStartTask,
+  suggestionReview, filter = '', onFilter, readOnly, children }) {
+  const [sorting, setSorting] = useState(false)
+  const locked = readOnly || req.status !== 'in_progress' || !!req.pendingReopen
   const tasks = sortedTasks(req.issues)
-  return h('section', { className: 'pw-issues pw-issue-list', 'aria-label': t('issues') },
-    h('div', { className: 'pw-colhead' }, h('strong', null, t('issues')), h('span', { className: 'pw-count' }, String(tasks.length)),
-      !locked && h('div', { className: 'pw-actions', style: { marginInlineStart: 'auto' } },
-        h('button', { className: 'pw-button', disabled: busy, onClick: onCreateTask }, t('newTask')),
-        onSuggest && h('button', { id: 'pw-suggest-' + req.id, className: 'pw-button', disabled: busy, onClick: onSuggest }, t('aiSplit')))),
+  const visible = sorting || !filter ? tasks : tasks.filter(task => task.status === filter)
+  const done = tasks.filter(task => task.status === 'done').length
+  const cancelled = tasks.filter(task => task.status === 'cancelled').length
+  const effective = tasks.length - cancelled
+  const flags = [['blocked', 'devBlocked'], ['in_review', 'devInReview']]
+    .map(([status, label]) => [status, label, tasks.filter(task => task.status === status).length])
+  return h('section', { className: 'pw-req-tasks', 'aria-label': t('reqTasks') },
+    !locked && !!tasks.length && h('div', { className: 'pw-req-progress' },
+      h('div', { className: 'pw-req-progress-heading' },
+        h('strong', null, t('reqProgress')),
+        h('span', null, t('reqActiveTasks').replace('{done}', String(done)).replace('{total}', String(effective)))),
+      effective > 0 && h('progress', { value: done, max: effective, 'aria-label': t('reqProgress') }),
+      h('div', { className: 'pw-actions' },
+        flags.filter(([status, , count]) => count || filter === status).map(([status, label, count]) => h('button', {
+          type: 'button', key: status, className: 'pw-button pw-quiet pw-task-filter',
+          onClick: () => onFilter?.(status === filter ? '' : status), 'aria-pressed': status === filter, disabled: sorting,
+        }, t(label).replace('{n}', String(count)))),
+        cancelled > 0 && h('span', { className: 'pw-note' }, t('cancelledCount').replace('{n}', String(cancelled))))),
+    h('div', { className: 'pw-req-task-head' },
+      h('h3', { id: 'pw-req-task-heading', tabIndex: -1 }, t('reqTasks'), ' ', h('span', { className: 'pw-count' }, String(tasks.length))),
+      !locked && h('div', { className: 'pw-actions' },
+        h('button', { type: 'button', className: 'pw-button', disabled: busy, onClick: onCreateTask }, t('newTask')),
+        onSuggest && h('button', { type: 'button', id: 'pw-suggest-' + req.id, className: 'pw-button pw-quiet', disabled: busy, onClick: onSuggest }, t('aiSplit')),
+        tasks.length > 1 && onReorderTask && h('button', {
+          type: 'button', className: 'pw-button pw-quiet', disabled: busy, onClick: () => setSorting(!sorting), 'aria-pressed': sorting,
+        }, t(sorting ? 'reqFinishOrder' : 'reqTaskOrder')))),
     suggestionReview,
-    !tasks.length && h('p', { className: 'pw-note' }, t('reqNoTasks')),
-    tasks.map((i, index) => h('div', { key: i.id, className: 'pw-issue' },
-      !locked && h('span', { className: 'pw-order' },
-        h('button', { className: 'pw-orderbtn', disabled: busy || index === 0, 'aria-label': t('moveUp'), title: t('moveUp'), onClick: () => onReorderTask(i.id, 'up') }, '↑'),
-        h('button', { className: 'pw-orderbtn', disabled: busy || index === tasks.length - 1, 'aria-label': t('moveDown'), title: t('moveDown'), onClick: () => onReorderTask(i.id, 'down') }, '↓')),
-      h('button', { id: 'pw-task-' + i.id, className: 'pw-issue-title', onClick: () => onOpenIssue(i.id), title: i.title },
-        h('span', { className: 'pw-preview' }, i.title),
-        h('span', { 'aria-hidden': true }, '›')),
-      h(IssueStatusSelect, { req, issue: i, t, moveIssue, busy }),
-      !locked && onStartTask && ['todo', 'doing', 'blocked'].includes(i.status) &&
-        h('button', { className: 'pw-button pw-quiet pw-startbtn', disabled: busy, onClick: () => onStartTask(i.id) },
-          t(i.status === 'todo' ? 'startTask' : 'demoContinue')))),
+    !visible.length && h('p', { className: 'pw-note', role: 'status' }, t(filter ? 'noResults' : 'reqNoTasks')),
+    filter && !sorting && h('button', { type: 'button', className: 'pw-button pw-quiet', onClick: () => onFilter?.('') }, t('reqClearTaskFilter')),
+    !!visible.length && h('table', { className: 'pw-req-task-table' },
+      h('thead', null, h('tr', null,
+        h('th', { scope: 'col' }, t('issueTitle')),
+        h('th', { scope: 'col' }, t('reqTaskStatus')),
+        !locked && h('th', { scope: 'col' }, t('reqTaskOperations')))),
+      h('tbody', null, visible.map((task, index) => h('tr', { key: task.id },
+        h('td', null,
+          h('button', { type: 'button', id: 'pw-task-' + task.id, className: 'pw-issue-title', onClick: () => onOpenIssue(task.id) }, task.title)),
+        h('td', null, readOnly
+          ? h('span', { className: 'pw-istatus st-' + task.status }, t('st_' + task.status))
+          : h(IssueStatusSelect, { req, issue: task, t, moveIssue, busy })),
+        !locked && h('td', null, sorting
+          ? h('span', { className: 'pw-actions' },
+            h('button', { type: 'button', className: 'pw-orderbtn', disabled: busy || index === 0,
+              'aria-label': t('moveUp') + ' · ' + task.title, onClick: () => onReorderTask(task.id, 'up') }, '↑'),
+            h('button', { type: 'button', className: 'pw-orderbtn', disabled: busy || index === tasks.length - 1,
+              'aria-label': t('moveDown') + ' · ' + task.title, onClick: () => onReorderTask(task.id, 'down') }, '↓'))
+          : task.status === 'in_review'
+            ? h('button', { type: 'button', className: 'pw-button pw-quiet pw-startbtn', disabled: busy,
+              'aria-label': `${t('taskGoToAcceptance')} · ${task.title}`, onClick: () => onOpenIssue(task.id, true) }, t('taskGoToAcceptance'))
+            : onStartTask && ['todo', 'doing', 'blocked'].includes(task.status) &&
+              h('button', { type: 'button', className: 'pw-button pw-quiet pw-startbtn', disabled: busy, onClick: () => onStartTask(task.id) },
+                t(task.status === 'todo' ? 'startTask' : 'demoContinue'))))))),
     children)
 }
+
+export const requirementDetailCss = `
+.pw-req-drawer-actions{margin-block-end:8px}
+.pw-req-head-actions{justify-content:flex-end;max-width:100%}
+.pw-req-lead{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;color:var(--dsw-alias-label-secondary);max-width:55em;margin:0 0 16px}
+.pw-req-progress{padding:13px 14px;margin:0 0 18px;border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:var(--dsw-alias-bg-base)}
+.pw-req-progress-heading{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 12px}
+.pw-req-progress-heading span{font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary)}
+.pw-req-progress progress{width:100%;height:6px;appearance:none;margin-block:12px 5px;display:block;accent-color:var(--dsw-alias-brand-primary)}
+.pw-req-progress progress::-webkit-progress-bar{background:var(--dsw-alias-bg-layer-2);border-radius:4px}
+.pw-req-progress progress::-webkit-progress-value{background:var(--dsw-alias-brand-primary);border-radius:4px}
+.pw-req-progress .pw-task-filter[aria-pressed="true"]{background:var(--dsw-alias-interactive-bg-active)}
+.pw-req-task-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.pw-req-task-head h3,.pw-requirement-section-title{font-size:16px;margin:0}
+.pw-req-task-table{border-collapse:collapse;width:100%;margin-block:5px 12px;text-align:start}
+.pw-req-task-table th{font-weight:500;color:var(--dsw-alias-label-secondary);font-size:12px;text-align:start;line-height:1.4}
+.pw-req-task-table :is(th,td){border-block-end:1px solid var(--dsw-alias-border-l3);padding:5px 5px;vertical-align:middle}
+.pw-req-task-table td:first-child{width:100%;padding-inline-start:0}
+.pw-req-task-table .pw-issue-title{white-space:normal;display:block;min-height:44px;overflow-wrap:anywhere;width:100%}
+.pw-req-task-table .pw-select{width:100%;min-width:max-content}
+.pw-req-task-table .pw-startbtn{min-height:30px;white-space:nowrap}
+.pw-req-task-table td:not(:first-child){min-width:74px}
+.pw-req-task-table .pw-istatus{white-space:normal}
+@container (max-width:540px){
+  .pw-requirement-page{padding:14px}
+  .pw-req-head-actions{justify-content:flex-start}
+  .pw-req-task-table td:not(:first-child){min-width:62px}
+}
+`

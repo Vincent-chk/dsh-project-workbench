@@ -103,6 +103,7 @@ export function MainShell(props) {
   const [, setReorderRevision] = useState(0)
   const pendingReorder = reorderMemory[projectKey]
   const [focusTarget, setFocusTarget] = useState('')
+  const contentRef = useRef(null)
   const [editFocus, setEditFocus] = useState(null)
   const [undo, setUndo] = useState(null)
   const [git, setGit] = useState(null)
@@ -333,7 +334,7 @@ export function MainShell(props) {
   }, [wsMenu])
 
   useEffect(() => {
-    if (!focusTarget || keyChanged || rootChanged) return
+    if (!focusTarget || focusTarget.startsWith('pw-list-item-') || keyChanged || rootChanged) return
     document.getElementById(focusTarget)?.focus()
     setFocusTarget('')
   }, [focusTarget, keyChanged, rootChanged])
@@ -389,9 +390,7 @@ export function MainShell(props) {
     setDetailDirty(false)
   }
   const guardLeave = action => { if (hasUnsaved) setModal({ kind: 'leave', action }); else action() }
-  const guardRef = useRef(guardLeave)
-  guardRef.current = guardLeave
-  const navigate = page => guardLeave(() => { setEditFocus(null); writeNav({ ...navRef.current, page, params: null, history: [] }) })
+  const navigate = page => guardLeave(() => { setEditFocus(null); setFocusTarget(''); writeNav({ ...navRef.current, page, params: null, history: [] }) })
   const openDetailAt = (params, page) => guardLeave(() => writeNav(openDetail(navRef.current, params, page ?? navRef.current.page)))
   const openPrd = prdId => openDetailAt({ prdId }, 'prds')
   const editPrd = (id, reqId) => setModal({ kind: 'prdEditor', id, reqId })
@@ -401,10 +400,35 @@ export function MainShell(props) {
   })
   const back = () => guardLeave(() => {
     const cur = navRef.current
-    if (cur.params?.issueId) setFocusTarget('pw-task-' + cur.params.issueId)
+    const previous = backOf(cur)
+    if (cur.params?.issueId && previous.params?.reqId === cur.params.reqId) {
+      setFocusTarget('pw-task-' + cur.params.issueId)
+    } else if (!previous.params) {
+      const record = cur.params?.record
+      const id = record ? record.reqId + '|' + (record.marker || record.round)
+        : cur.params?.prdId || cur.params?.reqId
+      setFocusTarget(id ? 'pw-list-item-' + id : '')
+    }
     setEditFocus(null)
-    writeNav(backOf(cur))
+    writeNav(previous)
   })
+  const backRef = useRef(back)
+  backRef.current = back
+  useEffect(() => {
+    if (nav.params || !focusTarget?.startsWith('pw-list-item-') || !contentRef.current) return
+    const restore = () => {
+      const item = document.getElementById(focusTarget)
+      if (!contentRef.current?.contains(item)) return false
+      item.focus({ preventScroll: true })
+      item.scrollIntoView({ block: 'nearest' })
+      setFocusTarget('')
+      return true
+    }
+    if (restore()) return
+    const observer = new MutationObserver(() => { if (restore()) observer.disconnect() })
+    observer.observe(contentRef.current, { childList: true, subtree: true })
+    return () => observer.disconnect()
+  }, [focusTarget, nav.params, nav.page, projectKey])
   const setFilter = (page, patch) => writeNav(withFilter(navRef.current, page, patch))
 
   const createReq = async (openAfter = false) => {
@@ -546,11 +570,20 @@ export function MainShell(props) {
     setModal({ kind, req, onOk: () => submit(undefined, true) })
   }, [mutate, root, t, saving, modal])
 
-  const moveIssue = (req, issue, to) => {
+  const moveIssue = (req, issue, to, triggerId) => {
     const label = ISSUE_MOVES[issue.status]?.[to]
-    if (!label || req.status !== 'in_progress' || req.pendingReopen || saving || modal) return
+    const rejecting = issue.status === 'in_review' && to === 'doing'
+    if ((!label && !rejecting) || req.status !== 'in_progress' || req.pendingReopen || saving || modal) return
     const item = { root, reqId: req.id, id: issue.id, fileHash: issue.hash }
-    if (to === 'done') { setModal({ kind: 'confirmIssue', issue, req, reqId: req.id }); return }
+    if (to === 'done' || rejecting) {
+      const restoreFocus = triggerId && (saved => {
+        if (rootRef.current === root && navRef.current.params?.issueId === issue.id) {
+          setFocusTarget(saved ? (rejecting ? 'pw-task-rework' : 'pw-task-title') : triggerId)
+        }
+      })
+      setModal({ kind: rejecting ? 'rejectTaskAcceptance' : 'confirmIssue', issue, req, reqId: req.id, restoreFocus })
+      return
+    }
     setModal({ kind: 'reason', title: t(label), body: issue.title, onOk: value => mutate('issue/move', {
       ...item, to, ...(to === 'blocked' ? { blockedReason: value } : { reason: value }),
     }, { inlineError: true }) })
@@ -634,14 +667,13 @@ export function MainShell(props) {
   // Esc backs out of a detail; the board keeps its own N/J/K/H/L handling.
   useEffect(() => {
     const onKey = e => {
-      if (e.key !== 'Escape' || modalRef.current || wsMenu) return
+      if (e.key !== 'Escape' || e.defaultPrevented || modalRef.current || wsMenu) return
       const tag = (e.target.tagName || '').toLowerCase()
       if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable) return
-      if (navRef.current.params) { e.preventDefault(); guardRef.current(() => {
-        const cur = navRef.current
-        if (cur.params?.issueId) setFocusTarget('pw-task-' + cur.params.issueId)
-        writeNav(backOf(cur))
-      }) }
+      if (navRef.current.params) {
+        e.preventDefault()
+        backRef.current()
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -716,7 +748,7 @@ export function MainShell(props) {
 
   const frame = content => h('main', { className: 'pw-page', 'aria-label': t('title') },
     h('style', null, css + prdCss), topBar,
-    h('div', { className: 'pw-shell-body' }, menu, h('div', { className: 'pw-content' }, content)))
+    h('div', { className: 'pw-shell-body' }, menu, h('div', { className: 'pw-content', ref: contentRef }, content)))
 
   // No selection record yet: offer the registry; never auto-follow the session.
   if (!root) {
@@ -764,17 +796,31 @@ export function MainShell(props) {
       h('span', { className: 'pw-crumb-sep' }, '/'),
       h('span', { className: 'pw-crumb-current' }, t('recordDetail'))))
 
-  const renderPrds = onSummary => h(PrdDocuments, {
-    key: projectKey + ':' + selected.id, root, reqId: selected.id, requirements, t, activeId: params?.prdId, onSummary,
-    onRead: prdId => {
-      const view = navRef.current
-      writeNav({ ...view, params: { ...view.params, prdId } })
-    },
-    onEdit: editPrd, onNew: reqId => editPrd(undefined, reqId),
+  const selectAssociatedPrd = prdId => {
+    const view = navRef.current
+    if (view.params?.reqId !== selected?.id) return
+    writeNav({ ...view, params: { ...view.params, prdId, restorePrds: true } })
+  }
+  const closeAssociatedPrds = () => {
+    const view = navRef.current
+    if (view.params?.reqId !== selected?.id || !view.params?.prdId && !view.params?.restorePrds) return
+    const { prdId, restorePrds, ...remaining } = view.params
+    writeNav({ ...view, params: remaining })
+  }
+  const openAssociatedFull = prdId => {
+    setFocusTarget(null)
+    openDetailAt({ prdId, fromReading: true }, 'prds')
+  }
+  const prdReadingMemory = uiMemory.prdReading ??= {}
+  const renderPrds = (onSummary, { readOnly, summaryOnly, manage } = {}) => h(PrdDocuments, {
+    key: projectKey + ':' + selected.id, root, reqId: selected.id, requirements, t, onSummary, readOnly, summaryOnly,
+    activeId: manage ? null : params?.prdId, onRead: selectAssociatedPrd, onOpenFull: openAssociatedFull,
+    onEdit: editPrd, onNew: reqId => editPrd(undefined, reqId), readingMemory: prdReadingMemory,
   })
   let content
   if (page === 'prds' && params?.prdId) {
-    content = h(PrdReader, { key: projectKey + ':' + params.prdId, root, id: params.prdId, requirements, t, onEdit: editPrd, onBack: back })
+    content = h(PrdReader, { key: projectKey + ':' + params.prdId, root, id: params.prdId, requirements, t,
+      onEdit: editPrd, onBack: back, backLabel: params.fromReading ? t('backToReading') : undefined, readingMemory: prdReadingMemory })
   } else if (params?.record) {
     content = selectedRecord
       ? h('div', { className: 'pw-subpage-stack' }, h(RecordDetail, {
@@ -788,29 +834,32 @@ export function MainShell(props) {
   } else if (params?.issueId && !selectedIssue) {
     content = h('div', { className: 'pw-init' }, h('p', null, t('errMissing')), h('button', { className: 'pw-button', onClick: back }, missingReturnLabel))
   } else if (selectedIssue) {
-    content = h('div', { className: 'pw-subpage-stack' }, h(IssueDetail, {
+    content = h(IssueDetail, {
       key: projectKey + ':' + selectedIssue.id, issue: selectedIssue, req: selected, t, root, mutate,
       projectKey, rootRef, onDirty: setDetailDirty, busy: saving, uiMemory, editFocus,
+      renderPrds, initialPrdId: params?.prdId, restorePrds: params?.restorePrds, onClosePrds: closeAssociatedPrds, modalActive: !!modal,
       runFact: (runFacts ?? []).find(f => f.issueId === selectedIssue.id) ?? null,
       openTask: openTaskSession, onStartTask: issueId => startTask(selected.id, issueId),
-      onMoveIssue: to => moveIssue(selected, selectedIssue, to),
-      openWikiPage: p => guardLeave(() => writeNav({ ...navRef.current, page: 'wiki', params: { wikiTarget: p }, history: [] })),
-    }))
+      onMoveIssue: (to, triggerId) => moveIssue(selected, selectedIssue, to, triggerId),
+      openWikiPage: p => guardLeave(() => writeNav(openDetail(navRef.current, { wikiTarget: p }, 'wiki'))),
+    })
   } else if (selected) {
-    content = h('div', { className: 'pw-subpage-stack' },
-      h(DetailPanel, {
-        key: projectKey + ':' + selected.id, req: selected, t, root, mutate, moveIssue, projectKey, rootRef,
-        initialPrdId: params?.prdId, initialDelivery: page === 'pending' && selected.status === 'pending', focusTarget,
-        renderPrds, onMove: doMove,
-        onApprove: () => doMove(selected, 'ready'),
-        onReject: () => doMove(selected, 'backlog'),
-        onDirty: setDetailDirty, busy: saving || !!pendingReorder || !!modal, sessionId: sessionRoot === root ? sessionId : undefined, setModal, uiMemory,
-        onDelete: () => setModal({ kind: 'delete', req: selected }),
-        onOpenIssue: id => guardLeave(() => writeNav(openDetail(navRef.current, { reqId: selected.id, issueId: id }))),
-        onReorderTask: (id, direction) => reorder('issue', selected.id, sortedTasks(selected.issues), id, direction),
-        onStartTask: issueId => startTask(selected.id, issueId),
-        onCreateTask: () => setModal({ kind: 'createTask', req: selected, onCreated: id => { if (rootRef.current === root) setFocusTarget('pw-task-' + id) } }),
-      }))
+    content = h(DetailPanel, {
+      key: projectKey + ':' + selected.id, req: selected, t, root, mutate, moveIssue, projectKey, rootRef,
+      initialPrdId: params?.prdId, restorePrds: params?.restorePrds, onClosePrds: closeAssociatedPrds, modalActive: !!modal,
+      initialDelivery: page === 'pending' && selected.status === 'pending', focusTarget, renderPrds, onMove: doMove,
+      onApprove: () => doMove(selected, 'ready'),
+      onReject: () => doMove(selected, 'backlog'),
+      onDirty: setDetailDirty, busy: saving || !!pendingReorder || !!modal, sessionId: sessionRoot === root ? sessionId : undefined, setModal, uiMemory,
+      onDelete: () => setModal({ kind: 'delete', req: selected }),
+      onOpenIssue: (id, focusAcceptance) => guardLeave(() => {
+        if (focusAcceptance) setFocusTarget('pw-task-acceptance')
+        writeNav(openDetail(navRef.current, { reqId: selected.id, issueId: id }))
+      }),
+      onReorderTask: (id, direction) => reorder('issue', selected.id, sortedTasks(selected.issues), id, direction),
+      onStartTask: issueId => startTask(selected.id, issueId),
+      onCreateTask: () => setModal({ kind: 'createTask', req: selected, onCreated: id => { if (rootRef.current === root) setFocusTarget('pw-task-' + id) } }),
+    })
   } else if (page === 'prds') {
     content = h(PrdManagement, { key: projectKey, wb, onRead: openPrd, onEdit: editPrd })
   } else if (page === 'wiki') {

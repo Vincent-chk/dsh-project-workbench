@@ -41,7 +41,7 @@ test('approval times require a unique matching current interaction in every link
 })
 
 test('home describes the matched time as authorization request start', async t => {
-  globalThis.__runFactsReact = { createElement: node, Fragment: Symbol('fragment') }
+  globalThis.__runFactsReact = reactStubValue
   t.after(() => { delete globalThis.__runFactsReact })
   const HomePage = await component(fileURLToPath(new URL('../client-src/pages/home.js', import.meta.url)), 'HomePage')
   const labels = { waitHour: '已等待 {n} 小时', waitNow: '刚刚', authRequestWait: '授权请求发起：{wait}',
@@ -57,7 +57,7 @@ test('home describes the matched time as authorization request start', async t =
 })
 
 test('risk page shows the authorization request start in local time, or unknown', async t => {
-  globalThis.__runFactsReact = { createElement: node, Fragment: Symbol('fragment') }
+  globalThis.__runFactsReact = reactStubValue
   const originalTimezone = process.env.TZ
   process.env.TZ = 'Asia/Shanghai'
   t.after(() => {
@@ -77,7 +77,7 @@ test('risk page shows the authorization request start in local time, or unknown'
 })
 
 test('while an approval snapshot is replaced, home keeps unrelated reminders and offers retry without presenting a false empty state', async t => {
-  globalThis.__runFactsReact = { createElement: node, Fragment: Symbol('fragment') }
+  globalThis.__runFactsReact = reactStubValue
   t.after(() => { delete globalThis.__runFactsReact })
   const HomePage = await component(fileURLToPath(new URL('../client-src/pages/home.js', import.meta.url)), 'HomePage')
   const source = { counts: { blocked: 1 }, reminders: [
@@ -116,6 +116,10 @@ async function component(path, name) {
   return mod.exports[name]
 }
 const node = (type, props, ...children) => ({ type, props: { ...props, children } })
+const reactStubValue = {
+  createElement: node, Fragment: Symbol('fragment'),
+  useRef: initial => ({ current: initial }), useLayoutEffect() {},
+}
 function all(tree) {
   if (tree == null || typeof tree === 'boolean') return []
   if (Array.isArray(tree)) return tree.flatMap(all)
@@ -123,7 +127,7 @@ function all(tree) {
   return [tree, ...all(tree.props?.children)]
 }
 test('run-list failure keeps known reminders visible and never presents permission status as empty', async t => {
-  globalThis.__runFactsReact = { createElement: node, Fragment: Symbol('fragment') }
+  globalThis.__runFactsReact = reactStubValue
   t.after(() => { delete globalThis.__runFactsReact })
   const HomePage = await component(fileURLToPath(new URL('../client-src/pages/home.js', import.meta.url)), 'HomePage')
   const BlockedPage = await component(fileURLToPath(new URL('../client-src/pages/development.js', import.meta.url)), 'BlockedPage')
@@ -156,7 +160,7 @@ test('run-list failure keeps known reminders visible and never presents permissi
 })
 
 test('permission reminders merge linked sessions and open the session actually waiting', async t => {
-  globalThis.__runFactsReact = { createElement: node, Fragment: Symbol('fragment') }
+  globalThis.__runFactsReact = reactStubValue
   t.after(() => { delete globalThis.__runFactsReact })
   const HomePage = await component(fileURLToPath(new URL('../client-src/pages/home.js', import.meta.url)), 'HomePage')
   const BlockedPage = await component(fileURLToPath(new URL('../client-src/pages/development.js', import.meta.url)), 'BlockedPage')
@@ -212,7 +216,7 @@ test('permission reminders merge linked sessions and open the session actually w
 })
 
 test('home distinguishes unknown permission wait from a known blocked wait', async t => {
-  globalThis.__runFactsReact = { createElement: node, Fragment: Symbol('fragment') }
+  globalThis.__runFactsReact = reactStubValue
   t.after(() => { delete globalThis.__runFactsReact })
   const HomePage = await component(fileURLToPath(new URL('../client-src/pages/home.js', import.meta.url)), 'HomePage')
   const labels = {

@@ -20,6 +20,15 @@ export function requirementBlockOrder(saved) {
   return ['basic', ...ordered, ...allowed, 'log']
 }
 
+export function savedRequirementOrder(layoutKey, orders) {
+  if (orders?.[layoutKey]) return orders[layoutKey]
+  try {
+    return requirementBlockOrder(JSON.parse(globalThis.localStorage?.getItem('project-workbench.requirement-order.' + layoutKey) ?? 'null'))
+  } catch {
+    return requirementBlockOrder()
+  }
+}
+
 export const requirementLayoutLocale = {
   en: {
     reqBasic: 'Basic information', reqRelatedPrds: 'Linked PRDs', reqReviews: 'Review records',
@@ -31,6 +40,11 @@ export const requirementLayoutLocale = {
     reqNoDevelopment: 'No development records', reqNoDelivery: 'No delivery records',
     reqPrdCount: '{n} linked', reqReviewCount: '{n} records', reqTasksCount: '{n} tasks',
     reqLoadingPrds: 'Loading linked PRDs…', reqLoadingReviews: 'Loading review records…',
+    reqReadInOrder: 'Read sections in order', reqReturnToDetail: 'Back to requirement overview',
+    reqManagePrds: 'Manage linked PRDs', reqTaskOrder: 'Reorder tasks', reqClearTaskFilter: 'Show all tasks',
+    reqProgress: 'Confirmed complete', reqActiveTasks: '{done} / {total} active tasks', reqTaskStatus: 'Status',
+    reqTaskOperations: 'Actions', reqReviewCurrent: 'Current review', reqDeliveryCurrent: 'Current delivery',
+
   },
   zh: {
     reqBasic: '基本信息', reqRelatedPrds: '关联 PRD', reqReviews: '评审记录',
@@ -42,21 +56,19 @@ export const requirementLayoutLocale = {
     reqNoDevelopment: '尚无开发记录', reqNoDelivery: '尚无交付记录',
     reqPrdCount: '{n} 份', reqReviewCount: '{n} 条', reqTasksCount: '{n} 项任务',
     reqLoadingPrds: '正在读取关联 PRD…', reqLoadingReviews: '正在读取评审记录…',
+    reqReadInOrder: '按板块顺序阅读', reqReturnToDetail: '返回需求概览',
+    reqManagePrds: '管理关联 PRD', reqTaskOrder: '调整任务顺序', reqClearTaskFilter: '显示全部任务',
+    reqProgress: '已确认完成', reqActiveTasks: '{done} / {total} 项有效任务', reqTaskStatus: '状态',
+    reqTaskOperations: '操作', reqReviewCurrent: '本轮评审', reqDeliveryCurrent: '本轮交付',
+
   },
 }
 
-export function RequirementLayout({ blocks, layoutKey, status, uiMemory, t, focus, arranging, onFinish }) {
+export function RequirementLayout({ blocks, layoutKey, status, uiMemory, t, focus, arranging, onFinish, onOrderChange }) {
   const readingMemory = uiMemory.requirementReading ??= {}
   const orderMemory = uiMemory.requirementOrders ??= {}
   const storageKey = 'project-workbench.requirement-order.' + layoutKey
-  const [order, setOrder] = useState(() => {
-    if (orderMemory[layoutKey]) return orderMemory[layoutKey]
-    try {
-      return requirementBlockOrder(JSON.parse(globalThis.localStorage?.getItem(storageKey) ?? 'null'))
-    } catch {
-      return requirementBlockOrder()
-    }
-  })
+  const [order, setOrder] = useState(() => savedRequirementOrder(layoutKey, orderMemory))
   const [draft, setDraft] = useState(null)
   const [saveError, setSaveError] = useState(false)
   const [reading, setReading] = useState(() => readingMemory[layoutKey])
@@ -97,6 +109,7 @@ export function RequirementLayout({ blocks, layoutKey, status, uiMemory, t, focu
   const finish = save => {
     if (save && draft) {
       setOrder(draft)
+      onOrderChange?.(draft)
       try {
         const storage = globalThis.localStorage
         if (!storage) throw new Error('Local preferences unavailable')

@@ -6,20 +6,20 @@ import { DeliveryResult, RequirementDecisionRecords } from './requirement-conten
 const h = React.createElement
 
 // 本轮验收详情复用看板的状态变更流程，保留确认与冲突保护。
-export function RequirementDelivery({ req, t, onMove, busy = false }) {
+export function RequirementDelivery({ req, t, onMove, busy = false, showHistory = true }) {
   const records = reviewRecords(req.reviews).filter(record => record.kind === 'acceptance')
   const recovering = !!req.pendingReopen
   const pending = req.status === 'pending'
   const completed = req.status === 'completed'
   const hasDelivery = pending || completed || req.deliverySummary?.trim() || req.cancelImpact?.trim()
   return h('div', { className: 'pw-reading' },
+    hasDelivery && h(DeliveryResult, { req, t, userFacing: true, foldTasks: !showHistory }),
+    !hasDelivery && !records.length && h('p', { className: 'pw-note' }, t('noRequirementDelivery')),
     onMove && (recovering || pending || completed) && h('div', { className: 'pw-actions' },
       recovering && h('button', { className: 'pw-button primary', disabled: busy, onClick: () => onMove(req, completed ? 'in_progress' : 'completed') }, t('resumeReopen')),
       !recovering && pending && h('button', { className: 'pw-button primary', disabled: busy, onClick: () => onMove(req, 'completed') }, t('acceptRequirement')),
       !recovering && (pending || completed) && h('button', { className: 'pw-button', disabled: busy, onClick: () => onMove(req, 'in_progress') }, t(completed ? 'reopen' : 'sendBack'))),
-    hasDelivery && h(DeliveryResult, { req, t, userFacing: true }),
-    !hasDelivery && !records.length && h('p', { className: 'pw-note' }, t('noRequirementDelivery')),
-    h(RequirementDecisionRecords, { records, group: 'delivery', t }))
+    showHistory && h(RequirementDecisionRecords, { records, group: 'delivery', t }))
 }
 
 export { RequirementDelivery as DeliveryDetail }

@@ -1,4 +1,5 @@
 import React from 'react'
+import { effectiveEvidence } from '../../core/state.js'
 import { rpc } from '../api.js'
 import { issueDraftFrom, newTaskInput, taskFormError } from '../project-state.js'
 import { ErrorDetails, Modal } from './ui.js'
@@ -31,7 +32,10 @@ export function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, r
     })
     return () => { active = false }
   }, [modal, root])
-  const close = () => setModal(current => current === modal ? null : current)
+  const close = (saved = false) => {
+    setModal(current => current === modal ? null : current)
+    modal.restoreFocus?.(saved === true)
+  }
   // 其他详情可以展示刷新后的数据。验收确认使用打开时展示的快照，
   // 避免轮询悄悄替换用户正在核对的内容。
   const liveReq = modal.req && requirements
@@ -42,7 +46,7 @@ export function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, r
     if (busy) return
     setBusy(true); setError(null)
     const res = await action()
-    if (res.ok) close()
+    if (res.ok) close(true)
     else { setError(res); setBusy(false) }
   }
   const errorView = h(ErrorDetails, { error, t, showRaw: false })
@@ -87,6 +91,18 @@ export function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, r
       onChange: e => setValue(e.target.value), onKeyDown: e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit() } }),
     errorView)
   }
+  if (modal.kind === 'rejectTaskAcceptance') {
+    const { issue, reqId } = modal
+    const reject = () => mutate('issue/continue', { root, reqId, id: issue.id, text: value.trim(), fileHash: issue.hash }, { inlineError: true })
+    return h(Modal, { title: t('taskReject'), onClose: cancel, actions: [
+      h('button', { type: 'button', className: 'pw-button', disabled: busy, onClick: cancel }, t('cancel')),
+      h('button', { type: 'button', className: 'pw-button primary', disabled: busy || !value.trim(), onClick: () => run(reject) }, t('taskConfirmReject')),
+    ] }, h('p', null, issue.title),
+    h('label', { className: 'pw-field' }, h('span', { className: 'pw-label' }, t('askFix')),
+      h('textarea', { className: 'pw-textarea', rows: 3, autoFocus: true, required: true, readOnly: busy,
+        placeholder: t('taskRejectHint'), value, onChange: e => setValue(e.target.value) })),
+    h('p', { className: 'pw-note' }, t('taskRejectEffect')), errorView)
+  }
   if (modal.kind === 'submitDelivery') {
     const submit = async (method, input) => {
       setBusy(true)
@@ -121,10 +137,10 @@ export function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, r
       if (latest.ok) { setReviewReq(latest.data); return { ...res, code: 'REVIEW_CONTENT_UPDATED' } }
       return res
     }
-    return h(Modal, { title: t(issue ? 'confirmIssueTitle' : 'confirmCompleteTitle'), onClose: cancel, wide: true, actions: [
-      h('button', { className: 'pw-button', disabled: busy, onClick: cancel }, t('cancel')),
-      h('button', { className: 'pw-button primary', disabled: busy || (issue && (issue.status !== 'in_review' || !taskResult(issue, reviewReq?.deliveryStartedAt).summary)),
-        onClick: () => run(issue ? confirm : confirmRequirement) }, t(issue ? 'demoConfirm' : 'acceptRequirement')),
+    return h(Modal, { title: t(issue ? 'taskConfirmAccept' : 'confirmCompleteTitle'), onClose: cancel, wide: true, actions: [
+      h('button', { className: 'pw-button', autoFocus: !!issue, disabled: busy, onClick: cancel }, t('cancel')),
+      h('button', { className: 'pw-button primary', disabled: busy || (issue && (issue.status !== 'in_review' || !taskResult(issue, reviewReq?.deliveryStartedAt).summary || !String(effectiveEvidence(issue)).trim())),
+        onClick: () => run(issue ? confirm : confirmRequirement) }, t(issue ? 'taskAccept' : 'acceptRequirement')),
     ] }, h('p', null, issue?.title ?? reviewReq.title),
     issue ? h(TaskResult, { task: issue, since: reviewReq?.deliveryStartedAt, t, userFacing: true }) : h(DeliveryResult, { req: reviewReq, t, userFacing: true }),
     errorView)

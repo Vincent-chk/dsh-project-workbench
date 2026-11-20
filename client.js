@@ -41,10 +41,10 @@ var __projectWorkbenchModule = (() => {
   __export(index_exports, {
     default: () => index_default
   });
-  var import_react27 = __toESM(__require("react"), 1);
+  var import_react28 = __toESM(__require("react"), 1);
 
   // client-src/shell/main-shell.js
-  var import_react24 = __toESM(__require("react"), 1);
+  var import_react25 = __toESM(__require("react"), 1);
 
   // core/state.js
   var TERMINAL_ISSUE = /* @__PURE__ */ new Set(["done", "cancelled"]);
@@ -68,6 +68,7 @@ var __projectWorkbenchModule = (() => {
   function changesReviewedRequirement(current, patch) {
     return requirementOverview(current) !== requirementOverview({ ...current, ...patch }) || ["goal", "scope", "q_out", "acceptance", "q_success"].some((key) => Object.hasOwn(patch, key) && String(patch[key] ?? "") !== String(current[key] ?? ""));
   }
+  var effectiveEvidence = (issue) => issue.evidence || (issue.hasObjective ? "\u5BA2\u89C2\u8BB0\u5F55" : "");
   function startBlockers(issue) {
     const missing = taskContentBlockers(issue);
     if (blank(issue.acceptance)) missing.push("acceptance");
@@ -272,7 +273,6 @@ var __projectWorkbenchModule = (() => {
       fieldSeparator: ", ",
       reviewRecords: "Review and acceptance records",
       reviewOpinion: "Decision notes",
-      taskWhat: "What to do",
       taskSteps: "Steps or use cases",
       taskMissing: "No task description has been recorded.",
       sidebarTaskDescription: "Task description",
@@ -398,7 +398,6 @@ var __projectWorkbenchModule = (() => {
       fieldSeparator: "\u3001",
       reviewRecords: "\u8BC4\u5BA1\u4E0E\u9A8C\u6536\u8BB0\u5F55",
       reviewOpinion: "\u610F\u89C1",
-      taskWhat: "\u8981\u505A\u4EC0\u4E48",
       taskSteps: "\u64CD\u4F5C\u6B65\u9AA4\u6216\u4F7F\u7528\u573A\u666F",
       taskMissing: "\u5C1A\u672A\u8BB0\u5F55\u4EFB\u52A1\u8BF4\u660E\u3002",
       sidebarTaskDescription: "\u4EFB\u52A1\u63CF\u8FF0",
@@ -501,14 +500,14 @@ var __projectWorkbenchModule = (() => {
     const raw = textOf(rawLine);
     const dated = raw.match(/^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}\S*)\s+(.*)$/s);
     const at = dated?.[1] ?? "";
-    const date = at.slice(0, 16).replace("T", " ");
+    const date2 = at.slice(0, 16).replace("T", " ");
     const body = dated ? dated[2] : raw;
     const states = body.match(/^([a-z_]+)\s+→\s+([a-z_]+)(.*)$/s);
     const labels = kind === "requirement" ? requirementLabels : kind === "task" || kind === "issue" ? taskLabels : [...requirementLabels, ...taskLabels];
-    return { raw, at, date, body, states: states && labels.includes(states[1]) && labels.includes(states[2]) ? states : null };
+    return { raw, at, date: date2, body, states: states && labels.includes(states[1]) && labels.includes(states[2]) ? states : null };
   }
   function activityEntry(rawLine, t, kind) {
-    const { raw, date, body, states } = activityParts(rawLine, kind);
+    const { raw, date: date2, body, states } = activityParts(rawLine, kind);
     const state = (name) => t((taskLabels.includes(name) ? "st_" : "col_") + name);
     const count = body.match(/^客观记录同步：会话 .* 第 \d+[–-]\d+ 条（新增 (\d+) 条依据）$/)?.[1];
     const missingSummaryCount = body.match(/^(?:undefined|null)?\s*[（(]新增\s*(\d+)\s*条依据[）)]$/)?.[1];
@@ -517,7 +516,7 @@ var __projectWorkbenchModule = (() => {
     else if (count) text = t("eventEvidence").replace("{n}", count);
     else if (missingSummaryCount) text = t("eventEvidenceAdded").replace("{n}", missingSummaryCount);
     else if (/^建议已采用：prop-[a-z0-9-]+$/.test(body)) text = t("eventAdopted");
-    return { date, text, raw };
+    return { date: date2, text, raw };
   }
   var recordedDecisions = {
     "reviewing>ready": ["review", "approved"],
@@ -547,7 +546,7 @@ var __projectWorkbenchModule = (() => {
   function progressRecords(activity = [], t, kind, reviews = []) {
     const usedReviews = /* @__PURE__ */ new Set();
     return activity.flatMap((line, index) => {
-      const { at, date, body, states } = activityParts(line, kind);
+      const { at, date: date2, body, states } = activityParts(line, kind);
       if (!body || /^(?:客观记录同步：会话 |建议已采用：prop-)/.test(body)) return [];
       if (states && kind === "requirement") {
         const matched = activityDecision(reviews, usedReviews, at, states);
@@ -559,7 +558,7 @@ var __projectWorkbenchModule = (() => {
       let { text } = activityEntry(line, t, kind);
       if (states) text = text.replace(/(?:：proposal:prop-[a-z0-9-]+(?=）)|（proposal:prop-[a-z0-9-]+）)$/i, "");
       else text = text.replace(/^\[AI\]\s*|^人工操作：\s*/, "");
-      return text ? [{ date, text, key: index, event: !!states || /^重开完成：/.test(body) }] : [];
+      return text ? [{ date: date2, text, key: index, event: !!states || /^重开完成：/.test(body) }] : [];
     });
   }
   var requirementMoveLabels = {
@@ -645,6 +644,20 @@ var __projectWorkbenchModule = (() => {
       if (savedReason) return savedReason;
       const reason = textOf(metadata.match(/^\s*[（(]([\s\S]*)[）)]\s*$/)?.[1]).replace(/^(人工|AI|系统)[：:]\s*/, "");
       return /^(人工|AI|系统|proposal:prop-[a-z0-9-]+)$/i.test(reason) ? "" : reason;
+    }
+    return "";
+  }
+  function taskReworkReason(task) {
+    if (!["todo", "doing", "blocked"].includes(task.status)) return "";
+    for (const line of task.activity ?? []) {
+      const { states } = activityParts(line, "issue");
+      if (!states) continue;
+      const [, from, to, detail] = states;
+      if (from === "in_review" && to === "doing") {
+        return textOf(detail.match(/^（继续修改）\r?\n([\s\S]*)$/)?.[1] ?? detail.match(/^（继续修改：(.*)）$/s)?.[1]);
+      }
+      if (from === "in_review" && to === "todo") return detail.split(/\r?\n/).slice(1).join("\n").trim();
+      if (to === "in_review" || to === "todo") break;
     }
     return "";
   }
@@ -1033,11 +1046,25 @@ var __projectWorkbenchModule = (() => {
   var import_react4 = __toESM(__require("react"), 1);
   var h4 = import_react4.default.createElement;
   var { useState: useState2 } = import_react4.default;
-  function UpdateLog({ activity, onAdd, t, kind = "issue", showRecords = true, userFacing = false, reviews, timeline, openWikiPage }) {
+  function UpdateLog({
+    activity,
+    onAdd,
+    t,
+    kind = "issue",
+    showRecords = true,
+    userFacing = false,
+    reviews,
+    timeline,
+    openWikiPage,
+    onReadProgress,
+    initialProgress,
+    showTimelineHeading = true,
+    initiallyEditing = false
+  }) {
     const [text, setText] = useState2("");
     const [detail, setDetail] = useState2("");
     const [busy, setBusy] = useState2(false);
-    const [editing, setEditing] = useState2(false);
+    const [editing, setEditing] = useState2(initiallyEditing);
     const add = async () => {
       const value = text.trim();
       if (!value || busy) return;
@@ -1062,7 +1089,7 @@ ${detail.trim()}` : value);
     if (timeline) {
       return h4(
         ProgressTimeline,
-        { records: taskProgressRecords(activity, t), t, openWikiPage, onAdd },
+        { records: taskProgressRecords(activity, t), t, openWikiPage, onAdd, initialProgress, showTimelineHeading },
         editing ? h4(
           "form",
           { className: "pw-progress-form", onSubmit: (event) => {
@@ -1111,6 +1138,24 @@ ${detail.trim()}` : value);
       if (!records.length && !onAdd) return null;
       const latest = kind === "issue" && records.find((entry) => !entry.event);
       const earlier = records.filter((entry) => entry !== latest);
+      const preview = latest?.text.split(/\r?\n/).find((line) => line.trim());
+      if (onReadProgress) return h4(
+        "section",
+        { className: "pw-task-progress-preview", "aria-label": t("progressRecords") },
+        latest && h4(
+          "div",
+          null,
+          h4("h3", { className: "pw-reading-label" }, t("latestProgress")),
+          h4("p", { className: "pw-text pw-preview" }, preview)
+        ),
+        h4(
+          "div",
+          { className: "pw-actions" },
+          records.length > 0 && h4("button", { type: "button", className: "pw-button pw-quiet", onClick: (event) => onReadProgress(event, latest?.key) }, t("taskReadProgress")),
+          onAdd && !editing && h4("button", { type: "button", className: "pw-button pw-quiet", onClick: () => setEditing(true) }, t("recordProgress"))
+        ),
+        onAdd && editing && form
+      );
       return h4(
         "section",
         { className: "pw-updates", "aria-label": t("progressRecords") },
@@ -1133,10 +1178,10 @@ ${detail.trim()}` : value);
       form
     );
   }
-  function ProgressTimeline({ records, t, openWikiPage, onAdd, children }) {
-    const [expanded, setExpanded] = useState2(() => /* @__PURE__ */ new Set());
+  function ProgressTimeline({ records, t, openWikiPage, onAdd, children, initialProgress, showTimelineHeading }) {
+    const [expanded, setExpanded] = useState2(() => new Set(initialProgress ? [initialProgress] : []));
     const [showOlder, setShowOlder] = useState2(false);
-    if (!records.length && !onAdd) return null;
+    if (!records.length && !onAdd && showTimelineHeading) return null;
     const older = records.slice(3);
     const olderVisible = showOlder || older.some((entry) => expanded.has(entry.id));
     const rows = records.map((entry) => {
@@ -1151,6 +1196,7 @@ ${detail.trim()}` : value);
           className: "pw-progress-item",
           key: entry.id,
           open: expanded.has(entry.id),
+          id: entry.id === initialProgress ? "pw-task-current-progress" : void 0,
           onToggle: (event) => {
             const isOpen = event.currentTarget.open;
             setExpanded((current) => {
@@ -1179,8 +1225,8 @@ ${detail.trim()}` : value);
     });
     return h4(
       "section",
-      { className: "pw-progress", "aria-label": t("progressRecords") },
-      h4(
+      { className: showTimelineHeading ? "pw-progress" : "pw-task-progress-records", "aria-label": t("progressRecords") },
+      showTimelineHeading && h4(
         "div",
         { className: "pw-progress-head" },
         h4("h3", null, t("progressRecords")),
@@ -1232,12 +1278,93 @@ ${detail.trim()}` : value);
       hasManualEvidence && h4("p", { className: "pw-text" }, t("manualEvidence"))
     );
   }
-  function TaskResult({ task, t, children, since, userFacing = false, showAcceptance = true, showSummary = true }) {
+  function hasTaskVerificationRecords(task, result) {
+    return !!(result.fullSummary || result.fullLimits || task.evidence?.trim() || task.objective?.trim());
+  }
+  function TaskVerificationRecords({ task, t, since }) {
+    const result = taskResult(task, since);
+    const roundStart = Math.max(Number(since) || 0, Number(task.deliveryStartedAt) || 0, Number(task.requirementDeliveryStartedAt) || 0);
+    return h4(
+      "section",
+      { className: "pw-task-evidence", "aria-label": t("verify") },
+      h4(ReadingText, { label: t(result.previousSummary ? "previousResultUnverified" : "fullResult"), value: result.fullSummary }),
+      h4(ReadingText, { label: t(result.unverifiedLimits ? "previousLimits" : "demoLimits"), value: result.fullLimits }),
+      h4(ReadingText, { label: t((Number(task.evidenceAt) || 0) < roundStart ? "taskPreviousEvidence" : "demoEvidence"), value: task.evidence }),
+      h4(ReadingText, { label: t("taskObjectiveRecords"), value: task.objective }),
+      !hasTaskVerificationRecords(task, result) && h4("p", { className: "pw-note" }, t("taskNoVerificationRecords"))
+    );
+  }
+  function TaskResult({ task, t, children, since, userFacing = false, showAcceptance = true, showSummary = true, onReadEvidence, evidenceOpen, reviewTools }) {
     const result = taskResult(task, since);
     const reviewing = task.status === "in_review";
     if (userFacing) {
       const summary = result.recordedSummary;
       const earlier = (result.previousSummary || result.earlierSummary).replace(/\r?\n\r?\n\[AI 补充\] /g, "\n\n");
+      const criteria = showAcceptance && h4(ReadingText, {
+        label: t("requirementCriteria"),
+        value: task.acceptance?.trim() || t("missingCriteria"),
+        className: "pw-reading-criteria"
+      });
+      if (reviewTools) {
+        const { passed, failed, incomplete, unconfirmedChanges, hasManualEvidence } = result.verification;
+        const checks = [
+          failed > 0 && t("checksFailed").replace("{n}", String(failed)),
+          incomplete > 0 && t("taskReviewIncomplete").replace("{n}", String(incomplete)),
+          unconfirmedChanges > 0 && t("taskReviewUnverified").replace("{n}", String(unconfirmedChanges)),
+          passed > 0 && t("checksPassed").replace("{n}", String(passed))
+        ].filter(Boolean);
+        return h4(
+          "section",
+          { className: "pw-reading pw-reading-result pw-task-acceptance", "aria-label": t("demoResult") },
+          h4(
+            "div",
+            { className: "pw-task-review-compare" },
+            criteria,
+            h4(ReadingText, { label: t("demoResult"), value: summary || t(result.previousSummary ? "taskReviewOldResult" : "demoNoResult") })
+          ),
+          h4(ReadingText, { label: t("demoLimits"), value: result.limits, className: "pw-reading-reason pw-reading-warning" }),
+          h4(
+            "div",
+            { className: "pw-task-review-checks" },
+            h4(
+              "div",
+              null,
+              h4("h3", { className: "pw-reading-label" }, t("taskReviewChecks")),
+              h4("p", { className: "pw-note" }, checks.join(" \xB7 ") || t(hasManualEvidence ? "manualEvidence" : "noChecks"))
+            ),
+            hasTaskVerificationRecords(task, result) && h4("button", {
+              type: "button",
+              className: "pw-button",
+              onClick: onReadEvidence,
+              "aria-expanded": evidenceOpen
+            }, t("taskOpenRecords"), h4("span", { className: "pw-reading-chevron", "aria-hidden": true }, "\u203A"))
+          ),
+          reviewTools
+        );
+      }
+      if (onReadEvidence) return h4(
+        "section",
+        { className: "pw-reading pw-reading-result pw-task-acceptance", "aria-label": t("demoResult") },
+        h4(ReadingText, { label: t("demoResult"), value: summary || t("demoNoResult"), className: "pw-reading-lead" }),
+        h4(
+          "div",
+          { className: "pw-task-verification-pair" },
+          criteria,
+          h4(
+            "div",
+            { className: "pw-task-verification" },
+            h4(Verification, { verification: result.verification, t }),
+            hasTaskVerificationRecords(task, result) && h4("button", { type: "button", className: "pw-button pw-quiet", onClick: onReadEvidence }, t("verifyRecords"))
+          )
+        ),
+        (summary && !result.summary || !summary && result.previousSummary) && h4("p", { className: "pw-note" }, t(summary ? "resultUnverified" : "previousResultUnverified")),
+        h4(ReadingText, {
+          label: t("demoLimits"),
+          value: result.limits || t(result.unverifiedLimits ? "limitsUnverified" : "noLimits"),
+          className: result.limits || result.unverifiedLimits ? "pw-reading-reason pw-reading-warning" : ""
+        }),
+        children
+      );
       return h4(
         "section",
         {
@@ -1245,11 +1372,7 @@ ${detail.trim()}` : value);
           "aria-label": t(showSummary ? "demoResult" : "sidebarReviewDetails")
         },
         showSummary && h4(ReadingText, { label: t("demoResult"), value: summary || t("demoNoResult"), className: "pw-reading-lead" }),
-        showAcceptance && h4(ReadingText, {
-          label: t("requirementCriteria"),
-          value: task.acceptance?.trim() || t("missingCriteria"),
-          className: "pw-reading-criteria"
-        }),
+        criteria,
         h4(Verification, { verification: result.verification, t }),
         result.verification.hasManualEvidence && h4(ReadingText, { label: t("demoEvidence"), value: task.evidence }),
         task.hasObjective && !result.verification.hasManualEvidence && result.summary && h4("p", { className: "pw-note pw-evidence-note" }, t("useRecordedEvidence")),
@@ -1305,14 +1428,29 @@ ${detail.trim()}` : value);
       return wiki && openWikiPage ? h4("button", { key: ref, className: "pw-button", onClick: () => openWikiPage(ref.replace(/^(?:openwiki\/|wiki:)/, "")) }, ref) : h4("span", { key: ref, className: "pw-refchip" }, ref);
     }));
   }
-  function TaskReading({ task, requirement, t, openWikiPage, onAdd, sidebar = false, resultActions, children, since }) {
-    const overview = taskOverview(task);
-    const description = task.description?.trim();
-    const supplementary = description !== overview ? description : "";
+  function TaskReading({
+    task,
+    requirement,
+    t,
+    openWikiPage,
+    onAdd,
+    sidebar = false,
+    resultActions,
+    children,
+    since,
+    onReadProgress,
+    onReadEvidence,
+    evidenceOpen,
+    reviewTools,
+    hidePriorResult
+  }) {
     const resultFirst = ["in_review", "done"].includes(task.status);
     const result = taskResult(task, since);
     const hasResult = result.fullSummary || result.fullLimits || result.verification.failed || result.verification.incomplete || result.verification.unconfirmedChanges;
     if (sidebar) {
+      const overview = taskOverview(task);
+      const description = task.description?.trim();
+      const supplementary = description !== overview ? description : "";
       const scope = requirement?.scope?.trim();
       const exclusions = requirement?.q_out?.trim();
       return h4(
@@ -1354,17 +1492,10 @@ ${detail.trim()}` : value);
         )
       );
     }
-    const progress = h4(UpdateLog, {
-      activity: task.activity,
-      t,
-      onAdd: ["done", "cancelled"].includes(task.status) ? null : onAdd,
-      userFacing: true,
-      timeline: sidebar,
-      openWikiPage
-    });
+    const progress = h4(UpdateLog, { activity: task.activity, t, onAdd: ["done", "cancelled"].includes(task.status) ? null : onAdd, userFacing: true, onReadProgress });
     return h4(
       "div",
-      { className: "pw-reading" },
+      { className: "pw-reading pw-task-reading" },
       task.status === "blocked" && h4(ReadingText, {
         label: t("blockedReason"),
         value: task.blocked_reason?.trim() || t("taskNoReason"),
@@ -1375,22 +1506,11 @@ ${detail.trim()}` : value);
         value: cancellationReason(task) || t("taskNoReason"),
         className: "pw-reading-reason"
       }),
-      resultFirst && h4(TaskResult, { task, t, since, userFacing: true }, resultActions),
-      h4(ReadingText, { label: t("taskWhat"), value: overview || t("taskMissing"), className: "pw-reading-lead" }),
-      !sidebar && h4(ReadingText, { label: t("taskSteps"), value: task.triggerPath, className: "pw-reading-divider" }),
-      !resultFirst && h4(ReadingText, { label: t("requirementCriteria"), value: task.acceptance, className: "pw-reading-criteria" }),
-      !resultFirst && task.status !== "cancelled" && !!hasResult && h4(TaskResult, { task, t, since, userFacing: true, showAcceptance: false }),
+      resultFirst && h4(TaskResult, { task, t, since, userFacing: true, onReadEvidence, evidenceOpen, reviewTools }, resultActions),
+      !resultFirst && h4(ReadingText, { label: t("requirementCriteria"), value: task.acceptance?.trim() || t("missingCriteria"), className: "pw-reading-criteria" }),
+      !resultFirst && task.status !== "cancelled" && !hidePriorResult && !!hasResult && h4(TaskResult, { task, t, since, userFacing: true, showAcceptance: false, onReadEvidence }),
       children,
-      sidebar && progress,
-      (supplementary || sidebar && task.triggerPath?.trim() || task.rootCause?.trim() || task.refs?.length > 0) && h4(
-        Disclosure,
-        { label: t("taskAdditional") },
-        sidebar && h4(ReadingText, { label: t("taskSteps"), value: task.triggerPath }),
-        h4(ReadingText, { label: t("taskSupplement"), value: supplementary }),
-        h4(ReadingText, { label: t("taskCause"), value: task.rootCause }),
-        task.refs?.length > 0 && h4(TaskReferences, { refs: task.refs, openWikiPage })
-      ),
-      !sidebar && progress
+      progress
     );
   }
   function DraftSuggestions({ proposals, act, root, t, busy, dismissMethod = "sync/dismiss", showHeading = true, rememberEdits, adoptDisabled = false }) {
@@ -1504,9 +1624,10 @@ ${detail.trim()}` : value);
     const records = reviewRecords(req.reviews).filter((record) => record.kind === "review");
     return h5(RequirementDecisionRecords, { records, group: "review", t });
   }
-  function RequirementDevelopment({ req, t, onAdd }) {
+  function RequirementDevelopment({ req, t, onAdd, writeOnly = false }) {
     const notes = progressRecords(req.activity, t, "requirement").filter((entry) => !entry.event);
     const canAdd = !req.pendingReopen && !["pending", "completed"].includes(req.status) && onAdd;
+    if (writeOnly) return canAdd ? h5(UpdateLog, { onAdd, t, kind: "requirement", userFacing: true, initiallyEditing: true }) : null;
     const occurrences = /* @__PURE__ */ new Map();
     const disclosures = notes.reverse().map((note) => {
       const raw = req.activity[note.key];
@@ -1529,31 +1650,32 @@ ${detail.trim()}` : value);
       canAdd && h5(UpdateLog, { onAdd, t, kind: "requirement", userFacing: true })
     );
   }
-  function DeliveryResult({ req, t, compact = false, userFacing = false, showAcceptance = true }) {
+  function DeliveryResult({ req, t, compact = false, userFacing = false, showAcceptance = true, foldTasks = false }) {
     const result = requirementResult(req);
     const tasks = req.issues ?? [];
     const relevant = req.status === "pending" || req.status === "completed";
     const hasCancelled = tasks.some((issue) => issue.status === "cancelled") || !!req.hasCancelled;
     const currentImpact = hasCancelled ? result.cancelImpact : "";
     if (userFacing && relevant) {
+      const taskResults = foldTasks ? [] : tasks.map((task) => h5(
+        "div",
+        { key: task.id, className: "pw-result" },
+        h5("strong", null, task.title),
+        " \xB7 ",
+        t("st_" + task.status),
+        task.status === "cancelled" ? h5(ReadingText, { label: t("taskCancelReason"), value: cancellationReason(task) || t("taskNoReason") }) : h5(TaskResult, { task, t, since: req.deliveryStartedAt, userFacing: true, showAcceptance: false })
+      ));
       return h5(
         "section",
         { className: "pw-reading pw-reading-delivery", "aria-label": t("demoDeliverySummary") },
         h5(ReadingText, { label: t("demoDeliverySummary"), value: result.summary || t("missingDeliverySummary") }),
         showAcceptance && h5(ReadingText, { label: t("requirementCriteria"), value: req.acceptance?.trim() || req.q_success?.trim() || t("missingCriteria") }),
         hasCancelled && h5(ReadingText, { label: t("demoCancelImpact"), value: currentImpact || t("missingCancelImpact") }),
-        tasks.length > 0 && h5(
+        !foldTasks && taskResults.length > 0 && h5(
           "section",
           { className: "pw-reading-block" },
           h5("h3", { className: "pw-reading-label" }, t("deliveredTaskResults")),
-          tasks.map((task) => h5(
-            "div",
-            { key: task.id, className: "pw-result" },
-            h5("strong", null, task.title),
-            " \xB7 ",
-            t("st_" + task.status),
-            task.status === "cancelled" ? h5(ReadingText, { label: t("taskCancelReason"), value: cancellationReason(task) || t("taskNoReason") }) : h5(TaskResult, { task, t, since: req.deliveryStartedAt, userFacing: true, showAcceptance: false })
-          ))
+          taskResults
         ),
         (result.previousSummary || result.previousCancelImpact) && h5(
           Disclosure,
@@ -1732,7 +1854,10 @@ ${detail.trim()}` : value);
         active = false;
       };
     }, [modal, root]);
-    const close = () => setModal((current) => current === modal ? null : current);
+    const close = (saved = false) => {
+      setModal((current) => current === modal ? null : current);
+      modal.restoreFocus?.(saved === true);
+    };
     const liveReq = modal.req && requirements ? requirements.find((r) => r.id === modal.req.id) ?? modal.req : modal.req;
     const cancel = () => {
       if (!busy) close();
@@ -1742,7 +1867,7 @@ ${detail.trim()}` : value);
       setBusy(true);
       setError(null);
       const res = await action();
-      if (res.ok) close();
+      if (res.ok) close(true);
       else {
         setError(res);
         setBusy(false);
@@ -1831,6 +1956,35 @@ ${detail.trim()}` : value);
         errorView
       );
     }
+    if (modal.kind === "rejectTaskAcceptance") {
+      const { issue, reqId } = modal;
+      const reject = () => mutate("issue/continue", { root, reqId, id: issue.id, text: value.trim(), fileHash: issue.hash }, { inlineError: true });
+      return h6(
+        Modal,
+        { title: t("taskReject"), onClose: cancel, actions: [
+          h6("button", { type: "button", className: "pw-button", disabled: busy, onClick: cancel }, t("cancel")),
+          h6("button", { type: "button", className: "pw-button primary", disabled: busy || !value.trim(), onClick: () => run(reject) }, t("taskConfirmReject"))
+        ] },
+        h6("p", null, issue.title),
+        h6(
+          "label",
+          { className: "pw-field" },
+          h6("span", { className: "pw-label" }, t("askFix")),
+          h6("textarea", {
+            className: "pw-textarea",
+            rows: 3,
+            autoFocus: true,
+            required: true,
+            readOnly: busy,
+            placeholder: t("taskRejectHint"),
+            value,
+            onChange: (e) => setValue(e.target.value)
+          })
+        ),
+        h6("p", { className: "pw-note" }, t("taskRejectEffect")),
+        errorView
+      );
+    }
     if (modal.kind === "submitDelivery") {
       const submit = async (method, input) => {
         setBusy(true);
@@ -1873,13 +2027,13 @@ ${detail.trim()}` : value);
       };
       return h6(
         Modal,
-        { title: t(issue ? "confirmIssueTitle" : "confirmCompleteTitle"), onClose: cancel, wide: true, actions: [
-          h6("button", { className: "pw-button", disabled: busy, onClick: cancel }, t("cancel")),
+        { title: t(issue ? "taskConfirmAccept" : "confirmCompleteTitle"), onClose: cancel, wide: true, actions: [
+          h6("button", { className: "pw-button", autoFocus: !!issue, disabled: busy, onClick: cancel }, t("cancel")),
           h6("button", {
             className: "pw-button primary",
-            disabled: busy || issue && (issue.status !== "in_review" || !taskResult(issue, reviewReq?.deliveryStartedAt).summary),
+            disabled: busy || issue && (issue.status !== "in_review" || !taskResult(issue, reviewReq?.deliveryStartedAt).summary || !String(effectiveEvidence(issue)).trim()),
             onClick: () => run(issue ? confirm : confirmRequirement)
-          }, t(issue ? "demoConfirm" : "acceptRequirement"))
+          }, t(issue ? "taskAccept" : "acceptRequirement"))
         ] },
         h6("p", null, issue?.title ?? reviewReq.title),
         issue ? h6(TaskResult, { task: issue, since: reviewReq?.deliveryStartedAt, t, userFacing: true }) : h6(DeliveryResult, { req: reviewReq, t, userFacing: true }),
@@ -2304,132 +2458,275 @@ ${detail.trim()}` : value);
   // client-src/shared/list.js
   var import_react8 = __toESM(__require("react"), 1);
   var h8 = import_react8.default.createElement;
-  function ListPage({ wb, page, items, renderRow, emptyText, emptyAction, toolbar }) {
+  var { useLayoutEffect, useRef: useRef2 } = import_react8.default;
+  var listLocale = {
+    en: {
+      listRequirement: "Requirement",
+      listTask: "Task",
+      listActions: "Actions",
+      listPriority: "Order",
+      listEffectiveProgress: "Done / active tasks",
+      listAttention: "Needs attention",
+      listReason: "Reason",
+      listDelivery: "Delivery summary",
+      listOpinion: "Decision notes",
+      listDocument: "Document",
+      listRevision: "Revision",
+      listReorder: "Change order",
+      listFinishReorder: "Done reordering",
+      listNoAlerts: "No alerts"
+    },
+    zh: {
+      listRequirement: "\u9700\u6C42",
+      listTask: "\u4EFB\u52A1",
+      listActions: "\u64CD\u4F5C",
+      listPriority: "\u987A\u4F4D",
+      listEffectiveProgress: "\u5DF2\u5B8C\u6210 / \u6709\u6548\u4EFB\u52A1",
+      listAttention: "\u9700\u8981\u5173\u6CE8",
+      listReason: "\u539F\u56E0",
+      listDelivery: "\u4EA4\u4ED8\u6458\u8981",
+      listOpinion: "\u51B3\u5B9A\u610F\u89C1",
+      listDocument: "\u6587\u6863\u540D\u79F0",
+      listRevision: "\u4FEE\u8BA2\u53F7",
+      listReorder: "\u8C03\u6574\u987A\u4F4D",
+      listFinishReorder: "\u7ED3\u675F\u6392\u5E8F",
+      listNoAlerts: "\u6682\u65E0\u5F02\u5E38"
+    }
+  };
+  function useListScroll(wb, page, waiting = false) {
+    const ref = useRef2(null);
+    const memory = wb.uiMemory && (wb.uiMemory.listScroll ??= {});
+    const key = wb.projectKey && JSON.stringify([wb.projectKey, page]);
+    const filter = JSON.stringify(wb.nav.filters[page] ?? {});
+    useLayoutEffect(() => {
+      const saved = key && memory?.[key];
+      if (ref.current && !waiting) ref.current.scrollTop = saved?.filter === filter ? saved.top : 0;
+    }, [key, filter, waiting, memory]);
+    return {
+      ref,
+      onScroll: key && memory && !waiting ? (event) => {
+        memory[key] = { filter, top: event.currentTarget.scrollTop };
+      } : void 0
+    };
+  }
+  function listTable(columns, rows, label, hasActions = true) {
+    return h8(
+      "table",
+      { className: "pw-list-table" + (hasActions ? " pw-list-table-actions" : ""), role: "table", "aria-label": label },
+      h8(
+        "thead",
+        { role: "rowgroup" },
+        h8("tr", { role: "row" }, columns.map((column, index) => h8("th", { key: index, scope: "col", role: "columnheader" }, column)))
+      ),
+      h8("tbody", { role: "rowgroup" }, rows.map(({ key, cells }) => h8(
+        "tr",
+        { key, role: "row" },
+        cells.map((cell, index) => h8(
+          "td",
+          { key: index, role: "cell" },
+          index > 0 && h8("span", { className: "pw-list-inline-label", "aria-hidden": true }, columns[index]),
+          cell
+        ))
+      )))
+    );
+  }
+  function listTitle(title, id, onClick) {
+    return onClick ? h8("button", { type: "button", id: "pw-list-item-" + id, className: "pw-list-title", onClick }, title) : h8("strong", { className: "pw-list-name" }, title);
+  }
+  function boardLocator(wb, req) {
+    return h8("button", { type: "button", className: "pw-button pw-quiet", onClick: () => wb.locateBoard(req) }, wb.t("locateBoard"));
+  }
+  function ListPage({ wb, page, title, items, columns, renderRow, emptyText, emptyAction, toolbar, waiting, filtersActive, onClear, hasActions }) {
     const { t, setFilter } = wb;
     const query = (wb.nav.filters[page] ?? {}).query ?? "";
+    const filtered = !!query.trim() || filtersActive;
+    const scroll = useListScroll(wb, page, waiting);
     return h8(
-      "div",
-      { className: "pw-list" },
+      "section",
+      { ...scroll, className: "pw-list pw-list-catalog", "aria-busy": waiting || void 0 },
+      h8("header", { className: "pw-list-header" }, h8("h2", null, title)),
       h8(
         "div",
         { className: "pw-list-toolbar" },
+        h8("input", { type: "search", className: "pw-input pw-list-search", placeholder: t("search"), value: query, "aria-label": t("search"), onChange: (e) => setFilter(page, { query: e.target.value }) }),
         toolbar,
-        h8("input", { className: "pw-input", style: { maxWidth: 220 }, placeholder: t("search"), value: query, "aria-label": t("search"), onChange: (e) => setFilter(page, { query: e.target.value }) }),
-        query && items.length === 0 && h8("button", { className: "pw-button pw-quiet", onClick: () => setFilter(page, { query: "" }) }, t("clearFilter"))
+        filtered && items.length === 0 && !waiting && h8("button", {
+          type: "button",
+          className: "pw-button pw-quiet",
+          onClick: onClear || (() => setFilter(page, { query: "" }))
+        }, t("clearFilter"))
       ),
-      items.length === 0 ? h8(
-        "div",
-        { className: "pw-empty" },
-        query ? t("noResults") : emptyText,
-        !query && emptyAction
-      ) : h8("div", { className: "pw-list-rows" }, items.map(renderRow))
+      items.length > 0 ? listTable(columns, items.map(renderRow), title, hasActions) : waiting ? h8("p", { className: "pw-note", role: "status" }, t("loading")) : emptyText && h8("div", { className: "pw-empty" }, filtered ? t("noResults") : emptyText, !filtered && emptyAction)
     );
   }
   var dateText = (value) => String(value ?? "").replace("T", " ").slice(0, 16);
+  var firstLine = (value) => String(value ?? "").split(/\r?\n/).find((line) => line.trim())?.trim() ?? "";
+  var listCss = `
+.pw-list-catalog{container:list-catalog / inline-size;min-width:0;gap:14px}
+.pw-list-header{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.pw-list-header h2{margin:0;font-size:20px;font-weight:650;line-height:1.4}
+.pw-list-catalog .pw-list-search{width:220px;max-width:100%;box-sizing:border-box}
+.pw-list-table{width:100%;table-layout:auto;border-collapse:separate;border-spacing:0;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l3);border-radius:8px;text-align:start}
+.pw-list-table th,.pw-list-table td{padding:8px 12px;vertical-align:middle;text-align:start;overflow-wrap:anywhere;border-bottom:1px solid var(--dsw-alias-border-l3)}
+.pw-list-table th{color:var(--dsw-alias-label-secondary);font-size:12px;font-weight:500}
+.pw-list-table tbody tr:last-child td{border-bottom:0}
+.pw-list-table th:first-child{width:30%}
+.pw-list-table-actions th:last-child{width:1%;min-width:6em}
+.pw-list-table td:first-child{padding-block:1px}
+.pw-list-table td .pw-istatus,.pw-list-table td .pw-flag{display:inline-flex;width:max-content;max-width:100%;white-space:normal}
+.pw-list-table td .pw-istatus{pointer-events:none}
+.pw-list-title{display:block;width:100%;min-height:44px;padding:6px 0;border:0;background:none;color:var(--dsw-alias-label-primary);font:inherit;font-weight:600;text-align:start;cursor:pointer;overflow-wrap:anywhere}
+.pw-list-title:hover{text-decoration:underline;color:var(--dsw-alias-brand-primary)}
+.pw-list-title:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px;border-radius:4px}
+.pw-list-name{display:block;padding-block:8px;overflow-wrap:anywhere}
+.pw-list-value{font-variant-numeric:tabular-nums}
+.pw-list-muted,.pw-list-preview,.pw-list-parent{color:var(--dsw-alias-label-secondary)}
+.pw-list-parent{display:block;margin-block:2px 7px;font-size:12px}
+.pw-list-preview{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.pw-list-review-note{-webkit-line-clamp:1}
+.pw-list-alerts,.pw-list-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.pw-list-actions .pw-button{min-height:32px}
+.pw-list-actions .pw-orderbtn{min-height:32px;min-width:32px}
+.pw-list-actions .pw-orderbtn:focus-visible,.pw-list-menu>summary:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
+.pw-list-inline-label{display:none}
+.pw-list-risk{min-width:0}
+.pw-list-risk h3{margin:8px 0;font-size:15px}
+.pw-list-menu summary{min-height:32px;box-sizing:border-box;white-space:nowrap}
+.pw-list-menu .pw-list-actions{padding-top:6px}
+@container list-catalog (max-width:710px){
+  .pw-list-table,.pw-list-table tbody{display:block}
+  .pw-list-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+  .pw-list-table tbody tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:4px 14px;padding:8px 12px}
+  .pw-list-table tbody tr+tr{border-top:1px solid var(--dsw-alias-border-l3)}
+  .pw-list-table td{display:block;min-width:0;padding:2px 0;border:0}
+  .pw-list-table td:first-child,.pw-list-table-actions td:last-child{grid-column:1 / -1}
+  .pw-list-table td:last-child:empty{display:none}
+  .pw-list-table-actions td:last-child>.pw-list-inline-label{display:none}
+  .pw-list-inline-label{display:block;color:var(--dsw-alias-label-secondary);font-size:12px;margin-bottom:2px}
+}
+@container list-catalog (max-width:400px){
+  .pw-list-table tbody tr{grid-template-columns:minmax(0,1fr)}
+}
+`;
 
   // client-src/pages/requirements.js
   var h9 = import_react9.default.createElement;
-  var Row = ({ req, page, wb, meta, actions }) => {
-    const { t, openDetail: openDetail2, locateBoard } = wb;
-    return h9(
-      "div",
-      { className: "pw-row", key: req.id },
-      h9(
-        "button",
-        { className: "pw-row-main", onClick: () => openDetail2({ reqId: req.id, issueId: null }, page), title: req.title },
-        h9("strong", { className: "pw-preview" }, req.title),
-        meta
-      ),
-      h9(
-        "div",
-        { className: "pw-row-actions" },
-        actions,
-        h9("button", { className: "pw-button pw-quiet", onClick: () => locateBoard(req) }, t("locateBoard"))
-      )
-    );
-  };
+  var openRequirement = (wb, req, page) => listTitle(req.title, req.id, () => wb.openDetail({ reqId: req.id, issueId: null }, page));
+  var date = (value) => h9("span", { className: "pw-list-muted pw-list-value" }, dateText(value) || "\u2014");
   function PoolPage({ wb }) {
     const { t, requirements, setModal } = wb;
-    const query = (wb.nav.filters.pool ?? {}).query ?? "";
-    const items = poolItems(requirements, query);
+    const items = poolItems(requirements, wb.nav.filters.pool?.query);
     return h9(ListPage, {
       wb,
       page: "pool",
+      title: t("navPool"),
       items,
-      toolbar: h9("button", { className: "pw-button", onClick: () => setModal({ kind: "createRequirement" }) }, t("newRequirement")),
+      columns: [t("listRequirement"), t("requirementOverview"), t("updated"), t("listActions")],
+      toolbar: h9("button", { type: "button", className: "pw-button primary", onClick: () => setModal({ kind: "createRequirement" }) }, t("newRequirement")),
       emptyText: t("homeFirstRequirement"),
-      emptyAction: h9("button", { className: "pw-button primary", style: { marginLeft: 8 }, onClick: () => setModal({ kind: "createRequirement" }) }, t("newRequirement")),
-      renderRow: (req) => h9(Row, {
-        req,
-        page: "pool",
-        wb,
+      renderRow: (req) => ({
         key: req.id,
-        meta: h9(
-          import_react9.default.Fragment,
-          null,
-          h9("span", { className: "pw-preview pw-note" }, requirementOverview(req) || t("requirementMissing").replace("{fields}", t("requirementOverview"))),
+        cells: [
+          h9(
+            import_react9.default.Fragment,
+            null,
+            openRequirement(wb, req, "pool"),
+            req.derived?.needsClarification && h9("span", { className: "pw-flag clarify pw-list-parent" }, t("flag_clarify"))
+          ),
           h9(
             "span",
-            { className: "pw-count" },
-            t("updated"),
-            " ",
-            dateText(req.updated),
-            req.derived?.needsClarification && h9("span", { className: "pw-flag clarify", style: { marginLeft: 8 } }, t("flag_clarify"))
-          )
-        )
+            { className: "pw-list-preview" },
+            firstLine(requirementOverview(req)) || t("requirementMissing").replace("{fields}", t("requirementOverview"))
+          ),
+          date(req.updated),
+          boardLocator(wb, req)
+        ]
       })
     });
   }
   function ReviewPage({ wb }) {
     const { t, requirements, navigate } = wb;
-    const query = (wb.nav.filters.review ?? {}).query ?? "";
-    const items = reviewItems(requirements, query);
+    const items = reviewItems(requirements, wb.nav.filters.review?.query);
     return h9(ListPage, {
       wb,
       page: "review",
+      title: t("navReview"),
       items,
+      columns: [t("listRequirement"), t("submittedAt"), t("listOpinion"), t("listActions")],
       emptyText: t("reviewEmpty"),
-      emptyAction: h9("button", { className: "pw-button", style: { marginLeft: 8 }, onClick: () => navigate("board") }, t("locateBoard")),
+      emptyAction: h9("button", { type: "button", className: "pw-button", onClick: () => navigate("board") }, t("locateBoard")),
       renderRow: (req) => {
-        const latest = reviewRecords(req.reviews).find((r) => r.kind === "review");
-        return h9(Row, {
-          req,
-          page: "review",
-          wb,
+        const latest = reviewRecords(req.reviews).find((record) => record.kind === "review");
+        return {
           key: req.id,
-          meta: h9(
-            import_react9.default.Fragment,
-            null,
-            h9("span", { className: "pw-count" }, t("submittedAt"), " ", dateText(req.submittedAt)),
-            h9("span", { className: "pw-preview pw-note" }, latest?.opinion?.trim() || t("noOpinion"))
-          )
-        });
+          cells: [
+            openRequirement(wb, req, "review"),
+            date(req.submittedAt),
+            h9("span", { className: "pw-list-preview pw-list-review-note" }, firstLine(latest?.opinion) || t("noOpinion")),
+            boardLocator(wb, req)
+          ]
+        };
       }
     });
   }
   function ReadyPage({ wb }) {
-    const { t, requirements, navigate, reorder } = wb;
-    const query = (wb.nav.filters.ready ?? {}).query ?? "";
-    const items = readyItems(requirements, query);
+    const { t, requirements, navigate, reorder, projectKey, saving } = wb;
+    const [sortProject, setSortProject] = import_react9.default.useState(null);
+    const sorting = sortProject === projectKey;
+    const order = readyItems(requirements);
+    const query = wb.nav.filters.ready?.query;
+    const items = query ? readyItems(requirements, query) : order;
+    const positions = new Map(order.map((req, index) => [req.id, index]));
     return h9(ListPage, {
       wb,
       page: "ready",
+      title: t("navReady"),
       items,
+      columns: [t("listRequirement"), t("listPriority"), t("reviewedAt"), t("listActions")],
+      toolbar: order.length > 1 && h9("button", {
+        type: "button",
+        className: "pw-button",
+        "aria-pressed": sorting,
+        onClick: () => setSortProject(sorting ? null : projectKey)
+      }, t(sorting ? "listFinishReorder" : "listReorder")),
       emptyText: t("readyEmpty"),
-      emptyAction: h9("button", { className: "pw-button", style: { marginLeft: 8 }, onClick: () => navigate("board") }, t("locateBoard")),
-      renderRow: (req, index) => h9(Row, {
-        req,
-        page: "ready",
-        wb,
-        key: req.id,
-        meta: h9("span", { className: "pw-count" }, t("reviewedAt"), " ", dateText(req.reviewedAt)),
-        actions: h9(
-          "span",
-          { className: "pw-order" },
-          h9("button", { className: "pw-orderbtn", disabled: index === 0, "aria-label": t("moveUp"), title: t("moveUp"), onClick: () => reorder("requirement", null, items, req.id, "up") }, "\u2191"),
-          h9("button", { className: "pw-orderbtn", disabled: index === items.length - 1, "aria-label": t("moveDown"), title: t("moveDown"), onClick: () => reorder("requirement", null, items, req.id, "down") }, "\u2193")
-        )
-      })
+      emptyAction: h9("button", { type: "button", className: "pw-button", onClick: () => navigate("board") }, t("locateBoard")),
+      renderRow: (req) => {
+        const index = positions.get(req.id);
+        return {
+          key: req.id,
+          cells: [
+            openRequirement(wb, req, "ready"),
+            h9("span", { className: "pw-list-value" }, index + 1),
+            date(req.reviewedAt),
+            h9(
+              "div",
+              { className: "pw-list-actions" },
+              sorting && h9(
+                import_react9.default.Fragment,
+                null,
+                h9("button", {
+                  type: "button",
+                  className: "pw-orderbtn",
+                  disabled: saving || index === 0,
+                  "aria-label": t("moveUp") + " \xB7 " + req.title,
+                  title: t("moveUp"),
+                  onClick: () => reorder("requirement", null, order, req.id, "up")
+                }, "\u2191"),
+                h9("button", {
+                  type: "button",
+                  className: "pw-orderbtn",
+                  disabled: saving || index === order.length - 1,
+                  "aria-label": t("moveDown") + " \xB7 " + req.title,
+                  title: t("moveDown"),
+                  onClick: () => reorder("requirement", null, order, req.id, "down")
+                }, "\u2193")
+              ),
+              boardLocator(wb, req)
+            )
+          ]
+        };
+      }
     });
   }
 
@@ -2438,63 +2735,45 @@ ${detail.trim()}` : value);
   var h10 = import_react10.default.createElement;
   function DevPage({ wb }) {
     const { t, requirements, navigate, openDetail: openDetail2 } = wb;
-    const query = (wb.nav.filters.dev ?? {}).query ?? "";
-    const items = devItems(requirements, query);
+    const items = devItems(requirements, wb.nav.filters.dev?.query);
     return h10(ListPage, {
       wb,
       page: "dev",
+      title: t("navDev"),
       items,
+      columns: [t("listRequirement"), t("listEffectiveProgress"), t("listAttention"), t("listActions")],
       emptyText: t("devEmpty"),
-      emptyAction: h10("button", { className: "pw-button", style: { marginLeft: 8 }, onClick: () => navigate("board") }, t("locateBoard")),
+      emptyAction: h10("button", { type: "button", className: "pw-button", onClick: () => navigate("board") }, t("locateBoard")),
       renderRow: (req) => {
-        const d = req.derived ?? {};
-        const total = (req.issues ?? []).length;
-        const pct = d.progress == null ? null : Math.round(d.progress * 100);
-        const latest = latestOf(req, t);
-        return h10(
-          "div",
-          { className: "pw-row", key: req.id },
-          h10(
-            "button",
-            { className: "pw-row-main", onClick: () => openDetail2({ reqId: req.id, issueId: null }, "dev"), title: req.title },
-            h10("strong", { className: "pw-preview" }, req.title),
-            h10(
+        const { progress, doneCount = 0, cancelledCount = 0, blockedCount = 0, inReviewCount = 0 } = req.derived ?? {};
+        const activeCount = (req.issues ?? []).length - cancelledCount;
+        return {
+          key: req.id,
+          cells: [
+            listTitle(req.title, req.id, () => openDetail2({ reqId: req.id, issueId: null }, "dev")),
+            activeCount > 0 ? h10(
               "span",
-              { className: "pw-count" },
-              t("taskCount").replace("{total}", String(total)).replace("{done}", String(d.doneCount ?? 0)),
-              d.inReviewCount > 0 && " \xB7 " + t("devInReview").replace("{n}", String(d.inReviewCount)),
-              d.blockedCount > 0 && " \xB7 " + t("devBlocked").replace("{n}", String(d.blockedCount)),
-              d.cancelledCount > 0 && " \xB7 " + t("cancelledCount").replace("{n}", String(d.cancelledCount))
+              { className: "pw-list-value", title: progress == null ? void 0 : Math.round(progress * 100) + "%" },
+              h10("strong", null, doneCount),
+              " / ",
+              activeCount
+            ) : h10("span", { className: "pw-list-muted" }, t("noProgress")),
+            h10(
+              "div",
+              { className: "pw-list-alerts" },
+              blockedCount > 0 && h10("span", { className: "pw-istatus st-blocked" }, t("devBlocked").replace("{n}", String(blockedCount))),
+              inReviewCount > 0 && h10("span", { className: "pw-istatus st-in_review" }, t("devInReview").replace("{n}", String(inReviewCount))),
+              (cancelledCount > 0 || !blockedCount && !inReviewCount) && h10(
+                "span",
+                { className: "pw-list-muted" },
+                cancelledCount > 0 ? t("cancelledCount").replace("{n}", String(cancelledCount)) : t("listNoAlerts")
+              )
             ),
-            h10(
-              "span",
-              { className: "pw-dev-progress" },
-              pct === null ? h10("span", { className: "pw-count" }, t("noProgress")) : h10("span", { className: "pw-bar", title: `${pct}%` }, h10("span", { style: { width: pct + "%" } })),
-              latest && h10("span", { className: "pw-preview pw-note" }, latest)
-            )
-          ),
-          h10(
-            "div",
-            { className: "pw-row-actions" },
-            h10("button", { className: "pw-button pw-quiet", onClick: () => wb.locateBoard(req) }, t("locateBoard"))
-          )
-        );
+            boardLocator(wb, req)
+          ]
+        };
       }
     });
-  }
-  function latestOf(req, t) {
-    let best = null;
-    for (const line of req.activity ?? []) {
-      const at = Date.parse(String(line).match(/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}\S*/)?.[0] ?? "");
-      if (Number.isFinite(at) && (!best || at > best.at)) best = { at, line, kind: "requirement" };
-    }
-    for (const issue of req.issues ?? []) {
-      for (const line of issue.activity ?? []) {
-        const at = Date.parse(String(line).match(/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}\S*/)?.[0] ?? "");
-        if (Number.isFinite(at) && (!best || at > best.at)) best = { at, line, kind: "issue" };
-      }
-    }
-    return best ? activityEntry(best.line, t, best.kind).text : "";
   }
   function BlockedPage({ wb }) {
     const { t, requirements, runFacts, runError, refreshBlocked, awaitingAuthSessions: awaitingAuthSessions2, authDetails, blocked, openDetail: openDetail2, openTaskSession, locateBoard, locateTask, setFilter, navigate } = wb;
@@ -2517,31 +2796,38 @@ ${detail.trim()}` : value);
       return !query || title.toLowerCase().includes(query.toLowerCase());
     });
     const total = blockedList.length + authList.length + failures.length + deliveryFailed.length + risks.length;
-    const item = (key, title, reqTitle2, reason, at, actions) => h10(
-      "div",
-      { className: "pw-row", key },
-      h10(
-        "div",
-        { className: "pw-row-main pw-row-static" },
-        h10("strong", { className: "pw-preview" }, title),
-        h10("span", { className: "pw-note" }, reqTitle2, " \xB7 ", reason),
-        at ? h10("span", { className: "pw-count" }, dateText(new Date(at).toISOString())) : null
-      ),
-      h10("div", { className: "pw-row-actions" }, actions)
-    );
-    const section = (label, children) => h10(
+    const item = (key, title, reqTitle2, reason, at, actions) => ({
+      key,
+      cells: [
+        h10(
+          import_react10.default.Fragment,
+          null,
+          h10("strong", { className: "pw-list-name" }, title),
+          reqTitle2 && reqTitle2 !== title && h10("span", { className: "pw-list-parent" }, reqTitle2)
+        ),
+        h10("div", null, reason, at ? h10(
+          "time",
+          { className: "pw-list-parent", dateTime: new Date(at).toISOString() },
+          dateText(new Date(at).toISOString())
+        ) : null),
+        actions
+      ]
+    });
+    const scroll = useListScroll(wb, "blocked");
+    const section = (label, rows) => h10(
       "section",
-      { className: "pw-subpage pw-blocked-section", "aria-label": label },
-      h10("h3", { className: "pw-home-title" }, label),
-      children
+      { className: "pw-list-risk" },
+      h10("h3", null, label),
+      Array.isArray(rows) ? listTable([t("listTask"), t("listReason"), t("listActions")], rows, label) : rows
     );
     return h10(
-      "div",
-      { className: "pw-list" },
+      "section",
+      { ...scroll, className: "pw-list pw-list-catalog" },
+      h10("header", { className: "pw-list-header" }, h10("h2", null, t("navBlocked"))),
       h10(
         "div",
         { className: "pw-list-toolbar" },
-        h10("input", { className: "pw-input", style: { maxWidth: 220 }, placeholder: t("search"), value: query, "aria-label": t("search"), onChange: (e) => setFilter("blocked", { query: e.target.value }) }),
+        h10("input", { type: "search", className: "pw-input pw-list-search", placeholder: t("search"), value: query, "aria-label": t("search"), onChange: (e) => setFilter("blocked", { query: e.target.value }) }),
         h10(
           "select",
           { className: "pw-select", value: reqId, "aria-label": t("parentRequirement"), onChange: (e) => setFilter("blocked", { reqId: e.target.value }) },
@@ -2558,14 +2844,6 @@ ${detail.trim()}` : value);
       ),
       !runError && runFacts == null && h10("p", { className: "pw-note", role: "status" }, t("loading")),
       total === 0 && !runError && runFacts != null && h10("div", { className: "pw-empty" }, query || reqId ? t("noResults") : t("blockedEmpty")),
-      blockedList.length > 0 && section(t("blockedSection"), blockedList.map((b) => item(
-        "b" + b.issueId,
-        b.title,
-        b.reqTitle,
-        b.reason || t("taskNoReason"),
-        b.at,
-        h10("button", { className: "pw-button", onClick: () => openDetail2({ reqId: b.reqId, issueId: b.issueId }, "dev") }, t("viewOriginalTask"))
-      ))),
       authList.length > 0 && section(t("authSection"), authList.map((a) => item(
         "a" + a.issueId,
         a.title,
@@ -2573,9 +2851,9 @@ ${detail.trim()}` : value);
         t("runWaiting") + " \xB7 " + (() => {
           const at = authDetails?.get(a.issueId)?.askedAt;
           if (at == null) return t("authWaitUnknown");
-          const date = new Date(at);
+          const date2 = new Date(at);
           const pad = (value) => String(value).padStart(2, "0");
-          const when = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+          const when = `${date2.getFullYear()}-${pad(date2.getMonth() + 1)}-${pad(date2.getDate())} ${pad(date2.getHours())}:${pad(date2.getMinutes())}`;
           return t("authRequestWait").replace("{wait}", when);
         })(),
         null,
@@ -2599,6 +2877,14 @@ ${detail.trim()}` : value);
           h10("button", { className: "pw-button", onClick: () => openDetail2({ reqId: d.reqId, issueId: null }, "dev") }, t("viewOriginalTask"))
         ))
       ]),
+      blockedList.length > 0 && section(t("blockedSection"), blockedList.map((b) => item(
+        "b" + b.issueId,
+        b.title,
+        b.reqTitle,
+        b.reason || t("taskNoReason"),
+        b.at,
+        h10("button", { className: "pw-button", onClick: () => openDetail2({ reqId: b.reqId, issueId: b.issueId }, "dev") }, t("viewOriginalTask"))
+      ))),
       blocked?.proposals == null ? section(t("riskSection"), h10("p", { className: "pw-note" }, t("loading"))) : risks.length > 0 && section(t("riskSection"), risks.map((p) => {
         const req = requirements.find((r) => r.id === p.target.reqId);
         const issue = req?.issues?.find((i) => i.id === p.target.issueId);
@@ -2621,7 +2907,7 @@ ${detail.trim()}` : value);
   // client-src/pages/board.js
   var import_react11 = __toESM(__require("react"), 1);
   var h11 = import_react11.default.createElement;
-  var { useEffect: useEffect4, useRef: useRef2, useState: useState5 } = import_react11.default;
+  var { useEffect: useEffect4, useRef: useRef3, useState: useState5 } = import_react11.default;
   var COL_ACCENT = { reviewing: "var(--dsw-alias-brand-primary)", ready: "var(--dsw-alias-label-secondary)", backlog: "var(--dsw-alias-label-tertiary)", in_progress: "var(--dsw-alias-brand-primary)", pending: "var(--dsw-alias-state-warn-primary)", completed: "var(--dsw-alias-state-success-primary)" };
   var flagOf = (d) => d.blocked ? "blocked" : d.needsClarification ? "clarify" : d.submittable ? "submittable" : d.stalled ? "stalled" : d.acceptable ? "acceptable" : null;
   function BoardPage({ wb }) {
@@ -2632,9 +2918,9 @@ ${detail.trim()}` : value);
     const cursorId = filters.cursor ?? null;
     const [dragOver, setDragOver] = useState5(null);
     const [dragging, setDragging] = useState5(null);
-    const dragSource = useRef2(null);
-    const skipCardClick = useRef2(false);
-    const newRef = useRef2(null);
+    const dragSource = useRef3(null);
+    const skipCardClick = useRef3(false);
+    const newRef = useRef3(null);
     const visible = requirements.filter((r) => !query || r.title.toLowerCase().includes(query.toLowerCase()));
     const setCursor = (id) => setFilter("board", { cursor: id });
     const columnAt = (event) => document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-requirement-column]")?.dataset.requirementColumn;
@@ -2800,57 +3086,54 @@ ${detail.trim()}` : value);
   var h12 = import_react12.default.createElement;
   function PendingPage({ wb }) {
     const { t, requirements, navigate, openDetail: openDetail2 } = wb;
-    const query = (wb.nav.filters.pending ?? {}).query ?? "";
-    const items = pendingItems(requirements, query);
+    const items = pendingItems(requirements, wb.nav.filters.pending?.query);
     return h12(ListPage, {
       wb,
       page: "pending",
+      title: t("navPending"),
       items,
+      columns: [t("listRequirement"), t("listDelivery"), t("listAttention"), t("listActions")],
       emptyText: t("pendingEmpty"),
-      emptyAction: h12("button", { className: "pw-button", style: { marginLeft: 8 }, onClick: () => navigate("board") }, t("locateBoard")),
+      emptyAction: h12("button", { type: "button", className: "pw-button", onClick: () => navigate("board") }, t("locateBoard")),
       renderRow: (req) => {
         const result = requirementResult(req);
         const d = req.derived ?? {};
-        const returned = reviewRecords(req.reviews).find((r) => r.kind === "acceptance" && r.decision === "returned");
-        return h12(
-          "div",
-          { className: "pw-row", key: req.id },
-          h12(
-            "button",
-            { className: "pw-row-main", onClick: () => openDetail2({ reqId: req.id, issueId: null }, "pending"), title: req.title },
-            h12("strong", { className: "pw-preview" }, req.title),
-            h12("span", { className: "pw-preview pw-note" }, (result.summary || result.previousSummary).split(/\r?\n/)[0] || t("missingDeliverySummary")),
+        const returned = reviewRecords(req.reviews).some((record) => record.kind === "acceptance" && record.decision === "returned");
+        return {
+          key: req.id,
+          cells: [
             h12(
-              "span",
-              { className: "pw-count" },
-              t("taskCount").replace("{total}", String((req.issues ?? []).length)).replace("{done}", String(d.doneCount ?? 0)),
-              d.cancelledCount > 0 && " \xB7 " + t("cancelledCount").replace("{n}", String(d.cancelledCount)),
-              " \xB7 ",
-              t("submittedAt"),
-              " ",
-              dateText(req.updated),
-              returned && " \xB7 " + t("wasReturned")
-            )
-          ),
-          h12(
-            "div",
-            { className: "pw-row-actions" },
-            h12("button", { className: "pw-button pw-quiet", onClick: () => wb.locateBoard(req) }, t("locateBoard"))
-          )
-        );
+              import_react12.default.Fragment,
+              null,
+              listTitle(req.title, req.id, () => openDetail2({ reqId: req.id, issueId: null }, "pending")),
+              dateText(req.updated) && h12("span", { className: "pw-list-parent pw-list-value" }, t("submittedAt"), " ", dateText(req.updated))
+            ),
+            h12("span", { className: "pw-list-preview" }, firstLine(result.summary) || t("missingDeliverySummary")),
+            h12(
+              "div",
+              { className: "pw-list-alerts" },
+              !result.summary && result.previousSummary && h12("span", { className: "pw-list-muted" }, t("previousResult")),
+              d.cancelledCount > 0 && h12("span", { className: "pw-list-muted" }, t("cancelledCount").replace("{n}", String(d.cancelledCount))),
+              returned && h12("span", { className: "pw-istatus st-blocked" }, t("wasReturned")),
+              h12("span", { className: "pw-list-muted" }, t("taskCount").replace("{total}", String((req.issues ?? []).length)).replace("{done}", String(d.doneCount ?? 0)))
+            ),
+            boardLocator(wb, req)
+          ]
+        };
       }
     });
   }
   function RecordsPage({ wb }) {
     const { t, requirements, openDetail: openDetail2, setFilter } = wb;
-    const filters = wb.nav.filters.records ?? {};
-    const query = filters.query ?? "";
-    const decision = filters.decision ?? "";
+    const { query = "", decision = "" } = wb.nav.filters.records ?? {};
     const items = recordItems(requirements, { query, decision });
     return h12(ListPage, {
       wb,
       page: "records",
+      title: t("navRecords"),
       items,
+      hasActions: false,
+      columns: [t("listRequirement"), t("recordDecision"), t("decisionAt"), t("listOpinion")],
       toolbar: h12(
         "select",
         { className: "pw-select", value: decision, "aria-label": t("recordDecision"), onChange: (e) => setFilter("records", { decision: e.target.value }) },
@@ -2858,33 +3141,23 @@ ${detail.trim()}` : value);
         h12("option", { value: "approved" }, t("deliveryAccepted")),
         h12("option", { value: "returned" }, t("deliveryReturned"))
       ),
+      filtersActive: !!decision,
+      onClear: () => setFilter("records", { query: "", decision: "" }),
       emptyText: t("recordsEmpty"),
-      renderRow: (record) => h12(
-        "div",
-        { className: "pw-row", key: record.reqId + "|" + (record.marker || record.round) },
-        h12(
-          "button",
-          { className: "pw-row-main", onClick: () => openDetail2({ record: { reqId: record.reqId, marker: record.marker, round: record.round } }, "records"), title: record.reqTitle },
-          h12("strong", { className: "pw-preview" }, record.reqTitle),
-          h12(
-            "span",
-            { className: "pw-count" },
-            dateText(record.at),
-            " \xB7 ",
-            t(record.decision === "approved" ? "deliveryAccepted" : "deliveryReturned")
-          ),
-          h12("span", { className: "pw-preview pw-note" }, (record.opinion || record.summary || "").split(/\r?\n/)[0] || t("noOpinion"))
-        ),
-        h12(
-          "div",
-          { className: "pw-row-actions" },
-          h12(
-            "span",
-            { className: "pw-istatus " + (record.decision === "approved" ? "st-done" : "st-blocked") },
-            t(record.decision === "approved" ? "deliveryAccepted" : "deliveryReturned")
-          )
-        )
-      )
+      renderRow: (record) => {
+        const identity = record.marker || record.round || JSON.stringify([record.at, record.decision, record.opinion, record.summary]);
+        const key = record.reqId + "|" + identity;
+        const approved = record.decision === "approved";
+        return {
+          key,
+          cells: [
+            listTitle(record.reqTitle, key, () => openDetail2({ record: { reqId: record.reqId, marker: record.marker, round: record.round } }, "records")),
+            h12("span", { className: "pw-istatus " + (approved ? "st-done" : "st-blocked") }, t(approved ? "deliveryAccepted" : "deliveryReturned")),
+            h12("span", { className: "pw-list-muted pw-list-value" }, dateText(record.at) || "\u2014"),
+            h12("span", { className: "pw-list-preview" }, firstLine(record.opinion || record.summary) || t("noOpinion"))
+          ]
+        };
+      }
     });
   }
 
@@ -2896,11 +3169,11 @@ ${detail.trim()}` : value);
   function wikiLocalDate(value) {
     if (typeof value !== "string" || !value.trim()) return "";
     const text = value.trim();
-    const date = new Date(text);
-    if (!Number.isFinite(date.getTime())) return "";
-    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return date.toISOString().slice(0, 10) === text ? text : "";
+    const date2 = new Date(text);
+    if (!Number.isFinite(date2.getTime())) return "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return date2.toISOString().slice(0, 10) === text ? text : "";
     const pad = (n) => String(n).padStart(2, "0");
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    return `${date2.getFullYear()}-${pad(date2.getMonth() + 1)}-${pad(date2.getDate())}`;
   }
   function parseEvidenceRef(ref) {
     const text = String(ref ?? "").trim();
@@ -2928,7 +3201,7 @@ ${detail.trim()}` : value);
 
   // client-src/pages/resources.js
   var h13 = import_react13.default.createElement;
-  var { useCallback, useEffect: useEffect5, useRef: useRef3, useState: useState6 } = import_react13.default;
+  var { useCallback, useEffect: useEffect5, useRef: useRef4, useState: useState6 } = import_react13.default;
   var baseName = (p) => String(p ?? "").replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "";
   function wikiLink(href, pagePath) {
     if (!pagePath || /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(href) || /%(?:2f|5c)/i.test(href) || href.includes("\\")) return null;
@@ -3135,11 +3408,11 @@ ${detail.trim()}` : value);
     const [err, setErr] = useState6("");
     const [query, setQuery] = useState6("");
     const [source, setSource] = useState6(null);
-    const pageSeq = useRef3(0);
-    const statusSeq = useRef3(0);
+    const pageSeq = useRef4(0);
+    const statusSeq = useRef4(0);
     const [gen, setGen] = useState6(() => uiMemory2.wikiGen[root] ?? null);
     const [genChecked, setGenChecked] = useState6(false);
-    const pollRef = useRef3(null);
+    const pollRef = useRef4(null);
     const setGenState = (g) => {
       uiMemory2.wikiGen[root] = g;
       setGen(g);
@@ -3435,9 +3708,9 @@ ${detail.trim()}` : value);
     const [run, setRun] = useState6(null);
     const [readError, setReadError] = useState6(null);
     const [source, setSource] = useState6(null);
-    const sourceSeq = useRef3(0);
-    const timer = useRef3(null);
-    const mounted = useRef3(false);
+    const sourceSeq = useRef4(0);
+    const timer = useRef4(null);
+    const mounted = useRef4(false);
     const stopPoll = useCallback(() => {
       if (timer.current) clearInterval(timer.current);
       timer.current = null;
@@ -3594,7 +3867,7 @@ ${detail.trim()}` : value);
   // client-src/pages/prds.js
   var import_react14 = __toESM(__require("react"), 1);
   var h14 = import_react14.default.createElement;
-  var { useEffect: useEffect6, useRef: useRef4, useState: useState7 } = import_react14.default;
+  var { useEffect: useEffect6, useRef: useRef5, useState: useState7 } = import_react14.default;
   var prdDateFormat = new Intl.DateTimeFormat(void 0, {
     year: "numeric",
     month: "2-digit",
@@ -3632,6 +3905,9 @@ ${detail.trim()}` : value);
       prdDeleteTitle: "Delete PRD?",
       prdDeleteHint: "This document will be removed from the following requirements. It can be restored from Trash.",
       prdDeleteUnlinked: "This document can be restored from Trash.",
+      prdOpenFull: "Open full document",
+      prdOutline: "On this page",
+      prdLinkUnavailable: "This document is no longer linked here.",
       prdImageMissing: "Image unavailable",
       prdImageLoading: "Loading image",
       reviewPrdRequired: "Link a saved PRD before sending this requirement for review.",
@@ -3661,6 +3937,9 @@ ${detail.trim()}` : value);
       prdDeleteTitle: "\u5220\u9664 PRD\uFF1F",
       prdDeleteHint: "\u4EE5\u4E0B\u9700\u6C42\u5C06\u5931\u53BB\u6B64\u6587\u6863\u7684\u5173\u8054\u3002\u4E4B\u540E\u53EF\u5728\u56DE\u6536\u7AD9\u6062\u590D\u3002",
       prdDeleteUnlinked: "\u4E4B\u540E\u53EF\u5728\u56DE\u6536\u7AD9\u6062\u590D\u6B64\u6587\u6863\u3002",
+      prdOpenFull: "\u6253\u5F00\u5168\u6587",
+      prdOutline: "\u672C\u6587\u76EE\u5F55",
+      prdLinkUnavailable: "\u6B64\u6587\u6863\u5DF2\u89E3\u9664\u5173\u8054\u3002",
       prdImageMissing: "\u56FE\u7247\u65E0\u6CD5\u663E\u793A",
       prdImageLoading: "\u56FE\u7247\u52A0\u8F7D\u4E2D",
       reviewPrdRequired: "\u8BF7\u5148\u5173\u8054\u4E00\u4EFD PRD\uFF0C\u518D\u63D0\u4EA4\u8BC4\u5BA1\u3002",
@@ -3779,30 +4058,47 @@ ${detail.trim()}` : value);
       h14(ListPage, {
         wb,
         page: "prds",
+        title: t("navPrds"),
         items,
         toolbar,
-        emptyText: initial || pending ? t("loading") : error ? "" : t(deleted ? "prdTrashEmpty" : "prdEmpty"),
-        renderRow: (item) => {
-          const metadata = h14(
-            import_react14.default.Fragment,
-            null,
-            h14("strong", { className: "pw-preview" }, item.title),
-            h14("span", { className: "pw-count" }, "v" + item.revision, " \xB7 ", t("updated"), " ", prdDate(item.updated)),
-            h14("span", { className: "pw-preview pw-note" }, item.reqIds.length ? t("prdRelatedRequirements") + " \xB7 " + item.reqIds.map((id) => reqTitle(requirements, id)).join("\u3001") : t("prdNoRequirements"))
-          );
-          return h14(
-            "div",
-            { className: "pw-row pw-prd-row", key: item.id },
-            deleted ? h14("div", { className: "pw-row-main pw-row-static" }, metadata) : h14("button", { className: "pw-row-main", onClick: () => onRead(item.id) }, metadata),
-            h14("div", { className: "pw-row-actions" }, deleted ? h14("button", { className: "pw-button", onClick: () => manage("prd/restore", item), disabled: busy || pending }, t("prdRestore")) : [
-              h14("button", { key: "edit", className: "pw-button", onClick: () => onEdit(item.id), disabled: busy || pending }, t("edit")),
-              h14("button", { key: "delete", className: "pw-button danger", onClick: () => {
-                setRemove(item);
-                setActionError(null);
-              }, disabled: busy || pending }, t("delete"))
-            ])
-          );
-        }
+        columns: [t("listDocument"), t("listRevision"), t("prdRelatedRequirements"), t("updated"), t("listActions")],
+        waiting: initial || pending && !items.length && !error,
+        emptyText: error ? "" : t(deleted ? "prdTrashEmpty" : "prdEmpty"),
+        renderRow: (item) => ({
+          key: item.id,
+          cells: [
+            listTitle(item.title, item.id, deleted ? null : () => onRead(item.id)),
+            h14("span", { className: "pw-list-value" }, "v" + item.revision),
+            h14(
+              "span",
+              { className: "pw-list-preview" },
+              item.reqIds.length ? item.reqIds.map((id) => reqTitle(requirements, id)).join(t("fieldSeparator")) : t("prdNoRequirements")
+            ),
+            h14("span", { className: "pw-list-value pw-list-muted" }, prdDate(item.updated) || "\u2014"),
+            deleted ? h14("button", { className: "pw-button", onClick: () => manage("prd/restore", item), disabled: busy || pending }, t("prdRestore")) : h14(
+              "details",
+              {
+                className: "pw-list-menu",
+                onKeyDown: (event) => {
+                  if (event.key !== "Escape" || !event.currentTarget.open) return;
+                  event.stopPropagation();
+                  event.currentTarget.open = false;
+                  event.currentTarget.querySelector("summary")?.focus();
+                }
+              },
+              h14("summary", { className: "pw-button", "aria-label": t("requirementActions") + " \xB7 " + item.title }, t("requirementActions")),
+              h14(
+                "div",
+                { className: "pw-list-actions" },
+                h14("button", { className: "pw-button", onClick: () => onEdit(item.id), disabled: busy || pending }, t("edit")),
+                h14("button", { className: "pw-button danger", onClick: () => {
+                  setRemove(item);
+                  setActionError(null);
+                }, disabled: busy || pending }, t("delete"))
+              )
+            )
+          ]
+        })
       }),
       remove && h14(
         Modal,
@@ -3819,7 +4115,7 @@ ${detail.trim()}` : value);
       )
     );
   }
-  function PrdDocuments({ root, reqId, requirements, t, activeId, onRead, onEdit, onNew, onSummary }) {
+  function PrdDocuments({ root, reqId, requirements, t, activeId, onRead, onEdit, onNew, onSummary, readOnly, summaryOnly, onOpenFull }) {
     const { data, error, initial, pending, reload } = usePrdRead(root);
     const [pick, setPick] = useState7("");
     const [busy, setBusy] = useState7(false);
@@ -3828,6 +4124,7 @@ ${detail.trim()}` : value);
     const linked = (data ?? []).filter((item) => item.reqIds.includes(reqId));
     const available = (data ?? []).filter((item) => !item.reqIds.includes(reqId));
     const candidate = available.find((item) => item.id === pick);
+    const selected = linked.find((item) => item.id === activeId);
     const summary = error ? t("errUnreadable") : initial ? t("reqLoadingPrds") : linked.length ? t("reqPrdCount").replace("{n}", String(linked.length)) : t("reqNoPrds");
     useEffect6(() => {
       onSummary?.(summary);
@@ -3849,10 +4146,11 @@ ${detail.trim()}` : value);
       setNotice(t(linked2 ? "prdLinkSaved" : "prdLinkRemoved"));
       notifyPrdChanged(root);
     };
+    if (summaryOnly) return null;
     return h14(
       "section",
-      { id: "pw-prd-associations-" + reqId, tabIndex: -1, className: "pw-prd-associations", "aria-label": t("prds") },
-      h14(
+      { id: readOnly ? void 0 : "pw-prd-associations-" + reqId, tabIndex: -1, className: "pw-prd-associations", "aria-label": t("prds") },
+      !readOnly && h14(
         "header",
         { className: "pw-subpage-head" },
         h14("button", { type: "button", className: "pw-button", onClick: () => onNew(reqId) }, t("prdNew"))
@@ -3873,7 +4171,7 @@ ${detail.trim()}` : value);
             onClick: () => onRead(activeId === item.id ? null : item.id)
           }, item.title),
           h14("span", { className: "pw-count" }, "v" + item.revision),
-          h14("button", {
+          !readOnly && h14("button", {
             type: "button",
             className: "pw-button pw-quiet",
             "aria-label": `${t("prdUnlink")} \xB7 ${item.title}`,
@@ -3881,8 +4179,20 @@ ${detail.trim()}` : value);
             onClick: () => changeLink(item, false)
           }, t("prdUnlink"))
         ))),
-        activeId && h14(PrdReader, { key: activeId, root, id: activeId, requirements, t, onEdit, onBack: () => onRead(null), inline: true }),
-        h14(
+        activeId && !selected && h14("p", { className: "pw-note", role: "status" }, t("prdLinkUnavailable")),
+        selected && h14(PrdReader, {
+          key: activeId,
+          root,
+          id: activeId,
+          requirements,
+          t,
+          onEdit: readOnly ? void 0 : onEdit,
+          onOpenFull,
+          onBack: () => onRead(null),
+          inline: true,
+          inDrawer: readOnly
+        }),
+        !readOnly && h14(
           "form",
           { className: "pw-prd-link-form", onSubmit: (event) => {
             event.preventDefault();
@@ -3937,38 +4247,101 @@ ${detail.trim()}` : value);
     if (image) return h14("img", { className: "pw-prd-image", src: image, alt, loading: "lazy", decoding: "async", onError: () => setImage("") });
     return h14("span", { className: "pw-note" }, alt || t(image === null ? "prdImageLoading" : "prdImageMissing"));
   }
-  function PrdReader({ root, id, requirements, t, onEdit, onBack, inline: inline2 = false }) {
+  function headingText(node) {
+    if (typeof node === "string") return node;
+    if (Array.isArray(node)) return node.map(headingText).join("");
+    return node?.props ? node.props.alt ?? headingText(node.props.children) : "";
+  }
+  function PrdReader({
+    root,
+    id,
+    requirements,
+    t,
+    onEdit,
+    onBack,
+    inline: inline2 = false,
+    inDrawer = false,
+    backLabel,
+    onOpenFull,
+    readingMemory
+  }) {
     const { data: prd, error, initial, reload } = usePrdRead(root, { id });
-    const reader = useRef4(null);
+    const reader = useRef5(null);
+    const scroller = useRef5(null);
+    const readingKey = JSON.stringify([root, id, inDrawer ? "drawer" : "full"]);
+    import_react14.default.useLayoutEffect(() => {
+      if (!initial && scroller.current) scroller.current.scrollTop = readingMemory?.[readingKey] ?? 0;
+    }, [initial, readingKey, readingMemory]);
     useEffect6(() => {
-      if (inline2 && !initial) reader.current?.scrollIntoView({ block: "nearest" });
-    }, [inline2, initial]);
+      if (inline2 && !inDrawer && !initial) reader.current?.scrollIntoView({ block: "nearest" });
+    }, [inline2, inDrawer, initial]);
+    const headings = [];
+    const content = prd && renderMarkdown(prd.markdown.replace(/^#[ \t]+[^\r\n]+(?:\r?\n|$)/, ""), t, {
+      image: (alt, path, key) => {
+        const name = /^assets\/([a-z0-9][a-z0-9_.-]*)$/i.exec(path)?.[1];
+        return name ? h14(PrdImage, { key: key + ":" + name + ":" + prd.version, name, alt, root, id, revision: prd.revision, t }) : h14("span", { key, className: "pw-note" }, alt || t("prdImageMissing"));
+      }
+    }).map((node, index) => {
+      if (inline2 || typeof node.type !== "string" || !/^h[1-4]$/.test(node.type)) return node;
+      const title = headingText(node.props.children).trim();
+      if (title) headings.push({ index, title });
+      return import_react14.default.cloneElement(node, { "data-prd-heading": index, tabIndex: -1 });
+    });
+    const jump = (index) => {
+      const heading = scroller.current?.querySelector('[data-prd-heading="' + index + '"]');
+      heading?.scrollIntoView({ block: "start" });
+      heading?.focus({ preventScroll: true });
+    };
+    const hasOutline = headings.length > 1;
     return h14(
       "section",
-      { ref: reader, className: "pw-prd-reader" + (inline2 ? " pw-prd-reader-inline" : ""), "aria-label": t("prdRead") },
+      {
+        ref: reader,
+        className: "pw-prd-reader" + (inline2 ? " pw-prd-reader-inline" : "") + (inDrawer ? " pw-prd-reader-drawer" : ""),
+        "aria-label": t("prdRead")
+      },
       h14(
         "header",
         { className: "pw-prd-reader-head" },
-        h14("button", { className: "pw-button", onClick: onBack }, t(inline2 ? "prdCloseRead" : "backToPrevious")),
-        prd && h14("button", { className: "pw-button", onClick: () => onEdit(id) }, t("edit"))
+        onBack && h14("button", { className: "pw-button", onClick: onBack }, backLabel || t(inline2 ? "prdCloseRead" : "backToPrevious")),
+        prd && onOpenFull && h14("button", { id: "pw-prd-open-full", className: "pw-button", onClick: () => onOpenFull(id) }, t("prdOpenFull")),
+        prd && onEdit && h14("button", { className: "pw-button", onClick: () => onEdit(id) }, t("edit"))
       ),
       h14(PrdError, { error, t, onRetry: reload }),
       initial && h14("p", { className: "pw-note", role: "status" }, t("loading")),
       prd && h14(
         "div",
-        { className: "pw-prd-scroll", tabIndex: 0, role: "region", "aria-label": prd.title },
-        h14(
-          "article",
-          { className: "pw-md pw-prd-article" },
-          h14("h1", { className: "pw-md-h" }, prd.title),
-          h14("p", { className: "pw-count" }, "v" + prd.revision, " \xB7 ", t("updated"), " ", prdDate(prd.updated)),
-          prd.reqIds.length > 0 && h14("p", { className: "pw-note" }, t("prdRelatedRequirements"), " \xB7 ", prd.reqIds.map((reqId) => reqTitle(requirements, reqId)).join("\u3001")),
-          renderMarkdown(prd.markdown.replace(/^#[ \t]+[^\r\n]+(?:\r?\n|$)/, ""), t, {
-            image: (alt, path, key) => {
-              const name = /^assets\/([a-z0-9][a-z0-9_.-]*)$/i.exec(path)?.[1];
-              return name ? h14(PrdImage, { key: key + ":" + name + ":" + prd.version, name, alt, root, id, revision: prd.revision, t }) : h14("span", { key, className: "pw-note" }, alt || t("prdImageMissing"));
-            }
+        {
+          className: "pw-prd-scroll",
+          ref: scroller,
+          tabIndex: inDrawer ? void 0 : 0,
+          role: "region",
+          "aria-label": prd.title,
+          onScroll: readingMemory && ((event) => {
+            readingMemory[readingKey] = event.currentTarget.scrollTop;
           })
+        },
+        h14(
+          "div",
+          { className: "pw-prd-page" + (hasOutline ? " pw-prd-page-outline" : "") },
+          hasOutline && h14(
+            "nav",
+            { className: "pw-prd-outline", "aria-label": t("prdOutline") },
+            h14("strong", null, t("prdOutline")),
+            h14("ul", null, headings.map(({ index, title }) => h14(
+              "li",
+              { key: index },
+              h14("button", { type: "button", className: "pw-prd-outline-link", onClick: () => jump(index) }, title)
+            )))
+          ),
+          h14(
+            "article",
+            { className: "pw-md pw-prd-article" },
+            h14("h1", { className: "pw-md-h" }, prd.title),
+            h14("p", { className: "pw-count" }, "v" + prd.revision, " \xB7 ", t("updated"), " ", prdDate(prd.updated)),
+            prd.reqIds.length > 0 && h14("p", { className: "pw-note" }, t("prdRelatedRequirements"), " \xB7 ", prd.reqIds.map((reqId) => reqTitle(requirements, reqId)).join(t("fieldSeparator"))),
+            content
+          )
         )
       )
     );
@@ -3977,8 +4350,6 @@ ${detail.trim()}` : value);
 .pw-prd-error{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-block:6px}
 .pw-prd-notice{margin-block:3px;color:var(--dsw-alias-label-secondary)}
 .pw-prd-switch{display:flex;gap:6px}
-.pw-prd-row{flex-wrap:wrap}
-.pw-prd-row .pw-row-main{min-width:min(180px,100%)}
 .pw-prd-associations:focus-visible,.pw-prd-scroll:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
 .pw-prd-associations .pw-subpage-head{align-items:center;flex-wrap:wrap;margin-bottom:10px}
 .pw-prd-links{list-style:none;padding:0;margin:0 0 14px}
@@ -3991,9 +4362,28 @@ ${detail.trim()}` : value);
 .pw-prd-reader{flex:1;min-height:0;min-width:0;display:flex;flex-direction:column}
 .pw-prd-reader-inline{margin-block:12px 16px}
 .pw-prd-reader-inline .pw-prd-scroll{max-height:60vh}
-.pw-prd-reader-head{display:flex;justify-content:space-between;padding-bottom:8px}
-.pw-prd-scroll{flex:1;min-height:0;overflow:auto;border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-1);border-radius:10px}
-.pw-prd-article{margin:0 auto;padding:clamp(14px,4vw,38px);box-sizing:border-box;overflow-wrap:anywhere}
+.pw-prd-reader-head{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;padding-bottom:8px}
+.pw-prd-scroll{flex:1;min-width:0;min-height:0;overflow:auto;container:prd-reader / inline-size;border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-1);border-radius:10px}
+.pw-prd-reader-drawer .pw-prd-scroll{overflow:visible;max-height:none;border:0;background:transparent}
+.pw-prd-reader-drawer .pw-prd-article{padding:0}
+.pw-prd-reader-drawer .pw-prd-article h1:first-child{font-size:20px}
+.pw-prd-page{min-width:0;padding:clamp(14px,4cqi,36px)}
+.pw-prd-reader-drawer .pw-prd-page{padding:0}
+.pw-prd-page-outline{display:grid;grid-template-columns:minmax(130px,170px) minmax(0,760px);gap:clamp(18px,3cqi,36px);justify-content:center;align-items:start}
+.pw-prd-outline{position:sticky;inset-block-start:14px;max-block-size:min(50vh,390px);overflow:auto;padding-inline-end:12px;border-inline-end:1px solid var(--dsw-alias-border-l3)}
+.pw-prd-outline strong{display:block;margin-block:3px 8px;font-size:13px}
+.pw-prd-outline ul{display:grid;gap:3px;list-style:none;padding:0;margin:0}
+.pw-prd-outline-link{display:block;width:100%;text-align:start;overflow-wrap:anywhere;cursor:pointer;padding:4px 5px;color:var(--dsw-alias-label-secondary);font:inherit;border:0;border-radius:4px;background:none}
+.pw-prd-outline-link:hover{color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-interactive-bg-hover)}
+.pw-prd-outline-link:focus-visible,.pw-prd-article [data-prd-heading]:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
+.pw-prd-article{margin:0 auto;min-width:0;width:100%;box-sizing:border-box;overflow-wrap:anywhere}
+.pw-prd-article h1:first-child{margin-top:0}
+.pw-prd-article [data-prd-heading]{scroll-margin-top:14px}
+@container prd-reader (max-width:650px){
+  .pw-prd-page-outline{grid-template-columns:minmax(0,1fr)}
+  .pw-prd-outline{position:static;max-block-size:110px;border-inline-end:0;padding:0 0 8px;border-block-end:1px solid var(--dsw-alias-border-l3)}
+  .pw-prd-outline ul{display:flex;flex-wrap:wrap}
+}
 .pw-prd-article h1{font-size:clamp(22px,3vw,30px)}
 .pw-prd-article .pw-md-table{min-width:max-content}
 .pw-prd-article .pw-prd-image{display:block;max-width:100%;height:auto;margin-block:8px;border-radius:6px}
@@ -4219,15 +4609,15 @@ ${detail.trim()}` : value);
   // client-src/pages/sync.js
   var import_react16 = __toESM(__require("react"), 1);
   var h16 = import_react16.default.createElement;
-  var { useCallback: useCallback2, useEffect: useEffect8, useRef: useRef5, useState: useState9 } = import_react16.default;
+  var { useCallback: useCallback2, useEffect: useEffect8, useRef: useRef6, useState: useState9 } = import_react16.default;
   var STATES = ["todo", "doing", "blocked", "in_review", "done", "cancelled", "backlog", "reviewing", "ready", "in_progress", "pending", "completed"];
   function SyncView({ root, sessionId, t, refresh, requirements = [], onLocateProposal }) {
     const [list, setList] = useState9(null);
     const [baseline, setBaseline] = useState9(null);
     const [run, setRun] = useState9(null);
     const [loadError, setLoadError] = useState9(null);
-    const poll = useRef5(null);
-    const mounted = useRef5(false);
+    const poll = useRef6(null);
+    const mounted = useRef6(false);
     const load = useCallback2(async () => {
       const res = await rpc("sync/proposals", { root });
       if (!mounted.current) return;
@@ -4381,12 +4771,12 @@ ${detail.trim()}` : value);
   }
 
   // client-src/detail/requirement-detail.js
-  var import_react21 = __toESM(__require("react"), 1);
+  var import_react22 = __toESM(__require("react"), 1);
 
   // client-src/detail/requirement-review.js
   var import_react17 = __toESM(__require("react"), 1);
   var h17 = import_react17.default.createElement;
-  var { useCallback: useCallback3, useEffect: useEffect9, useRef: useRef6, useState: useState10 } = import_react17.default;
+  var { useCallback: useCallback3, useEffect: useEffect9, useRef: useRef7, useState: useState10 } = import_react17.default;
   var requirementReviewLocale = {
     en: {
       aiReview: "AI review",
@@ -4436,15 +4826,34 @@ ${detail.trim()}` : value);
       prds.length ? prds.map((prd) => h17("p", { className: "pw-note", key: prd.id }, t("aiReviewPrdVersion"), " ", prd.title, " \xB7 ", versionText(prd.version))) : h17("p", { className: "pw-note" }, t("aiReviewNoPrd"))
     );
   }
-  function RequirementReview({ req, root, t, busy, sessionId, onApprove, onReject, onReportSnapshot }) {
+  function RequirementReviewHistory({ reports, t }) {
+    return reports.map((record, index) => ({ record, index })).reverse().map(({ record, index }) => h17(
+      Disclosure,
+      {
+        key: record.marker,
+        id: "pw-requirement-record-report-" + record.marker,
+        label: t("aiReviewRound").replace("{n}", String(index + 1))
+      },
+      record.at && h17(
+        "p",
+        { className: "pw-note" },
+        t("aiReviewAt"),
+        " ",
+        h17("time", { dateTime: record.at, title: record.at }, String(record.at).replace("T", " ").slice(0, 16))
+      ),
+      h17(ReviewSource, { source: record.source, t }),
+      h17(ReadText, { value: record.opinion })
+    ));
+  }
+  function RequirementReview({ req, root, t, busy, sessionId, onApprove, onReject, onReportSnapshot, recentOnly = false, snapshotOnly = false }) {
     const [details, setDetails] = useState10(null);
     const [failure, setFailure] = useState10(null);
     const [readError, setReadError] = useState10(null);
     const [submitting, setSubmitting] = useState10(false);
-    const mounted = useRef6(false);
-    const reading = useRef6(false);
-    const request = useRef6(false);
-    const revision = useRef6(0);
+    const mounted = useRef7(false);
+    const reading = useRef7(false);
+    const request = useRef7(false);
+    const revision = useRef7(0);
     const load = useCallback3(async () => {
       if (reading.current || request.current || !mounted.current) return;
       const version = revision.current;
@@ -4472,9 +4881,9 @@ ${detail.trim()}` : value);
     const reportState = readError || details?.reportsUnavailable ? "unavailable" : details ? "loaded" : "loading";
     useEffect9(
       () => {
-        onReportSnapshot?.({ reports: savedReports, state: reportState });
+        onReportSnapshot?.({ reports: savedReports, state: reportState, retry: load });
       },
-      [onReportSnapshot, savedReports, reportState]
+      [onReportSnapshot, savedReports, reportState, load]
     );
     const latest = reports.at(-1);
     const reviewing = req.status === "reviewing" && (!details || details.status === "reviewing");
@@ -4523,16 +4932,18 @@ ${detail.trim()}` : value);
         }
       }
     };
+    if (snapshotOnly) return null;
     if (!reviewing && !reports.length && !running && !saveFailed && !readError && !dataUnavailable) return null;
     const startLabel = saveFailed ? "aiReviewRetrySave" : latest ? "aiReviewAgain" : "aiReview";
     const advice = latest?.opinion.split("\n").find((line) => /^[\s#*>-]*建议\**[：:]/u.test(line));
     const preview = advice ? advice.replace(/^[\s#*>-]+/u, "").replaceAll("**", "") : latest?.opinion;
     const helpId = "pw-approve-review-help-" + req.id;
     const needsReport = reviewing && details?.hasPrd && !details.hasReview && !dataUnavailable;
+    const title = t(recentOnly ? "reqReviewCurrent" : "aiReviewRecords");
     return h17(
       "section",
-      { className: "pw-reading-block pw-reading-divider", "aria-label": t("aiReviewRecords") },
-      h17("h3", { className: "pw-reading-label" }, t("aiReviewRecords")),
+      { className: "pw-reading-block pw-reading-divider", "aria-label": title },
+      h17("h3", { className: "pw-reading-label" }, title),
       h17(
         "div",
         { className: "pw-actions" },
@@ -4554,30 +4965,14 @@ ${detail.trim()}` : value);
       dataUnavailable && h17("p", { className: "pw-note", role: "status" }, t("errUnreadable")),
       (readError || dataUnavailable) && !saveFailed && h17("button", { className: "pw-button pw-quiet", onClick: load }, t("retryRead")),
       reviewing && latest && h17(ReadText, { value: preview, preview: true }),
-      reports.map((record, index) => ({ record, index })).reverse().map(({ record, index }) => h17(
-        Disclosure,
-        {
-          key: record.marker,
-          id: "pw-requirement-record-report-" + record.marker,
-          label: t("aiReviewRound").replace("{n}", String(index + 1))
-        },
-        record.at && h17(
-          "p",
-          { className: "pw-note" },
-          t("aiReviewAt"),
-          " ",
-          h17("time", { dateTime: record.at, title: record.at }, String(record.at).replace("T", " ").slice(0, 16))
-        ),
-        h17(ReviewSource, { source: record.source, t }),
-        h17(ReadText, { value: record.opinion })
-      ))
+      !recentOnly && h17(RequirementReviewHistory, { reports, t })
     );
   }
 
   // client-src/detail/acceptance-detail.js
   var import_react18 = __toESM(__require("react"), 1);
   var h18 = import_react18.default.createElement;
-  function RequirementDelivery({ req, t, onMove, busy = false }) {
+  function RequirementDelivery({ req, t, onMove, busy = false, showHistory = true }) {
     const records = reviewRecords(req.reviews).filter((record) => record.kind === "acceptance");
     const recovering = !!req.pendingReopen;
     const pending = req.status === "pending";
@@ -4586,6 +4981,8 @@ ${detail.trim()}` : value);
     return h18(
       "div",
       { className: "pw-reading" },
+      hasDelivery && h18(DeliveryResult, { req, t, userFacing: true, foldTasks: !showHistory }),
+      !hasDelivery && !records.length && h18("p", { className: "pw-note" }, t("noRequirementDelivery")),
       onMove && (recovering || pending || completed) && h18(
         "div",
         { className: "pw-actions" },
@@ -4593,9 +4990,7 @@ ${detail.trim()}` : value);
         !recovering && pending && h18("button", { className: "pw-button primary", disabled: busy, onClick: () => onMove(req, "completed") }, t("acceptRequirement")),
         !recovering && (pending || completed) && h18("button", { className: "pw-button", disabled: busy, onClick: () => onMove(req, "in_progress") }, t(completed ? "reopen" : "sendBack"))
       ),
-      hasDelivery && h18(DeliveryResult, { req, t, userFacing: true }),
-      !hasDelivery && !records.length && h18("p", { className: "pw-note" }, t("noRequirementDelivery")),
-      h18(RequirementDecisionRecords, { records, group: "delivery", t })
+      showHistory && h18(RequirementDecisionRecords, { records, group: "delivery", t })
     );
   }
   function RecordDetail({ record, req, t, onOpenRequirement }) {
@@ -4635,7 +5030,7 @@ ${detail.trim()}` : value);
   // client-src/detail/requirement-layout.js
   var import_react19 = __toESM(__require("react"), 1);
   var h19 = import_react19.default.createElement;
-  var { useEffect: useEffect10, useRef: useRef7, useState: useState11 } = import_react19.default;
+  var { useEffect: useEffect10, useRef: useRef8, useState: useState11 } = import_react19.default;
   var movableRequirementBlocks = ["prds", "review", "tasks", "development", "delivery"];
   var defaultOpen = {
     backlog: ["basic", "prds"],
@@ -4649,6 +5044,14 @@ ${detail.trim()}` : value);
     const allowed = new Set(movableRequirementBlocks);
     const ordered = Array.isArray(saved) ? saved.filter((id) => allowed.delete(id)) : [];
     return ["basic", ...ordered, ...allowed, "log"];
+  }
+  function savedRequirementOrder(layoutKey, orders) {
+    if (orders?.[layoutKey]) return orders[layoutKey];
+    try {
+      return requirementBlockOrder(JSON.parse(globalThis.localStorage?.getItem("project-workbench.requirement-order." + layoutKey) ?? "null"));
+    } catch {
+      return requirementBlockOrder();
+    }
   }
   var requirementLayoutLocale = {
     en: {
@@ -4675,7 +5078,18 @@ ${detail.trim()}` : value);
       reqReviewCount: "{n} records",
       reqTasksCount: "{n} tasks",
       reqLoadingPrds: "Loading linked PRDs\u2026",
-      reqLoadingReviews: "Loading review records\u2026"
+      reqLoadingReviews: "Loading review records\u2026",
+      reqReadInOrder: "Read sections in order",
+      reqReturnToDetail: "Back to requirement overview",
+      reqManagePrds: "Manage linked PRDs",
+      reqTaskOrder: "Reorder tasks",
+      reqClearTaskFilter: "Show all tasks",
+      reqProgress: "Confirmed complete",
+      reqActiveTasks: "{done} / {total} active tasks",
+      reqTaskStatus: "Status",
+      reqTaskOperations: "Actions",
+      reqReviewCurrent: "Current review",
+      reqDeliveryCurrent: "Current delivery"
     },
     zh: {
       reqBasic: "\u57FA\u672C\u4FE1\u606F",
@@ -4701,27 +5115,31 @@ ${detail.trim()}` : value);
       reqReviewCount: "{n} \u6761",
       reqTasksCount: "{n} \u9879\u4EFB\u52A1",
       reqLoadingPrds: "\u6B63\u5728\u8BFB\u53D6\u5173\u8054 PRD\u2026",
-      reqLoadingReviews: "\u6B63\u5728\u8BFB\u53D6\u8BC4\u5BA1\u8BB0\u5F55\u2026"
+      reqLoadingReviews: "\u6B63\u5728\u8BFB\u53D6\u8BC4\u5BA1\u8BB0\u5F55\u2026",
+      reqReadInOrder: "\u6309\u677F\u5757\u987A\u5E8F\u9605\u8BFB",
+      reqReturnToDetail: "\u8FD4\u56DE\u9700\u6C42\u6982\u89C8",
+      reqManagePrds: "\u7BA1\u7406\u5173\u8054 PRD",
+      reqTaskOrder: "\u8C03\u6574\u4EFB\u52A1\u987A\u5E8F",
+      reqClearTaskFilter: "\u663E\u793A\u5168\u90E8\u4EFB\u52A1",
+      reqProgress: "\u5DF2\u786E\u8BA4\u5B8C\u6210",
+      reqActiveTasks: "{done} / {total} \u9879\u6709\u6548\u4EFB\u52A1",
+      reqTaskStatus: "\u72B6\u6001",
+      reqTaskOperations: "\u64CD\u4F5C",
+      reqReviewCurrent: "\u672C\u8F6E\u8BC4\u5BA1",
+      reqDeliveryCurrent: "\u672C\u8F6E\u4EA4\u4ED8"
     }
   };
-  function RequirementLayout({ blocks, layoutKey, status, uiMemory: uiMemory2, t, focus, arranging, onFinish }) {
+  function RequirementLayout({ blocks, layoutKey, status, uiMemory: uiMemory2, t, focus, arranging, onFinish, onOrderChange }) {
     const readingMemory = uiMemory2.requirementReading ??= {};
     const orderMemory = uiMemory2.requirementOrders ??= {};
     const storageKey = "project-workbench.requirement-order." + layoutKey;
-    const [order, setOrder] = useState11(() => {
-      if (orderMemory[layoutKey]) return orderMemory[layoutKey];
-      try {
-        return requirementBlockOrder(JSON.parse(globalThis.localStorage?.getItem(storageKey) ?? "null"));
-      } catch {
-        return requirementBlockOrder();
-      }
-    });
+    const [order, setOrder] = useState11(() => savedRequirementOrder(layoutKey, orderMemory));
     const [draft, setDraft] = useState11(null);
     const [saveError, setSaveError] = useState11(false);
     const [reading, setReading] = useState11(() => readingMemory[layoutKey]);
     const [dropHint, setDropHint] = useState11(null);
-    const dragged = useRef7(null);
-    const appliedFocus = useRef7(null);
+    const dragged = useRef8(null);
+    const appliedFocus = useRef8(null);
     const activeReading = reading?.status === status ? reading : { status, open: defaultOpen[status] ?? ["basic"] };
     const displayedOrder = draft ?? order;
     useEffect10(() => {
@@ -4754,6 +5172,7 @@ ${detail.trim()}` : value);
     const finish = (save) => {
       if (save && draft) {
         setOrder(draft);
+        onOrderChange?.(draft);
         try {
           const storage = globalThis.localStorage;
           if (!storage) throw new Error("Local preferences unavailable");
@@ -4917,14 +5336,243 @@ ${detail.trim()}` : value);
     }));
   }
 
-  // client-src/detail/requirement-detail.js
+  // client-src/shared/reading-drawer.js
+  var import_react21 = __toESM(__require("react"), 1);
   var h21 = import_react21.default.createElement;
-  var { useCallback: useCallback4, useEffect: useEffect11, useRef: useRef8, useState: useState12 } = import_react21.default;
-  function useWorkItemDraft(draftKey, item, fieldsOf, onDirty, memory) {
-    const [editing, setEditing] = useState12(() => !!memory.drafts[draftKey]);
-    const [draft, setDraft] = useState12(() => draftOf(memory.drafts, draftKey, fieldsOf(item)));
-    const base = useRef8({ fields: fieldsOf(item), fileHash: item.hash });
+  var { useEffect: useEffect11, useLayoutEffect: useLayoutEffect2, useRef: useRef9, useState: useState12 } = import_react21.default;
+  var readingDrawerLocale = {
+    en: { readingMaterials: "Materials and records", closeReading: "Close reading panel", backToReading: "Back to reading panel" },
+    zh: { readingMaterials: "\u8D44\u6599\u4E0E\u8BB0\u5F55", closeReading: "\u5173\u95ED\u8D44\u6599\u62BD\u5C49", backToReading: "\u8FD4\u56DE\u8D44\u6599\u62BD\u5C49" }
+  };
+  function ReadingLink({ label, summary, onClick, id, expanded }) {
+    return h21(
+      "button",
+      {
+        type: "button",
+        className: "pw-reading-link",
+        id,
+        onClick,
+        "aria-expanded": expanded
+      },
+      h21("span", null, label),
+      summary && h21("span", { className: "pw-reading-link-meta", title: summary }, summary),
+      h21("span", { "aria-hidden": true, className: "pw-reading-chevron" }, "\u203A")
+    );
+  }
+  function focusReader(node, scroll = true) {
+    if (!node) return;
+    if (node.tagName === "DETAILS") node.open = true;
+    const control = node.tagName === "DETAILS" ? node.querySelector("summary") : node;
+    control?.focus({ preventScroll: true });
+    if (scroll) control?.scrollIntoView({ block: "nearest" });
+  }
+  function ReadingLayout({ t, rail, drawer, onClose, scrollMemory, scrollKey, modalActive, children }) {
+    const frame = useRef9(null);
+    const main = useRef9(null);
+    const index = useRef9(null);
+    const reader = useRef9(null);
+    const body = useRef9(null);
+    const bodyContent = useRef9(null);
+    const stopRestore = useRef9(null);
+    const closeButton = useRef9(null);
+    const previous = useRef9(null);
+    const [width, setWidth] = useState12(() => document.documentElement.clientWidth);
+    const [indexOpen, setIndexOpen] = useState12(false);
+    const narrow = width <= 710;
+    const overlay = !!drawer && width < 890;
+    const drawerKey = drawer && (drawer.key ?? drawer.title);
+    const drawerScrollKey = drawerKey && scrollKey && scrollKey + ":drawer:" + (drawer.scrollKey ?? drawerKey);
+    useLayoutEffect2(() => {
+      const element = frame.current;
+      if (!element) return;
+      const measure = () => setWidth(element.clientWidth);
+      measure();
+      const observer = new ResizeObserver(measure);
+      observer.observe(element);
+      return () => observer.disconnect();
+    }, []);
+    useLayoutEffect2(() => {
+      if (main.current) main.current.inert = overlay;
+    }, [overlay]);
+    useLayoutEffect2(() => {
+      if (main.current) main.current.scrollTop = scrollMemory?.[scrollKey] ?? 0;
+    }, [scrollKey, scrollMemory]);
+    useLayoutEffect2(() => {
+      if (drawer) {
+        previous.current = drawer.trigger ?? previous.current;
+        closeButton.current?.focus({ preventScroll: true });
+      } else if (previous.current) {
+        const previousTrigger = previous.current;
+        previous.current = null;
+        if (modalActive) return;
+        const trigger = typeof previousTrigger === "string" ? document.getElementById(previousTrigger) : previousTrigger;
+        const narrowIndex = narrow && index.current?.querySelector("summary");
+        const fallback = narrowIndex || main.current;
+        (trigger?.isConnected && trigger.getClientRects().length ? trigger : fallback)?.focus({ preventScroll: true });
+      }
+    }, [drawerKey]);
+    useLayoutEffect2(() => {
+      const element = body.current;
+      if (!element) return;
+      const saved = scrollMemory?.[drawerScrollKey] ?? 0;
+      element.scrollTop = saved;
+      if (element.scrollTop >= saved || !bodyContent.current) return;
+      const observer = new ResizeObserver(() => {
+        element.scrollTop = saved;
+        if (element.scrollTop >= saved) stopRestore.current?.();
+      });
+      const stop = () => {
+        observer.disconnect();
+        stopRestore.current = null;
+      };
+      stopRestore.current = stop;
+      observer.observe(bodyContent.current);
+      return stop;
+    }, [drawerScrollKey, scrollMemory]);
     useEffect11(() => {
+      if (!drawer?.focusId) return;
+      const target = () => reader.current?.querySelectorAll("[id]");
+      const apply = () => {
+        const match = Array.from(target() ?? []).find((node) => node.id === drawer.focusId);
+        if (!match) return false;
+        focusReader(match, drawer.focusId !== "pw-prd-open-full");
+        return true;
+      };
+      if (apply() || !body.current) return;
+      const observer = new MutationObserver(() => {
+        if (apply()) observer.disconnect();
+      });
+      observer.observe(body.current, { childList: true, subtree: true });
+      return () => observer.disconnect();
+    }, [drawerKey, drawer?.focusId]);
+    useEffect11(() => {
+      if (!overlay || reader.current?.contains(document.activeElement)) return;
+      closeButton.current?.focus({ preventScroll: true });
+    }, [overlay]);
+    const onKeyDown = (event) => {
+      if (event.defaultPrevented || !drawer || modalActive || event.nativeEvent?.isComposing) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+      } else if (event.key === "Tab" && overlay) {
+        const controls = Array.from(reader.current.querySelectorAll("button, a[href], input, select, textarea, summary, [tabindex]")).filter((node) => !node.disabled && node.tabIndex >= 0 && node.getClientRects().length);
+        const first = controls[0];
+        const last = controls.at(-1);
+        if (event.shiftKey && event.target === first || !event.shiftKey && event.target === last) {
+          event.preventDefault();
+          (event.shiftKey ? last : first)?.focus();
+        }
+      }
+    };
+    return h21(
+      "div",
+      {
+        className: "pw-reading-frame" + (rail ? " has-index" : "") + (drawer ? " has-drawer" : "") + (overlay ? " is-overlay" : "") + (narrow ? " is-narrow" : ""),
+        ref: frame,
+        onKeyDown
+      },
+      rail && h21(
+        "details",
+        {
+          className: "pw-reading-index",
+          ref: index,
+          open: !narrow || indexOpen,
+          hidden: !!drawer,
+          onToggle: (event) => {
+            if (narrow && event.target === event.currentTarget) setIndexOpen(event.currentTarget.open);
+          }
+        },
+        h21("summary", null, t("readingMaterials")),
+        h21("div", { className: "pw-reading-index-items", "aria-label": t("readingMaterials") }, rail)
+      ),
+      h21("div", {
+        className: "pw-reading-main",
+        ref: main,
+        tabIndex: -1,
+        onScroll: (event) => {
+          if (scrollMemory && scrollKey) scrollMemory[scrollKey] = event.currentTarget.scrollTop;
+        }
+      }, children),
+      overlay && h21("div", { className: "pw-reading-shade", "aria-hidden": true, onClick: onClose }),
+      drawer && h21(
+        "aside",
+        {
+          className: "pw-reading-drawer",
+          ref: reader,
+          role: overlay ? "dialog" : "complementary",
+          "aria-modal": overlay || void 0,
+          "aria-label": drawer.title
+        },
+        h21(
+          "header",
+          { className: "pw-reading-drawer-head" },
+          h21("h2", null, drawer.title),
+          h21("button", {
+            type: "button",
+            className: "pw-button pw-quiet",
+            ref: closeButton,
+            onClick: onClose,
+            "aria-label": t("closeReading")
+          }, "\xD7")
+        ),
+        h21("div", {
+          className: "pw-reading-drawer-body",
+          ref: body,
+          key: drawerKey,
+          onPointerDown: () => stopRestore.current?.(),
+          onWheel: () => stopRestore.current?.(),
+          onKeyDown: (event) => {
+            if (["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " "].includes(event.key)) stopRestore.current?.();
+          },
+          onScroll: (event) => {
+            if (!stopRestore.current && scrollMemory && drawerScrollKey) scrollMemory[drawerScrollKey] = event.currentTarget.scrollTop;
+          }
+        }, h21("div", { ref: bodyContent }, drawer.body))
+      )
+    );
+  }
+  var readingDrawerCss = `
+.pw-reading-frame{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr);gap:12px;position:relative;flex:1;min-height:0;min-width:0;isolation:isolate;container-type:inline-size}
+.pw-reading-frame.has-index:not(.is-narrow):not(.has-drawer){grid-template-columns:minmax(0,1fr) clamp(182px,24%,270px)}
+.pw-reading-frame.has-drawer:not(.is-overlay){grid-template-columns:minmax(0,1fr) clamp(318px,36%,465px)}
+.pw-reading-main{min-width:0;min-height:0;overflow:auto;grid-column:1;grid-row:1}
+.pw-reading-main:focus:not(:focus-visible){outline:none}
+.pw-reading-main>.pw-subpage{overflow:visible}
+.pw-reading-index{grid-column:2;grid-row:1;min-width:0;min-height:0;overflow:auto;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l3);border-radius:10px;padding:10px}
+.pw-reading-index[hidden],.pw-reading-index>summary{display:none}
+.pw-reading-index-items{display:flex;flex-direction:column}
+.pw-reading-link{width:100%;min-width:0;display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:7px;align-items:center;min-height:44px;border:0;border-block-end:1px solid var(--dsw-alias-border-l3);padding:8px;text-align:start;color:var(--dsw-alias-label-primary);font:inherit;background:none;cursor:pointer;border-radius:4px;overflow-wrap:anywhere}
+.pw-reading-link:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.pw-reading-link:focus-visible,.pw-reading-index>summary:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
+.pw-reading-link-meta{font-size:12px;color:var(--dsw-alias-label-secondary);max-width:10ch;text-overflow:ellipsis;overflow:hidden;white-space:nowrap}
+.pw-reading-chevron{grid-column:3;color:var(--dsw-alias-label-secondary)}
+.pw-reading-frame.is-narrow.has-index:not(.has-drawer){grid-template-rows:auto minmax(0,1fr);gap:8px}
+.pw-reading-frame.is-narrow .pw-reading-index{grid-column:1;grid-row:1;padding:4px 10px;max-height:36dvh}
+.pw-reading-frame.is-narrow .pw-reading-index>summary{display:list-item;cursor:pointer;padding:6px 0;min-height:34px;color:var(--dsw-alias-label-primary)}
+.pw-reading-frame.is-narrow.has-index:not(.has-drawer) .pw-reading-main{grid-row:2}
+.pw-reading-drawer{grid-column:2;grid-row:1;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l3);border-radius:10px}
+.pw-reading-drawer-head{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 13px;border-block-end:1px solid var(--dsw-alias-border-l3)}
+.pw-reading-drawer-head h2{font-size:15px;line-height:1.4;margin:0}
+.pw-reading-drawer-head button{min-width:34px;font-size:18px}
+.pw-reading-drawer-body{min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;padding:13px;overflow-wrap:anywhere}
+.pw-reading-drawer-body>div>.pw-update-list{max-height:none;overflow:visible;gap:0}
+.pw-reading-drawer-body>div>.pw-update-list>.pw-update{background:none;border:0;border-block-end:1px solid var(--dsw-alias-border-l3);border-radius:0;padding:8px 3px;align-items:baseline}
+.pw-reading-drawer-body .pw-prd-reader-inline .pw-prd-scroll{max-height:none;overflow:visible;border:0}
+.pw-reading-drawer-body .pw-prd-reader-inline .pw-prd-article{padding:4px 0}
+.pw-reading-shade{position:absolute;z-index:1;inset:0;border-radius:10px;background:rgb(0 0 0 / 35%)}
+.pw-reading-frame.is-overlay .pw-reading-drawer{position:absolute;grid-area:auto;z-index:2;inset-block:0;inset-inline-end:0;width:min(100%,455px);box-sizing:border-box}
+@container (max-width:530px){.pw-reading-frame.is-overlay .pw-reading-drawer{width:100%}}
+`;
+
+  // client-src/detail/requirement-detail.js
+  var h22 = import_react22.default.createElement;
+  var { useCallback: useCallback4, useEffect: useEffect12, useRef: useRef10, useState: useState13 } = import_react22.default;
+  function useWorkItemDraft(draftKey, item, fieldsOf, onDirty, memory) {
+    const [editing, setEditing] = useState13(() => !!memory.drafts[draftKey]);
+    const [draft, setDraft] = useState13(() => draftOf(memory.drafts, draftKey, fieldsOf(item)));
+    const base = useRef10({ fields: fieldsOf(item), fileHash: item.hash });
+    useEffect12(() => {
       onDirty?.(!!memory.drafts[draftKey]);
     }, [draftKey, onDirty]);
     const begin = () => {
@@ -4952,9 +5600,9 @@ ${detail.trim()}` : value);
     const statusText = t("st_" + issue.status);
     const moves = Object.entries(ISSUE_MOVES[issue.status] ?? {});
     if (req.status !== "in_progress" || req.pendingReopen || !moves.length) {
-      return h21("span", { className: "pw-istatus st-" + issue.status }, statusText);
+      return h22("span", { className: "pw-istatus st-" + issue.status }, statusText);
     }
-    return h21(
+    return h22(
       "select",
       {
         className: "pw-select",
@@ -4963,8 +5611,8 @@ ${detail.trim()}` : value);
         "aria-label": `${issue.title} \xB7 ${statusText}`,
         onChange: (e) => moveIssue(req, issue, e.target.value)
       },
-      h21("option", { value: issue.status, disabled: true }, statusText),
-      moves.map(([status, label]) => h21("option", { key: status, value: status }, t(label)))
+      h22("option", { value: issue.status, disabled: true }, statusText),
+      moves.map(([status, label]) => h22("option", { key: status, value: status }, t(label)))
     );
   }
   var splitLabels = { verified: "splitVerified", assigned: "splitAssigned", gap: "splitGap", unknown: "splitUnknown" };
@@ -4977,10 +5625,10 @@ ${detail.trim()}` : value);
     });
     const unresolved = items.find((item) => item.status === "gap") ?? items.find((item) => item.status === "unknown");
     const assigned = items.find((item) => item.status === "assigned" && item.needsWork && item.taskIds?.length) ?? items.find((item) => item.status === "assigned" && item.taskIds?.length);
-    const taskLinks = (item) => h21("div", { className: "pw-actions" }, item.taskIds?.map((id) => {
+    const taskLinks = (item) => h22("div", { className: "pw-actions" }, item.taskIds?.map((id) => {
       const task = req.issues?.find((task2) => task2.id === id);
       if (!task) return null;
-      return h21(
+      return h22(
         "button",
         { key: id, type: "button", className: "pw-button", onClick: () => onOpenIssue(id) },
         task.title,
@@ -4988,61 +5636,61 @@ ${detail.trim()}` : value);
         t("st_" + task.status)
       );
     }));
-    return h21(
+    return h22(
       "section",
       { className: "pw-result", "aria-label": t("splitReview"), "aria-busy": pending },
-      h21("strong", null, t("splitReview")),
-      pending && h21("p", { className: "pw-text", role: "status" }, t("splitWorking")),
-      counts.length > 0 && h21("p", { className: "pw-text" }, counts.join(" \xB7 ")),
-      unresolved && h21(
-        import_react21.default.Fragment,
+      h22("strong", null, t("splitReview")),
+      pending && h22("p", { className: "pw-text", role: "status" }, t("splitWorking")),
+      counts.length > 0 && h22("p", { className: "pw-text" }, counts.join(" \xB7 ")),
+      unresolved && h22(
+        import_react22.default.Fragment,
         null,
-        h21(ReadText, { value: unresolved.detail, preview: true }),
+        h22(ReadText, { value: unresolved.detail, preview: true }),
         unresolved.taskIds?.length > 0 && taskLinks(unresolved)
       ),
-      assigned && h21(
-        import_react21.default.Fragment,
+      assigned && h22(
+        import_react22.default.Fragment,
         null,
-        h21(ReadText, { value: assigned.detail, preview: true }),
+        h22(ReadText, { value: assigned.detail, preview: true }),
         taskLinks(assigned)
       ),
-      review?.question && h21(ReadText, { value: review.question }),
-      review && !hasDrafts && h21(
+      review?.question && h22(ReadText, { value: review.question }),
+      review && !hasDrafts && h22(
         "p",
         { className: "pw-text" },
         t(items.length && !review.question && items.every((item) => ["verified", "assigned"].includes(item.status)) ? "splitNoNew" : "splitNoDrafts")
       ),
-      items.length > 0 && h21(
+      items.length > 0 && h22(
         Disclosure,
         { label: t("splitDetails") },
-        h21("ul", { className: "pw-reading-list" }, items.map((item) => h21(
+        h22("ul", { className: "pw-reading-list" }, items.map((item) => h22(
           "li",
           { key: item.id },
-          h21("strong", null, t(splitLabels[item.status]), " \xB7 ", item.requirement),
-          h21(ReadText, { value: item.detail }),
+          h22("strong", null, t(splitLabels[item.status]), " \xB7 ", item.requirement),
+          h22(ReadText, { value: item.detail }),
           item.taskIds?.length > 0 && taskLinks(item),
-          item.sources?.map((source) => h21(
+          item.sources?.map((source) => h22(
             "div",
             { key: source.path + source.quote, className: "pw-note" },
-            h21("span", null, source.path),
-            h21(ReadText, { value: source.quote })
+            h22("span", null, source.path),
+            h22(ReadText, { value: source.quote })
           ))
         )))
       ),
-      hasLegacy && !review && h21("p", { className: "pw-text" }, t("splitOld")),
-      h21(ErrorDetails, { error: error ?? readError, t, showRaw: false }),
-      readError && h21("button", { type: "button", className: "pw-button pw-quiet", disabled: pending, onClick: reload }, t("retryRead")),
-      refining ? h21(
+      hasLegacy && !review && h22("p", { className: "pw-text" }, t("splitOld")),
+      h22(ErrorDetails, { error: error ?? readError, t, showRaw: false }),
+      readError && h22("button", { type: "button", className: "pw-button pw-quiet", disabled: pending, onClick: reload }, t("retryRead")),
+      refining ? h22(
         "form",
         { className: "pw-progress-form", onSubmit: (event) => {
           event.preventDefault();
           if (!pending && feedback.trim()) onReview(feedback);
         } },
-        h21(
+        h22(
           "label",
           { className: "pw-field" },
-          h21("span", { className: "pw-label" }, t("splitFeedback")),
-          h21("input", {
+          h22("span", { className: "pw-label" }, t("splitFeedback")),
+          h22("input", {
             type: "text",
             className: "pw-input",
             autoFocus: true,
@@ -5052,47 +5700,81 @@ ${detail.trim()}` : value);
             onChange: (event) => changeFeedback(event.target.value)
           })
         ),
-        h21(
+        h22(
           "div",
           { className: "pw-actions" },
-          h21("button", { type: "submit", className: "pw-button", disabled: pending || !feedback.trim() }, t("splitRethink")),
-          h21("button", { type: "button", className: "pw-button pw-quiet", disabled: pending, onClick: () => showFeedback(false) }, t("cancel"))
+          h22("button", { type: "submit", className: "pw-button", disabled: pending || !feedback.trim() }, t("splitRethink")),
+          h22("button", { type: "button", className: "pw-button pw-quiet", disabled: pending, onClick: () => showFeedback(false) }, t("cancel"))
         )
-      ) : h21(
+      ) : h22(
         "div",
         { className: "pw-actions" },
-        (review || hasDrafts) && h21("button", { type: "button", className: "pw-button pw-quiet", disabled: pending, onClick: () => showFeedback(true) }, t("splitRethink")),
-        (hasLegacy || error) && h21("button", { type: "button", className: "pw-button pw-quiet", disabled: pending, onClick: () => onReview() }, t("splitRetry"))
+        (review || hasDrafts) && h22("button", { type: "button", className: "pw-button pw-quiet", disabled: pending, onClick: () => showFeedback(true) }, t("splitRethink")),
+        (hasLegacy || error) && h22("button", { type: "button", className: "pw-button pw-quiet", disabled: pending, onClick: () => onReview() }, t("splitRetry"))
       )
     );
   }
-  function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenIssue, onCreateTask, projectKey, rootRef, onDirty, busy, sessionId, setModal, uiMemory: uiMemory2, onReorderTask, onStartTask, onApprove, onReject, onMove, initialPrdId, initialDelivery, focusTarget, renderPrds }) {
+  function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenIssue, onCreateTask, projectKey, rootRef, onDirty, busy, sessionId, setModal, uiMemory: uiMemory2, onReorderTask, onStartTask, onApprove, onReject, onMove, initialPrdId, initialDelivery, focusTarget, renderPrds, restorePrds, onClosePrds, modalActive }) {
     const layoutKey = reqDraftKey(projectKey, req.id);
     const form = useWorkItemDraft(layoutKey, req, reqDraftFrom, onDirty, uiMemory2);
-    const [arranging, setArranging] = useState12(false);
-    const [focus, setFocus] = useState12(null);
-    const [prdSummary, setPrdSummary] = useState12(null);
-    const [reportSnapshot, setReportSnapshot] = useState12({ state: "loading" });
-    const [attempted, setAttempted] = useState12(false);
-    const [proposals, setProposals] = useState12([]);
+    const [arranging, setArranging] = useState13(false);
+    const [linear, setLinear] = useState13(false);
+    const [managePrds, setManagePrds] = useState13(false);
+    const [addProgress, setAddProgress] = useState13(false);
+    const [order, setOrder] = useState13(() => savedRequirementOrder(layoutKey, uiMemory2.requirementOrders));
+    const [drawer, setDrawer] = useState13(() => initialPrdId || restorePrds ? {
+      id: "prds",
+      trigger: "pw-req-read-prds",
+      focusId: initialPrdId ? "pw-prd-open-full" : void 0
+    } : null);
+    const taskFilters = uiMemory2.requirementTaskFilters ??= {};
+    const [taskFilter, setTaskFilter] = useState13(() => taskFilters[layoutKey] ?? "");
+    const changeFilter = (next) => {
+      taskFilters[layoutKey] = next;
+      setTaskFilter(next);
+    };
+    const showDrawer = (id, trigger) => {
+      if (drawer?.id === "prds" && id !== "prds") onClosePrds?.();
+      setDrawer({ id, trigger });
+    };
+    const closeDrawer = () => {
+      if (drawer?.id === "prds") onClosePrds?.();
+      setDrawer(null);
+    };
+    const openPrdManagement = () => {
+      closeDrawer();
+      setManagePrds(true);
+      setFocus({ block: "prds", elementId: "pw-prd-associations-" + req.id });
+    };
+    const [focus, setFocus] = useState13(null);
+    const [prdSummary, setPrdSummary] = useState13(null);
+    const [reportSnapshot, setReportSnapshot] = useState13({ state: "loading" });
+    const [attempted, setAttempted] = useState13(false);
+    const [proposals, setProposals] = useState13([]);
     const remembered = uiMemory2.taskReviews[reqDraftKey(projectKey, req.id)] ??= { edits: {} };
-    const [split, setSplit] = useState12(() => remembered.result ?? null);
-    const [feedback, setFeedback] = useState12(() => remembered.feedback ?? "");
-    const [refining, setRefining] = useState12(() => !!remembered.refining);
-    const [splitBusy, setSplitBusy] = useState12(false);
-    const [splitError, setSplitError] = useState12(null);
-    const [readError, setReadError] = useState12(null);
-    const live = useRef8(false);
-    const proposalSeq = useRef8(0);
+    const [split, setSplit] = useState13(() => remembered.result ?? null);
+    const [feedback, setFeedback] = useState13(() => remembered.feedback ?? "");
+    const [refining, setRefining] = useState13(() => !!remembered.refining);
+    const [splitBusy, setSplitBusy] = useState13(false);
+    const [splitError, setSplitError] = useState13(null);
+    const [readError, setReadError] = useState13(null);
+    const live = useRef10(false);
+    const proposalSeq = useRef10(0);
     const mode = req.status === "backlog" ? "organize" : req.status === "in_progress" ? "split" : null;
-    useEffect11(() => {
-      if (initialPrdId) setFocus({ block: "prds" });
-      else if (initialDelivery) setFocus({ block: "delivery" });
-    }, [initialPrdId, initialDelivery]);
-    useEffect11(() => {
+    useEffect12(() => {
+      if (initialPrdId || restorePrds) {
+        setManagePrds(false);
+        setLinear(false);
+        setDrawer((current) => current?.id === "prds" ? current : { id: "prds", trigger: "pw-req-read-prds" });
+      } else if (initialDelivery) {
+        setFocus({ block: "delivery" });
+      }
+    }, [initialPrdId, initialDelivery, restorePrds]);
+    useEffect12(() => {
       if (focusTarget?.startsWith("pw-task-") || focusTarget === "pw-suggest-" + req.id) {
         setFocus({ block: "tasks", elementId: focusTarget });
       } else if (focusTarget === "pw-prd-associations-" + req.id) {
+        setManagePrds(true);
         setFocus({ block: "prds", elementId: focusTarget });
       }
     }, [focusTarget, req.id]);
@@ -5104,7 +5786,7 @@ ${detail.trim()}` : value);
       setReadError(res.ok ? null : res);
       if (res.ok) setProposals(res.data.proposals.filter((p) => p.status === "pending" && p.target.reqId === req.id && p.kind === (mode === "organize" ? "req_draft" : "new_task")));
     }, [root, req.id, mode]);
-    useEffect11(() => {
+    useEffect12(() => {
       live.current = true;
       loadProposals();
       return () => {
@@ -5200,9 +5882,27 @@ ${detail.trim()}` : value);
     const canEdit = !req.pendingReopen && !["pending", "completed"].includes(req.status);
     const editing = form.editing && canEdit;
     const tasks = req.issues ?? [];
+    const mainBlock = req.pendingReopen || ["pending", "completed"].includes(req.status) ? "delivery" : { reviewing: "review", in_progress: "tasks" }[req.status] ?? "basic";
+    const useOrderedLayout = linear || arranging;
+    useEffect12(() => {
+      if (!focus || useOrderedLayout) return;
+      if (focus.block === "tasks" && mainBlock !== "tasks") {
+        setDrawer({ id: "tasks", trigger: "pw-req-read-tasks", focusId: focus.elementId });
+        setFocus(null);
+        return;
+      }
+      if (!focus.elementId) return;
+      const targetTask = tasks.find((task) => "pw-task-" + task.id === focus.elementId);
+      const targetId = targetTask && taskFilter && targetTask.status !== taskFilter ? "pw-req-task-heading" : focus.elementId;
+      const element = document.getElementById(targetId);
+      if (!element) return;
+      element.focus({ preventScroll: true });
+      element.scrollIntoView({ block: "nearest" });
+      setFocus(null);
+    }, [focus, mainBlock, useOrderedLayout, taskFilter, managePrds, req.issues]);
     const canDelete = req.status === "backlog" && !tasks.length && !req.devHistory;
     const organize = () => actProposal("requirement/organize", { root, id: req.id, sessionId });
-    const drafts = mode && h21(DraftSuggestions, { proposals: proposals.filter((proposal) => !isRequirementSplit(proposal)), act: actProposal, root, t, busy });
+    const drafts = mode && h22(DraftSuggestions, { proposals: proposals.filter((proposal) => !isRequirementSplit(proposal)), act: actProposal, root, t, busy });
     const reports = reportSnapshot.reports ?? aiReviewReports(req.reviews);
     const decisions = reviewRecords(req.reviews);
     const reviewCount = reports.length + decisions.filter((record) => record.kind === "review").length;
@@ -5212,50 +5912,53 @@ ${detail.trim()}` : value);
     const delivery = requirementResult(req);
     const deliverySummary = delivery.summary.split(/\r?\n/)[0] || (lastAcceptance ? t(lastAcceptance.decision === "approved" ? "deliveryAccepted" : "deliveryReturned") : t(delivery.previousSummary || delivery.previousCancelImpact ? "previousResult" : "reqNoDelivery"));
     const entries = requirementLogEntries(req, t, reports);
-    const openRecord = (block, group, marker) => setFocus({
-      block,
-      elementId: "pw-requirement-record-" + group + "-" + marker
-    });
+    const openRecord = (block, group, marker) => {
+      const id = "pw-requirement-record-" + group + "-" + marker;
+      if (useOrderedLayout) setFocus({ block, elementId: id });
+      else setDrawer({ id: block, trigger: "pw-req-read-log", focusId: id });
+    };
+    const reviewProps = { req, root, t, busy, sessionId, onApprove, onReject, onReportSnapshot: setReportSnapshot };
+    const addDevelopmentNote = canEdit ? (text) => mutate("requirement/addUpdate", { root, id: req.id, text }) : void 0;
     const blocks = {
       basic: {
         label: t("reqBasic"),
         summary: requirementOverview(req).split(/\r?\n/)[0],
-        body: editing ? h21(
+        body: editing ? h22(
           "form",
           { noValidate: true, onSubmit: (e) => {
             e.preventDefault();
             saveForm();
           } },
-          h21(RequirementFields, { form, t, busy, req }),
-          attempted && h21(ErrorDetails, { error: requirementFormError(form.draft), t, showRaw: false }),
-          h21(
+          h22(RequirementFields, { form, t, busy, req }),
+          attempted && h22(ErrorDetails, { error: requirementFormError(form.draft), t, showRaw: false }),
+          h22(
             "div",
             { className: "pw-actions" },
-            h21("button", { type: "submit", className: "pw-button primary", disabled: busy }, t("save")),
-            h21("button", { type: "button", className: "pw-button", disabled: busy, onClick: form.finish }, t("cancel"))
+            h22("button", { type: "submit", className: "pw-button primary", disabled: busy }, t("save")),
+            h22("button", { type: "button", className: "pw-button", disabled: busy, onClick: form.finish }, t("cancel"))
           )
-        ) : h21(import_react21.default.Fragment, null, h21(RequirementOverview, { req, t }), mode === "organize" && drafts)
+        ) : h22(import_react22.default.Fragment, null, h22(RequirementOverview, { req, t }), mode === "organize" && drafts)
       },
       prds: {
         label: t("reqRelatedPrds"),
         summary: prdSummary ?? t("reqLoadingPrds"),
-        body: renderPrds(setPrdSummary)
+        body: renderPrds(setPrdSummary, { manage: true })
       },
       review: {
         label: t("reqReviews"),
         summary: reviewSummary,
-        body: h21(
-          import_react21.default.Fragment,
+        body: h22(
+          import_react22.default.Fragment,
           null,
-          h21(RequirementReview, { req, root, t, busy, sessionId, onApprove, onReject, onReportSnapshot: setReportSnapshot }),
-          h21(RequirementReviewDecisions, { req, t }),
-          !reviewCount && reportSnapshot.state !== "unavailable" && h21("p", { className: "pw-note" }, reviewSummary)
+          h22(RequirementReview, reviewProps),
+          h22(RequirementReviewDecisions, { req, t }),
+          !reviewCount && reportSnapshot.state !== "unavailable" && h22("p", { className: "pw-note" }, reviewSummary)
         )
       },
       tasks: {
         label: t("reqTasks"),
         summary: tasks.length ? t("reqTasksCount").replace("{n}", String(tasks.length)) : t("reqNoTasks"),
-        body: h21(
+        body: h22(
           IssueSidebar,
           {
             req,
@@ -5266,8 +5969,10 @@ ${detail.trim()}` : value);
             busy,
             onReorderTask,
             onStartTask,
+            filter: useOrderedLayout || mainBlock !== "tasks" ? "" : taskFilter,
+            onFilter: changeFilter,
             onSuggest: mode === "split" && !editing ? () => suggestSplit() : void 0,
-            suggestionReview: mode === "split" && !req.pendingReopen && !editing && h21(TaskSuggestionReview, {
+            suggestionReview: mode === "split" && !req.pendingReopen && !editing && h22(TaskSuggestionReview, {
               review: split?.review,
               req,
               t,
@@ -5285,10 +5990,10 @@ ${detail.trim()}` : value);
               showFeedback
             })
           },
-          mode === "split" && !req.pendingReopen && !editing && h21(
-            import_react21.default.Fragment,
+          mode === "split" && !req.pendingReopen && !editing && h22(
+            import_react22.default.Fragment,
             null,
-            h21(DraftSuggestions, {
+            h22(DraftSuggestions, {
               key: split?.proposalIds?.join(",") ?? "",
               proposals: splitDrafts,
               act: actSplit,
@@ -5305,21 +6010,17 @@ ${detail.trim()}` : value);
       development: {
         label: t("reqDevelopment"),
         summary: developmentSummary ?? t("reqNoDevelopment"),
-        body: h21(RequirementDevelopment, {
-          req,
-          t,
-          onAdd: canEdit ? (text) => mutate("requirement/addUpdate", { root, id: req.id, text }) : void 0
-        })
+        body: h22(RequirementDevelopment, { req, t, onAdd: addDevelopmentNote })
       },
       delivery: {
         label: t("reqDelivery"),
         summary: deliverySummary,
-        body: h21(RequirementDelivery, { req, t, onMove, busy })
+        body: h22(RequirementDelivery, { req, t, onMove, busy })
       },
       log: {
         label: t("reqLog"),
         summary: entries[0]?.summary ?? t("requirementLogEmpty"),
-        body: h21(RequirementLog, {
+        body: h22(RequirementLog, {
           entries,
           t,
           onOpenIssue,
@@ -5329,97 +6030,336 @@ ${detail.trim()}` : value);
         })
       }
     };
-    return h21(
+    const readOnlyBodies = {
+      basic: h22(RequirementOverview, { req, t }),
+      prds: h22(
+        import_react22.default.Fragment,
+        null,
+        h22(
+          "div",
+          { className: "pw-req-drawer-actions" },
+          h22("button", { type: "button", className: "pw-button pw-quiet", onClick: openPrdManagement }, t("reqManagePrds"))
+        ),
+        renderPrds(setPrdSummary, { readOnly: true })
+      ),
+      review: h22(
+        import_react22.default.Fragment,
+        null,
+        reportSnapshot.state === "unavailable" && h22(
+          "div",
+          { className: "pw-actions", role: "status" },
+          h22("span", { className: "pw-note" }, t("errUnreadable")),
+          h22("button", { type: "button", className: "pw-button pw-quiet", onClick: reportSnapshot.retry }, t("retryRead"))
+        ),
+        h22(RequirementReviewHistory, { reports, t }),
+        h22(RequirementReviewDecisions, { req, t }),
+        !reviewCount && reportSnapshot.state !== "unavailable" && h22("p", { className: "pw-note" }, reviewSummary)
+      ),
+      development: h22(RequirementDevelopment, { req, t }),
+      delivery: mainBlock === "delivery" ? h22(
+        import_react22.default.Fragment,
+        null,
+        !lastAcceptance && h22("p", { className: "pw-note" }, t("reqNoDelivery")),
+        h22(RequirementDecisionRecords, { records: decisions.filter((item) => item.kind === "acceptance"), group: "delivery", t })
+      ) : h22(RequirementDelivery, { req, t }),
+      tasks: h22(IssueSidebar, { req, t, onOpenIssue, busy, readOnly: true }),
+      log: blocks.log.body
+    };
+    const rail = order.filter((id) => id !== mainBlock || ["review", "delivery"].includes(id)).map((id) => {
+      const block = blocks[id];
+      const summary = ["prds", "review", "tasks"].includes(id) ? block.summary : void 0;
+      return h22(ReadingLink, {
+        key: id,
+        id: "pw-req-read-" + id,
+        label: block.label,
+        summary,
+        onClick: (event) => showDrawer(id, event.currentTarget)
+      });
+    });
+    const transition = !req.pendingReopen && {
+      backlog: ["reviewing", "submitReview"],
+      ready: ["in_progress", "startDev"],
+      in_progress: ["pending", "submit"]
+    }[req.status];
+    const transitionButton = transition && h22("button", {
+      type: "button",
+      className: "pw-button" + (mainBlock === "basic" ? " primary" : ""),
+      disabled: busy,
+      onClick: () => onMove(req, transition[0])
+    }, t(transition[1]));
+    const activeDrawer = !editing && !managePrds && !useOrderedLayout && drawer && {
+      title: blocks[drawer.id].label,
+      key: drawer.id,
+      scrollKey: drawer.id === "prds" ? "prds:" + (initialPrdId ?? "") : drawer.id,
+      body: readOnlyBodies[drawer.id],
+      trigger: drawer.trigger,
+      focusId: drawer.focusId
+    };
+    const regular = !editing && !managePrds && !useOrderedLayout;
+    const detailContent = editing ? blocks.basic.body : managePrds ? h22(
+      import_react22.default.Fragment,
+      null,
+      h22("button", { type: "button", className: "pw-button pw-quiet", onClick: () => setManagePrds(false) }, t("reqReturnToDetail")),
+      blocks.prds.body
+    ) : useOrderedLayout ? h22(RequirementLayout, {
+      blocks,
+      layoutKey,
+      status: req.status,
+      uiMemory: uiMemory2,
+      t,
+      focus,
+      arranging,
+      onFinish: () => setArranging(false),
+      onOrderChange: setOrder
+    }) : h22(
+      import_react22.default.Fragment,
+      null,
+      mainBlock !== "basic" && blocks.basic.summary && h22("p", { className: "pw-text pw-req-lead" }, blocks.basic.summary),
+      renderPrds(setPrdSummary, { summaryOnly: true }),
+      h22(RequirementReview, { ...reviewProps, recentOnly: true, snapshotOnly: mainBlock !== "review" }),
+      mainBlock === "delivery" ? h22(
+        "section",
+        null,
+        h22("h3", { className: "pw-requirement-section-title" }, t("reqDeliveryCurrent")),
+        h22(RequirementDelivery, { req, t, onMove, busy, showHistory: false })
+      ) : mainBlock !== "review" && blocks[mainBlock].body,
+      mainBlock === "tasks" && addProgress && h22(RequirementDevelopment, {
+        req,
+        t,
+        writeOnly: true,
+        onAdd: addDevelopmentNote && (async (text) => {
+          const result = await addDevelopmentNote(text);
+          if (result.ok && live.current) setAddProgress(false);
+          return result;
+        })
+      })
+    );
+    const content = h22(
       "section",
-      { className: "pw-subpage pw-read-card", "aria-label": t("detail") },
-      h21(
+      { className: "pw-subpage pw-read-card pw-requirement-page", "aria-label": t("detail") },
+      h22(
         "header",
         { className: "pw-subpage-head" },
-        h21(
+        h22(
           "div",
           { className: "pw-read-title" },
-          h21("h2", null, req.title),
-          h21("span", { className: "pw-count pw-read-status", "data-status": req.status }, t("col_" + req.status)),
-          req.updated && h21("span", { className: "pw-note" }, t("updated"), " ", dateText(req.updated))
+          h22("h2", null, req.title),
+          h22("span", { className: "pw-count pw-read-status", "data-status": req.status }, t("col_" + req.status)),
+          req.updated && h22("span", { className: "pw-note" }, t("updated"), " ", dateText(req.updated))
         ),
-        !arranging && h21(
+        !arranging && !managePrds && h22(
           "div",
-          { className: "pw-actions" },
-          canEdit && !form.editing && h21("button", { className: "pw-button", onClick: () => {
+          { className: "pw-actions pw-req-head-actions" },
+          regular && transitionButton,
+          canEdit && !form.editing && h22("button", { type: "button", className: "pw-button", onClick: () => {
+            closeDrawer();
             setAttempted(false);
             form.begin();
-            setFocus({ block: "basic" });
           } }, t("edit")),
-          h21(
+          h22(
             "details",
             { className: "pw-disclosure pw-detail-more" },
-            h21("summary", null, t("requirementActions")),
-            h21(
+            h22("summary", null, t("requirementActions")),
+            h22(
               "div",
               { className: "pw-actions" },
-              h21("button", { className: "pw-button", onClick: () => setArranging(true) }, t("reqBlockOrder")),
-              req.status === "backlog" && !editing && h21("button", { className: "pw-button", disabled: busy, onClick: organize }, t("aiOrganize")),
-              canDelete && !editing && h21("button", { className: "pw-button danger", disabled: busy, onClick: onDelete }, t("delete"))
+              !editing && h22("button", { type: "button", className: "pw-button", onClick: () => {
+                closeDrawer();
+                setArranging(true);
+              } }, t("reqBlockOrder")),
+              !editing && h22(
+                "button",
+                { type: "button", className: "pw-button", onClick: () => {
+                  closeDrawer();
+                  setLinear(!linear);
+                } },
+                t(linear ? "reqReturnToDetail" : "reqReadInOrder")
+              ),
+              regular && h22("button", { type: "button", className: "pw-button", onClick: openPrdManagement }, t("reqManagePrds")),
+              regular && mainBlock === "tasks" && addDevelopmentNote && h22("button", {
+                type: "button",
+                className: "pw-button",
+                onClick: () => setAddProgress(!addProgress),
+                "aria-expanded": addProgress
+              }, t("recordProgress")),
+              req.status === "backlog" && !editing && h22("button", { className: "pw-button", disabled: busy, onClick: organize }, t("aiOrganize")),
+              canDelete && !editing && h22("button", { className: "pw-button danger", disabled: busy, onClick: onDelete }, t("delete"))
             )
           )
         )
       ),
-      h21(RequirementLayout, { blocks, layoutKey, status: req.status, uiMemory: uiMemory2, t, focus, arranging, onFinish: () => setArranging(false) })
+      detailContent
     );
+    return h22(ReadingLayout, {
+      t,
+      rail: regular && rail,
+      drawer: activeDrawer,
+      onClose: closeDrawer,
+      modalActive,
+      scrollMemory: uiMemory2.detailScroll ??= {},
+      scrollKey: layoutKey
+    }, content);
   }
-  function IssueSidebar({ req, t, moveIssue, onOpenIssue, onCreateTask, busy, onSuggest, onReorderTask, onStartTask, suggestionReview, children }) {
-    const locked = req.status !== "in_progress" || !!req.pendingReopen;
+  function IssueSidebar({
+    req,
+    t,
+    moveIssue,
+    onOpenIssue,
+    onCreateTask,
+    busy,
+    onSuggest,
+    onReorderTask,
+    onStartTask,
+    suggestionReview,
+    filter = "",
+    onFilter,
+    readOnly,
+    children
+  }) {
+    const [sorting, setSorting] = useState13(false);
+    const locked = readOnly || req.status !== "in_progress" || !!req.pendingReopen;
     const tasks = sortedTasks(req.issues);
-    return h21(
+    const visible = sorting || !filter ? tasks : tasks.filter((task) => task.status === filter);
+    const done = tasks.filter((task) => task.status === "done").length;
+    const cancelled = tasks.filter((task) => task.status === "cancelled").length;
+    const effective = tasks.length - cancelled;
+    const flags = [["blocked", "devBlocked"], ["in_review", "devInReview"]].map(([status, label]) => [status, label, tasks.filter((task) => task.status === status).length]);
+    return h22(
       "section",
-      { className: "pw-issues pw-issue-list", "aria-label": t("issues") },
-      h21(
+      { className: "pw-req-tasks", "aria-label": t("reqTasks") },
+      !locked && !!tasks.length && h22(
         "div",
-        { className: "pw-colhead" },
-        h21("strong", null, t("issues")),
-        h21("span", { className: "pw-count" }, String(tasks.length)),
-        !locked && h21(
+        { className: "pw-req-progress" },
+        h22(
           "div",
-          { className: "pw-actions", style: { marginInlineStart: "auto" } },
-          h21("button", { className: "pw-button", disabled: busy, onClick: onCreateTask }, t("newTask")),
-          onSuggest && h21("button", { id: "pw-suggest-" + req.id, className: "pw-button", disabled: busy, onClick: onSuggest }, t("aiSplit"))
+          { className: "pw-req-progress-heading" },
+          h22("strong", null, t("reqProgress")),
+          h22("span", null, t("reqActiveTasks").replace("{done}", String(done)).replace("{total}", String(effective)))
+        ),
+        effective > 0 && h22("progress", { value: done, max: effective, "aria-label": t("reqProgress") }),
+        h22(
+          "div",
+          { className: "pw-actions" },
+          flags.filter(([status, , count]) => count || filter === status).map(([status, label, count]) => h22("button", {
+            type: "button",
+            key: status,
+            className: "pw-button pw-quiet pw-task-filter",
+            onClick: () => onFilter?.(status === filter ? "" : status),
+            "aria-pressed": status === filter,
+            disabled: sorting
+          }, t(label).replace("{n}", String(count)))),
+          cancelled > 0 && h22("span", { className: "pw-note" }, t("cancelledCount").replace("{n}", String(cancelled)))
+        )
+      ),
+      h22(
+        "div",
+        { className: "pw-req-task-head" },
+        h22("h3", { id: "pw-req-task-heading", tabIndex: -1 }, t("reqTasks"), " ", h22("span", { className: "pw-count" }, String(tasks.length))),
+        !locked && h22(
+          "div",
+          { className: "pw-actions" },
+          h22("button", { type: "button", className: "pw-button", disabled: busy, onClick: onCreateTask }, t("newTask")),
+          onSuggest && h22("button", { type: "button", id: "pw-suggest-" + req.id, className: "pw-button pw-quiet", disabled: busy, onClick: onSuggest }, t("aiSplit")),
+          tasks.length > 1 && onReorderTask && h22("button", {
+            type: "button",
+            className: "pw-button pw-quiet",
+            disabled: busy,
+            onClick: () => setSorting(!sorting),
+            "aria-pressed": sorting
+          }, t(sorting ? "reqFinishOrder" : "reqTaskOrder"))
         )
       ),
       suggestionReview,
-      !tasks.length && h21("p", { className: "pw-note" }, t("reqNoTasks")),
-      tasks.map((i, index) => h21(
-        "div",
-        { key: i.id, className: "pw-issue" },
-        !locked && h21(
-          "span",
-          { className: "pw-order" },
-          h21("button", { className: "pw-orderbtn", disabled: busy || index === 0, "aria-label": t("moveUp"), title: t("moveUp"), onClick: () => onReorderTask(i.id, "up") }, "\u2191"),
-          h21("button", { className: "pw-orderbtn", disabled: busy || index === tasks.length - 1, "aria-label": t("moveDown"), title: t("moveDown"), onClick: () => onReorderTask(i.id, "down") }, "\u2193")
-        ),
-        h21(
-          "button",
-          { id: "pw-task-" + i.id, className: "pw-issue-title", onClick: () => onOpenIssue(i.id), title: i.title },
-          h21("span", { className: "pw-preview" }, i.title),
-          h21("span", { "aria-hidden": true }, "\u203A")
-        ),
-        h21(IssueStatusSelect, { req, issue: i, t, moveIssue, busy }),
-        !locked && onStartTask && ["todo", "doing", "blocked"].includes(i.status) && h21(
-          "button",
-          { className: "pw-button pw-quiet pw-startbtn", disabled: busy, onClick: () => onStartTask(i.id) },
-          t(i.status === "todo" ? "startTask" : "demoContinue")
-        )
-      )),
+      !visible.length && h22("p", { className: "pw-note", role: "status" }, t(filter ? "noResults" : "reqNoTasks")),
+      filter && !sorting && h22("button", { type: "button", className: "pw-button pw-quiet", onClick: () => onFilter?.("") }, t("reqClearTaskFilter")),
+      !!visible.length && h22(
+        "table",
+        { className: "pw-req-task-table" },
+        h22("thead", null, h22(
+          "tr",
+          null,
+          h22("th", { scope: "col" }, t("issueTitle")),
+          h22("th", { scope: "col" }, t("reqTaskStatus")),
+          !locked && h22("th", { scope: "col" }, t("reqTaskOperations"))
+        )),
+        h22("tbody", null, visible.map((task, index) => h22(
+          "tr",
+          { key: task.id },
+          h22(
+            "td",
+            null,
+            h22("button", { type: "button", id: "pw-task-" + task.id, className: "pw-issue-title", onClick: () => onOpenIssue(task.id) }, task.title)
+          ),
+          h22("td", null, readOnly ? h22("span", { className: "pw-istatus st-" + task.status }, t("st_" + task.status)) : h22(IssueStatusSelect, { req, issue: task, t, moveIssue, busy })),
+          !locked && h22("td", null, sorting ? h22(
+            "span",
+            { className: "pw-actions" },
+            h22("button", {
+              type: "button",
+              className: "pw-orderbtn",
+              disabled: busy || index === 0,
+              "aria-label": t("moveUp") + " \xB7 " + task.title,
+              onClick: () => onReorderTask(task.id, "up")
+            }, "\u2191"),
+            h22("button", {
+              type: "button",
+              className: "pw-orderbtn",
+              disabled: busy || index === tasks.length - 1,
+              "aria-label": t("moveDown") + " \xB7 " + task.title,
+              onClick: () => onReorderTask(task.id, "down")
+            }, "\u2193")
+          ) : task.status === "in_review" ? h22("button", {
+            type: "button",
+            className: "pw-button pw-quiet pw-startbtn",
+            disabled: busy,
+            "aria-label": `${t("taskGoToAcceptance")} \xB7 ${task.title}`,
+            onClick: () => onOpenIssue(task.id, true)
+          }, t("taskGoToAcceptance")) : onStartTask && ["todo", "doing", "blocked"].includes(task.status) && h22(
+            "button",
+            { type: "button", className: "pw-button pw-quiet pw-startbtn", disabled: busy, onClick: () => onStartTask(task.id) },
+            t(task.status === "todo" ? "startTask" : "demoContinue")
+          ))
+        )))
+      ),
       children
     );
   }
+  var requirementDetailCss = `
+.pw-req-drawer-actions{margin-block-end:8px}
+.pw-req-head-actions{justify-content:flex-end;max-width:100%}
+.pw-req-lead{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;color:var(--dsw-alias-label-secondary);max-width:55em;margin:0 0 16px}
+.pw-req-progress{padding:13px 14px;margin:0 0 18px;border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:var(--dsw-alias-bg-base)}
+.pw-req-progress-heading{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 12px}
+.pw-req-progress-heading span{font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary)}
+.pw-req-progress progress{width:100%;height:6px;appearance:none;margin-block:12px 5px;display:block;accent-color:var(--dsw-alias-brand-primary)}
+.pw-req-progress progress::-webkit-progress-bar{background:var(--dsw-alias-bg-layer-2);border-radius:4px}
+.pw-req-progress progress::-webkit-progress-value{background:var(--dsw-alias-brand-primary);border-radius:4px}
+.pw-req-progress .pw-task-filter[aria-pressed="true"]{background:var(--dsw-alias-interactive-bg-active)}
+.pw-req-task-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.pw-req-task-head h3,.pw-requirement-section-title{font-size:16px;margin:0}
+.pw-req-task-table{border-collapse:collapse;width:100%;margin-block:5px 12px;text-align:start}
+.pw-req-task-table th{font-weight:500;color:var(--dsw-alias-label-secondary);font-size:12px;text-align:start;line-height:1.4}
+.pw-req-task-table :is(th,td){border-block-end:1px solid var(--dsw-alias-border-l3);padding:5px 5px;vertical-align:middle}
+.pw-req-task-table td:first-child{width:100%;padding-inline-start:0}
+.pw-req-task-table .pw-issue-title{white-space:normal;display:block;min-height:44px;overflow-wrap:anywhere;width:100%}
+.pw-req-task-table .pw-select{width:100%;min-width:max-content}
+.pw-req-task-table .pw-startbtn{min-height:30px;white-space:nowrap}
+.pw-req-task-table td:not(:first-child){min-width:74px}
+.pw-req-task-table .pw-istatus{white-space:normal}
+@container (max-width:540px){
+  .pw-requirement-page{padding:14px}
+  .pw-req-head-actions{justify-content:flex-start}
+  .pw-req-task-table td:not(:first-child){min-width:62px}
+}
+`;
 
   // client-src/detail/task-detail.js
-  var import_react23 = __toESM(__require("react"), 1);
+  var import_react24 = __toESM(__require("react"), 1);
 
   // client-src/detail/acceptance-assist.js
-  var import_react22 = __toESM(__require("react"), 1);
-  var h22 = import_react22.default.createElement;
-  var { useEffect: useEffect12, useRef: useRef9, useState: useState13 } = import_react22.default;
+  var import_react23 = __toESM(__require("react"), 1);
+  var h23 = import_react23.default.createElement;
+  var { useEffect: useEffect13, useRef: useRef11, useState: useState14 } = import_react23.default;
   var acceptanceAssistLocale = {
     zh: {
       acceptanceHelp: "\u4EFB\u52A1\u9A8C\u6536\u8F85\u52A9",
@@ -5528,16 +6468,16 @@ ${detail.trim()}` : value);
   var notify = (entry) => {
     for (const listener of entry.listeners) listener();
   };
-  function AcceptanceAssist({ req, issue, root, sessionId, t, busy = false, onRunningChange, memory, compact = false }) {
-    const localMemory = useRef9({});
+  function AcceptanceAssist({ req, issue, root, sessionId, t, busy = false, onRunningChange, memory, compact = false, showInstructions = true }) {
+    const localMemory = useRef11({});
     const cache = (memory ?? localMemory.current).acceptanceAssist ??= {};
     const entry = cache[JSON.stringify([root, req.id, issue.id])] ??= { pending: "", results: {}, error: null, listeners: /* @__PURE__ */ new Set() };
-    const [, redraw] = useState13(0);
-    const runningCallback = useRef9(onRunningChange);
+    const [, redraw] = useState14(0);
+    const runningCallback = useRef11(onRunningChange);
     const context = JSON.stringify([req.hash, req.status, issue.hash, issue.status]);
     const reviewable = req.status === "in_progress" && !req.pendingReopen && issue.status === "in_review";
     runningCallback.current = onRunningChange;
-    useEffect12(() => {
+    useEffect13(() => {
       const listener = () => {
         redraw((n) => n + 1);
         runningCallback.current?.(!!entry.pending);
@@ -5573,114 +6513,121 @@ ${detail.trim()}` : value);
       const result = entry.results[kind];
       if (!result) return null;
       const stale = !!result.stale || !!result.outdated || result.context !== context || !!(sessionId && result.sessionId && sessionId !== result.sessionId);
-      const staleNotice = stale && h22("p", { className: "pw-note", role: "status" }, t(result.outdated ? "acceptanceRetryStale" : "acceptanceStale"));
+      const staleNotice = stale && h23("p", { className: "pw-note", role: "status" }, t(result.outdated ? "acceptanceRetryStale" : "acceptanceStale"));
       if (kind === "guide") {
-        if (result.guideStatus !== "steps") return h22(
-          import_react22.default.Fragment,
-          null,
-          staleNotice,
-          h22("p", { className: "pw-note", role: "status" }, t(result.guideStatus === "not_needed" ? "acceptanceGuideNotNeeded" : "acceptanceGuideUnknown"))
-        );
+        if (result.guideStatus !== "steps") {
+          const notNeeded = result.guideStatus === "not_needed";
+          return h23(
+            import_react23.default.Fragment,
+            null,
+            staleNotice,
+            h23(
+              "p",
+              { className: notNeeded ? "pw-note pw-assist-hint" : "pw-note", role: "status" },
+              t(notNeeded ? "acceptanceGuideNotNeeded" : "acceptanceGuideUnknown")
+            )
+          );
+        }
         const sources = result.sources ?? [];
-        return h22(
+        return h23(
           "section",
           { className: "pw-reading-block pw-assist-report", "aria-label": t("acceptanceGuideSteps") },
           staleNotice,
-          h22("h4", null, t("acceptanceGuideSteps")),
-          h22("ol", { className: "pw-reading-list pw-guide-steps" }, result.steps.map(({ action, expected }, index) => h22(
+          h23("h4", null, t("acceptanceGuideSteps")),
+          h23("ol", { className: "pw-reading-list pw-guide-steps" }, result.steps.map(({ action, expected }, index) => h23(
             "li",
             { key: index },
-            h22("span", null, action),
-            h22("p", { className: "pw-note" }, t("acceptanceGuideExpected"), " \xB7 ", expected)
+            h23("span", null, action),
+            h23("p", { className: "pw-note" }, t("acceptanceGuideExpected"), " \xB7 ", expected)
           ))),
-          sources.length < result.sourcesRequested && h22("p", { className: "pw-note" }, t("acceptanceSourcesInsufficient")),
-          h22(
+          sources.length < result.sourcesRequested && h23("p", { className: "pw-note" }, t("acceptanceSourcesInsufficient")),
+          h23(
             "details",
             { className: "pw-disclosure pw-assist-disclosure" },
-            h22("summary", null, t("acceptanceSources")),
-            sources.map((source, index) => h22(
+            h23("summary", null, t("acceptanceSources")),
+            sources.map((source, index) => h23(
               "div",
               { key: index, className: "pw-reading-block" },
-              h22("strong", null, source.path),
-              h22("p", { className: "pw-text" }, source.quote)
+              h23("strong", null, source.path),
+              h23("p", { className: "pw-text" }, source.quote)
             )),
-            h22("p", { className: "pw-note" }, t("acceptanceSourcesScope")),
-            h22("p", { className: "pw-note" }, t("acceptanceSourceLimit")),
-            result.childId && h22("p", { className: "pw-note" }, t("acceptanceSession"), "\uFF1A", result.childId)
+            h23("p", { className: "pw-note" }, t("acceptanceSourcesScope")),
+            h23("p", { className: "pw-note" }, t("acceptanceSourceLimit")),
+            result.childId && h23("p", { className: "pw-note" }, t("acceptanceSession"), "\uFF1A", result.childId)
           )
         );
       }
       const commands = Array.isArray(result.commands) ? result.commands : [];
-      const report = h22(
+      const report = h23(
         "section",
         { className: "pw-reading-block pw-assist-report", "aria-label": t("acceptanceVerify") },
         !compact && staleNotice,
-        h22("p", { className: "pw-note" }, t("acceptanceSourceLimit")),
-        h22("h4", null, t("acceptanceReport")),
-        h22("p", { className: "pw-text", style: { whiteSpace: "pre-wrap" } }, typeof result.report === "string" && result.report.trim() ? result.report : t("acceptanceNoReport")),
-        result.childId && h22("p", { className: "pw-note" }, t("acceptanceSession"), "\uFF1A", result.childId),
-        h22("h4", null, t("acceptanceCommands")),
-        result.commandsUnavailable && h22("p", { className: "pw-note" }, t("acceptanceCommandsUnavailable")),
-        !result.commandsUnavailable && !commands.length && h22("p", { className: "pw-note" }, t("acceptanceNoCommands")),
-        commands.length > 0 && h22("p", { className: "pw-note" }, t("acceptanceOutputLimit")),
-        commands.map((command, index) => h22(
+        h23("p", { className: "pw-note" }, t("acceptanceSourceLimit")),
+        h23("h4", null, t("acceptanceReport")),
+        h23("p", { className: "pw-text", style: { whiteSpace: "pre-wrap" } }, typeof result.report === "string" && result.report.trim() ? result.report : t("acceptanceNoReport")),
+        result.childId && h23("p", { className: "pw-note" }, t("acceptanceSession"), "\uFF1A", result.childId),
+        h23("h4", null, t("acceptanceCommands")),
+        result.commandsUnavailable && h23("p", { className: "pw-note" }, t("acceptanceCommandsUnavailable")),
+        !result.commandsUnavailable && !commands.length && h23("p", { className: "pw-note" }, t("acceptanceNoCommands")),
+        commands.length > 0 && h23("p", { className: "pw-note" }, t("acceptanceOutputLimit")),
+        commands.map((command, index) => h23(
           "div",
           { key: index, className: "pw-reading-block" },
-          h22("strong", null, t("acceptanceCommand")),
-          h22("pre", { className: "pw-text", style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, command?.command || t("acceptanceUnknown")),
-          h22("strong", null, t("acceptanceOutcome")),
-          h22("p", { className: "pw-text" }, outcomeText(command?.outcome, t)),
-          h22("strong", null, t("acceptanceTestConclusion")),
-          h22(
+          h23("strong", null, t("acceptanceCommand")),
+          h23("pre", { className: "pw-text", style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, command?.command || t("acceptanceUnknown")),
+          h23("strong", null, t("acceptanceOutcome")),
+          h23("p", { className: "pw-text" }, outcomeText(command?.outcome, t)),
+          h23("strong", null, t("acceptanceTestConclusion")),
+          h23(
             "p",
             { className: "pw-text" },
             t(command?.testConclusion === "passed" ? "acceptanceTestPassed" : command?.testConclusion === "failed" ? "acceptanceTestFailed" : "acceptanceTestUnknown")
           ),
-          command?.testSummary && h22(import_react22.default.Fragment, null, h22("strong", null, t("acceptanceTestSummary")), h22("p", { className: "pw-text" }, command.testSummary)),
-          h22("strong", null, t("acceptanceOutput")),
-          h22("pre", { className: "pw-text", style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, command?.output || t("acceptanceNoOutput"))
+          command?.testSummary && h23(import_react23.default.Fragment, null, h23("strong", null, t("acceptanceTestSummary")), h23("p", { className: "pw-text" }, command.testSummary)),
+          h23("strong", null, t("acceptanceOutput")),
+          h23("pre", { className: "pw-text", style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, command?.output || t("acceptanceNoOutput"))
         ))
       );
       if (!compact) return report;
       const failed = commands.some((command) => command?.testConclusion === "failed");
-      return h22(
-        import_react22.default.Fragment,
+      return h23(
+        import_react23.default.Fragment,
         null,
-        h22(
+        h23(
           "details",
           { className: "pw-disclosure pw-assist-disclosure" },
-          h22("summary", null, t("acceptanceCheckReport")),
+          h23("summary", null, t("acceptanceCheckReport")),
           report
         ),
         staleNotice,
-        failed && h22("p", { className: "pw-error", role: "status" }, t("acceptanceTestFailed"))
+        failed && h23("p", { className: "pw-error", role: "status" }, t("acceptanceTestFailed"))
       );
     };
     if (!reviewable) return null;
-    const button2 = (kind, label) => h22("button", {
+    const button2 = (kind, label) => h23("button", {
       type: "button",
       className: "pw-button",
       disabled: busy || !!entry.pending,
       onClick: () => run(kind)
     }, t(label));
-    const help = (label) => h22("p", { className: "pw-note" }, t(label));
-    return h22(
+    const help = (label) => h23("p", { className: "pw-note" }, t(label));
+    return h23(
       "section",
       { className: "pw-reading-block pw-acceptance-assist", "aria-label": t("acceptanceHelp"), "aria-busy": !!entry.pending },
-      h22("h3", { className: "pw-reading-label" }, t("acceptanceHelp")),
-      compact ? h22(
-        import_react22.default.Fragment,
+      h23("h3", { className: "pw-reading-label" }, t("acceptanceHelp")),
+      compact ? h23(
+        import_react23.default.Fragment,
         null,
-        h22("div", { className: "pw-assist-actions" }, button2("verify", "acceptanceVerify"), button2("guide", "acceptanceGuide")),
-        help("acceptanceRunHint"),
-        h22(
+        h23("div", { className: "pw-assist-actions" }, button2("verify", "acceptanceVerify"), button2("guide", "acceptanceGuide")),
+        h23("p", { className: "pw-note pw-assist-hint" }, t("acceptanceRunHint")),
+        showInstructions && h23(
           "details",
           { className: "pw-disclosure pw-assist-disclosure" },
-          h22("summary", null, t("acceptanceHelpDetails")),
-          h22("div", { className: "pw-assist-report" }, help("acceptanceVerifyNotice"), help("acceptanceGuideNotice"), help("acceptanceStayOpen"))
+          h23("summary", null, t("acceptanceHelpDetails")),
+          h23("div", { className: "pw-assist-report" }, help("acceptanceVerifyNotice"), help("acceptanceGuideNotice"), help("acceptanceStayOpen"))
         )
-      ) : h22(
-        import_react22.default.Fragment,
+      ) : h23(
+        import_react23.default.Fragment,
         null,
         help("acceptanceStayOpen"),
         help("acceptanceVerifyNotice"),
@@ -5688,31 +6635,120 @@ ${detail.trim()}` : value);
         help("acceptanceGuideNotice"),
         button2("guide", "acceptanceGuide")
       ),
-      entry.pending && h22("p", { className: "pw-note", role: "status" }, t("acceptanceHelpRunning")),
-      entry.error && h22("p", { className: "pw-error", role: "alert" }, t("acceptanceHelpError"), entry.error.code ? ` \xB7 ${entry.error.code}` : "", entry.error.message ? `\uFF1A${entry.error.message}` : ""),
+      entry.pending && h23("p", { className: "pw-note", role: "status" }, t("acceptanceHelpRunning")),
+      entry.error && h23("p", { className: "pw-error", role: "alert" }, t("acceptanceHelpError"), entry.error.code ? ` \xB7 ${entry.error.code}` : "", entry.error.message ? `\uFF1A${entry.error.message}` : ""),
       renderResult("verify"),
       renderResult("guide")
     );
   }
 
   // client-src/detail/task-detail.js
-  var h23 = import_react23.default.createElement;
-  var { useEffect: useEffect13, useState: useState14 } = import_react23.default;
-  function IssueDetail({ issue, req, t, root, mutate, openWikiPage, openTask, onStartTask, onMoveIssue, projectKey, rootRef, onDirty, busy, uiMemory: uiMemory2, editFocus, runFact }) {
+  var h24 = import_react24.default.createElement;
+  var { useEffect: useEffect14, useState: useState15 } = import_react24.default;
+  var prdTrigger = "pw-task-prds";
+  var taskDetailLocale = {
+    zh: {
+      taskInfo: "\u4EFB\u52A1\u4FE1\u606F",
+      taskOpenInfo: "\u67E5\u770B\u8BE6\u60C5",
+      taskInfoEmpty: "\u5C1A\u672A\u8BB0\u5F55\u64CD\u4F5C\u6B65\u9AA4\u3001\u6839\u56E0\u6216\u8865\u5145\u8BF4\u660E\u3002",
+      taskReadProgress: "\u67E5\u770B\u5B8C\u6574\u8FDB\u5C55",
+      taskPreviousEvidence: "\u6B64\u524D\u7684\u4EBA\u5DE5\u9A8C\u8BC1\u8BB0\u5F55",
+      taskObjectiveRecords: "\u6587\u4EF6\u53D8\u66F4\u4E0E\u547D\u4EE4\u8BB0\u5F55",
+      taskNoVerificationRecords: "\u6682\u65E0\u9A8C\u8BC1\u8BB0\u5F55",
+      taskReviewRecords: "\u9A8C\u8BC1\u8BB0\u5F55",
+      taskOpenRecords: "\u6253\u5F00\u9A8C\u8BC1\u8BB0\u5F55",
+      taskGoToAcceptance: "\u53BB\u9A8C\u6536",
+      taskAccept: "\u901A\u8FC7\u9A8C\u6536",
+      taskReject: "\u9A73\u56DE\u9A8C\u6536",
+      taskReviewTitle: "\u9A8C\u6536\u4EFB\u52A1",
+      taskReviewInstruction: "\u6838\u5BF9\u5B8C\u6210\u6807\u51C6\u548C\u672C\u8F6E\u7ED3\u679C\u3002",
+      taskReviewNeedsResult: "\u6682\u4E0D\u80FD\u901A\u8FC7\u3002\u8BF7\u9A73\u56DE\u5E76\u8865\u9F50\u672C\u8F6E\u7ED3\u679C\u6216\u9A8C\u8BC1\u8BB0\u5F55\uFF0C\u518D\u91CD\u65B0\u63D0\u4EA4\u3002",
+      taskReviewAssistRunning: "\u9A8C\u6536\u8F85\u52A9\u6B63\u5728\u8FD0\u884C\uFF0C\u7ED3\u675F\u540E\u53EF\u63D0\u4EA4\u9A8C\u6536\u7ED3\u8BBA\u3002",
+      taskReviewChecks: "\u672C\u8F6E\u68C0\u67E5",
+      taskReviewIncomplete: "{n} \u9879\u68C0\u67E5\u5F85\u6838\u5B9E",
+      taskReviewUnverified: "{n} \u9879\u6539\u52A8\u5F85\u6838\u5B9E",
+      taskReviewOldResult: "\u5DF2\u6709\u4E0A\u6B21\u7ED3\u679C\uFF0C\u53EF\u5728\u9A8C\u8BC1\u8BB0\u5F55\u4E2D\u67E5\u770B\u3002",
+      taskConfirmAccept: "\u786E\u8BA4\u901A\u8FC7\u9A8C\u6536",
+      taskRejectHint: "\u5199\u4E0B\u54EA\u91CC\u51FA\u4E86\u95EE\u9898\uFF0C\u4EE5\u53CA\u5E0C\u671B\u600E\u6837\u4FEE\u6539\u3002",
+      taskConfirmReject: "\u786E\u8BA4\u9A73\u56DE",
+      taskRejectEffect: "\u786E\u8BA4\u540E\uFF0C\u4EFB\u52A1\u56DE\u5230\u300C\u8FDB\u884C\u4E2D\u300D\u3002\u4FEE\u6539\u610F\u89C1\u4F1A\u4FDD\u5B58\u5230\u4EFB\u52A1\u8BB0\u5F55\u3002",
+      taskRejected: "\u9A8C\u6536\u672A\u901A\u8FC7\uFF0C\u5DF2\u9000\u56DE\u4FEE\u6539",
+      taskReworkNext: "\u7EE7\u7EED\u5904\u7406\u3002\u4FEE\u6539\u540E\u8BB0\u5F55\u65B0\u7ED3\u679C\u548C\u9A8C\u8BC1\u4F9D\u636E\uFF0C\u518D\u91CD\u65B0\u63D0\u4EA4\u9A8C\u6536\u3002",
+      taskReworkReady: "\u672C\u8F6E\u5DF2\u6709\u65B0\u7684\u7ED3\u679C\u3002\u6838\u5BF9\u540E\u53EF\u91CD\u65B0\u63D0\u4EA4\u9A8C\u6536\u3002"
+    },
+    en: {
+      taskInfo: "Task information",
+      taskOpenInfo: "View details",
+      taskInfoEmpty: "No steps, root cause, or additional notes have been recorded.",
+      taskReadProgress: "Read full progress",
+      taskPreviousEvidence: "Previous manual verification record",
+      taskObjectiveRecords: "File changes and command records",
+      taskNoVerificationRecords: "No verification records yet",
+      taskReviewRecords: "Verification records",
+      taskOpenRecords: "Open verification records",
+      taskGoToAcceptance: "Review task",
+      taskAccept: "Accept task",
+      taskReject: "Reject and return",
+      taskReviewTitle: "Review for acceptance",
+      taskReviewInstruction: "Check the result against the completion criteria, then accept or return the task.",
+      taskReviewNeedsResult: "This round needs a new result or verification record. Return the task for changes before resubmitting it.",
+      taskReviewAssistRunning: "Wait for acceptance assistance to finish before making a decision.",
+      taskReviewChecks: "Checks this round",
+      taskReviewIncomplete: "{n} checks to verify",
+      taskReviewUnverified: "{n} changes to verify",
+      taskReviewOldResult: "A previous result is available in the verification records.",
+      taskConfirmAccept: "Confirm task acceptance",
+      taskRejectHint: "Describe what went wrong and what you want changed.",
+      taskConfirmReject: "Confirm return",
+      taskRejectEffect: "The task will move back to In progress. Your feedback will be saved in its activity.",
+      taskRejected: "Acceptance failed. Returned for changes.",
+      taskReworkNext: "Continue the work. After making the changes, record a new result and verification, then resubmit.",
+      taskReworkReady: "A new result is available. Check it and resubmit the task for acceptance."
+    }
+  };
+  function IssueDetail({
+    issue,
+    req,
+    t,
+    root,
+    mutate,
+    openWikiPage,
+    openTask,
+    onStartTask,
+    onMoveIssue,
+    projectKey,
+    rootRef,
+    onDirty,
+    busy,
+    uiMemory: uiMemory2,
+    editFocus,
+    runFact,
+    renderPrds,
+    initialPrdId,
+    restorePrds,
+    onClosePrds,
+    modalActive
+  }) {
     const form = useWorkItemDraft(issueDraftKey(projectKey, req.id, issue.id), issue, issueDraftFrom, onDirty, uiMemory2);
-    const [formError, setFormError] = useState14(null);
-    const [formFocus, setFormFocus] = useState14("title");
-    const [recording, setRecording] = useState14(false);
-    const [supplementing, setSupplementing] = useState14(false);
-    const [supplement, setSupplement] = useState14("");
-    const [notice, setNotice] = useState14("");
-    const [assistRunning, setAssistRunning] = useState14(false);
-    useEffect13(() => {
+    const [formError, setFormError] = useState15(null);
+    const [formFocus, setFormFocus] = useState15("title");
+    const [recording, setRecording] = useState15(false);
+    const [supplementing, setSupplementing] = useState15(false);
+    const [supplement, setSupplement] = useState15("");
+    const [notice, setNotice] = useState15("");
+    const [assistRunning, setAssistRunning] = useState15(false);
+    const [drawerView, setDrawerView] = useState15(() => initialPrdId || restorePrds ? { kind: "prds", trigger: prdTrigger, returnFocus: !!initialPrdId } : null);
+    const [prdSummary, setPrdSummary] = useState15(void 0);
+    const scrollMemory = uiMemory2.detailScroll ??= {};
+    useEffect14(() => {
       if (editFocus && !["done", "cancelled"].includes(issue.status)) {
         setFormFocus(editFocus);
         form.begin();
       }
     }, []);
+    useEffect14(() => {
+      if (initialPrdId || restorePrds) setDrawerView((previous) => previous?.kind === "prds" ? previous : { kind: "prds", trigger: prdTrigger });
+    }, [initialPrdId, restorePrds]);
     const save = async () => {
       if (busy) return;
       const invalid = taskFormError(form.draft);
@@ -5732,13 +6768,27 @@ ${detail.trim()}` : value);
     };
     const terminal = ["done", "cancelled"].includes(issue.status);
     const editing = form.editing && !terminal;
+    const overview = taskOverview(issue);
+    const description = issue.description?.trim();
+    const supplementary = description !== overview ? description : "";
+    const hasExtraInfo = !!(issue.triggerPath?.trim() || issue.rootCause?.trim() || supplementary || issue.refs?.length);
+    const infoOpen = drawerView?.kind === "info";
     const inactive = req.status !== "in_progress" || !!req.pendingReopen;
     const mayRecord = !inactive && ["todo", "doing", "blocked"].includes(issue.status);
     const reviewing = !inactive && issue.status === "in_review";
-    const hasResult = !!taskResult(issue, req.deliveryStartedAt).summary;
+    const result = taskResult(issue, req.deliveryStartedAt);
+    const hasResult = !!result.summary;
+    const reviewReady = hasResult && !!String(effectiveEvidence(issue)).trim();
+    const reworkReason = mayRecord && taskReworkReason(issue);
     const missing = startBlockers(issue);
     const runLocked = !!runFact && (["starting", "running"].includes(runFact.runState) || runFact.sessionRunning);
+    const showDrawer = (kind, trigger, initialProgress) => {
+      if (drawerView?.kind === "prds" && kind !== "prds") onClosePrds?.();
+      setDrawerView(kind ? { kind, trigger, initialProgress } : null);
+    };
+    const closeDrawer = () => showDrawer(null);
     const begin = (focus = "title") => {
+      closeDrawer();
       setFormFocus(focus);
       setFormError(null);
       form.begin();
@@ -5761,84 +6811,279 @@ ${detail.trim()}` : value);
         setNotice(t("supplementSaved"));
       }
     };
-    const actions = h23(
+    const reviewNotice = runLocked ? "runRunning" : assistRunning ? "taskReviewAssistRunning" : !reviewReady ? "taskReviewNeedsResult" : null;
+    const reviewStep = reviewing && h24(
+      "section",
+      { className: "pw-task-review-step", "aria-labelledby": "pw-task-acceptance" },
+      h24(
+        "div",
+        { className: "pw-task-review-head" },
+        h24(
+          "div",
+          null,
+          h24("h3", { id: "pw-task-acceptance", tabIndex: -1 }, t("taskReviewTitle")),
+          h24("p", { className: "pw-note" }, t("taskReviewInstruction"))
+        ),
+        h24(
+          "div",
+          { className: "pw-actions" },
+          h24("button", {
+            id: "pw-task-accept",
+            type: "button",
+            className: "pw-button primary",
+            disabled: busy || !!reviewNotice,
+            "aria-describedby": reviewNotice ? "pw-task-review-notice" : void 0,
+            onClick: () => onMoveIssue("done", "pw-task-accept")
+          }, t("taskAccept")),
+          h24("button", {
+            id: "pw-task-reject",
+            type: "button",
+            className: "pw-button",
+            disabled: busy || runLocked || assistRunning,
+            onClick: () => onMoveIssue("doing", "pw-task-reject")
+          }, t("taskReject"))
+        )
+      ),
+      reviewNotice && h24("p", { id: "pw-task-review-notice", className: "pw-note pw-task-review-notice", role: "status" }, t(reviewNotice))
+    );
+    const actions = h24(
       "div",
       { className: "pw-actions" },
-      reviewing && h23("button", {
-        className: "pw-button primary",
-        disabled: busy || runLocked || assistRunning || !hasResult,
-        onClick: () => onMoveIssue("done")
-      }, t("demoConfirm")),
-      reviewing && h23("button", {
-        className: "pw-button",
-        disabled: busy || runLocked || assistRunning,
-        onClick: () => onMoveIssue("todo")
-      }, t("reviseTask")),
-      !terminal && !inactive && ["todo", "doing", "blocked"].includes(issue.status) && h23(
+      mayRecord && h24(
         "button",
-        { className: "pw-button primary", disabled: busy || runLocked, title: runLocked ? t("runRunning") : void 0, onClick: startWork },
+        { className: "pw-button" + (reworkReason && reviewReady ? "" : " primary"), disabled: busy || runLocked, title: runLocked ? t("runRunning") : void 0, onClick: startWork },
         t(missing.length ? "completeTaskInfo" : issue.status === "todo" ? "startTask" : "demoContinue")
       ),
-      issue.status === "blocked" && !inactive && h23("button", { className: "pw-button", disabled: busy, onClick: () => setSupplementing((v) => !v) }, t("supplement")),
-      h23("button", { className: "pw-button", disabled: busy, onClick: () => openTask(issue.id) }, t("openTaskSession")),
-      mayRecord && hasResult && h23("button", {
-        className: "pw-button",
+      issue.status === "blocked" && !inactive && h24("button", { className: "pw-button", disabled: busy, onClick: () => setSupplementing((v) => !v) }, t("supplement")),
+      mayRecord && (reworkReason ? reviewReady : hasResult) && h24("button", {
+        className: "pw-button" + (reworkReason ? " primary" : ""),
         disabled: busy || runLocked,
         onClick: () => mutate("issue/move", { root, reqId: req.id, id: issue.id, to: "in_review", fileHash: issue.hash })
       }, t("submitTaskAcceptance")),
-      mayRecord && h23("button", { className: "pw-button pw-quiet", disabled: busy, onClick: () => setRecording(true) }, t("recordTaskResult"))
+      h24("button", { className: "pw-button", disabled: busy, onClick: () => openTask(issue.id) }, t("openTaskSession")),
+      mayRecord && h24("button", { className: "pw-button pw-quiet", disabled: busy, onClick: () => {
+        closeDrawer();
+        setRecording(true);
+      } }, t("recordTaskResult"))
     );
-    return h23(
-      "section",
-      { className: "pw-subpage pw-issue-page" + (editing ? "" : " pw-read-card"), "aria-label": t("issueDetail") },
-      h23(
-        "header",
-        { className: "pw-subpage-head" },
-        h23(
-          "div",
-          { className: "pw-read-title" },
-          h23("h2", null, issue.title),
-          h23("span", { className: "pw-count pw-read-status", "data-status": issue.status }, t("st_" + issue.status))
-        ),
-        !editing && !terminal && h23("button", { className: "pw-button", onClick: () => begin() }, t("edit"))
-      ),
-      notice && h23("p", { className: "pw-note", role: "status" }, notice),
-      runLocked && !editing && h23("p", { className: "pw-note", role: "status" }, t("runRunning")),
-      editing ? h23(TaskForm, { form: { ...form, change: (...args) => {
-        setFormError(null);
-        form.change(...args);
-      } }, t, busy, focus: formFocus, error: formError, onSave: save, onCancel: form.finish }) : h23(
-        TaskReading,
-        { task: issue, since: req.deliveryStartedAt, t, openWikiPage, onAdd: terminal || inactive ? void 0 : (text) => mutate("issue/addUpdate", { root, reqId: req.id, id: issue.id, text }) },
-        inactive && h23("p", { className: "pw-note" }, t(req.pendingReopen ? "errReopenPending" : "errNotActive")),
-        reviewing && h23(AcceptanceAssist, { req, issue, root, t, busy: busy || runLocked, memory: uiMemory2, onRunningChange: setAssistRunning }),
-        actions,
-        supplementing && h23(
-          "form",
-          { className: "pw-progress-form", onSubmit: saveSupplement },
-          h23("textarea", { className: "pw-textarea", autoFocus: true, rows: 3, "aria-label": t("supplement"), placeholder: t("supplementPlaceholder"), value: supplement, onChange: (e) => setSupplement(e.target.value) }),
-          h23(
+    const readProgress = (event, activityKey) => {
+      const index = progressRecords(issue.activity, t, "issue").findIndex((entry2) => entry2.key === activityKey);
+      const entry = index >= 0 ? taskProgressRecords(issue.activity, t)[index] : null;
+      showDrawer("progress", event.currentTarget, entry?.id);
+    };
+    const readEvidence = (event) => drawerView?.kind === "evidence" ? closeDrawer() : showDrawer("evidence", event.currentTarget);
+    const rail = editing ? null : h24(
+      import_react24.default.Fragment,
+      null,
+      renderPrds && h24(ReadingLink, {
+        id: prdTrigger,
+        label: t("reqRelatedPrds"),
+        summary: prdSummary,
+        expanded: drawerView?.kind === "prds",
+        onClick: (event) => showDrawer("prds", event.currentTarget)
+      }),
+      h24(ReadingLink, { label: t("progressRecords"), expanded: drawerView?.kind === "progress", onClick: readProgress }),
+      !reviewing && hasTaskVerificationRecords(issue, result) && h24(ReadingLink, { label: t("verifyRecords"), expanded: drawerView?.kind === "evidence", onClick: readEvidence })
+    );
+    let drawer = null;
+    if (!editing && drawerView) {
+      const { kind, trigger, initialProgress } = drawerView;
+      if (kind === "info") drawer = {
+        key: kind,
+        trigger,
+        title: t("taskInfo"),
+        body: h24(
+          "section",
+          { className: "pw-task-info-body", tabIndex: 0, "aria-label": t("taskInfo") },
+          h24(ReadingText, { label: t("taskOverviewField"), value: overview || t("taskMissing") }),
+          h24(ReadingText, { label: t("taskSteps"), value: issue.triggerPath }),
+          h24(ReadingText, { label: t("taskCause"), value: issue.rootCause }),
+          h24(ReadingText, { label: t("taskSupplement"), value: supplementary }),
+          issue.refs?.length > 0 && h24(
             "div",
-            { className: "pw-actions" },
-            h23("button", { type: "submit", className: "pw-button", disabled: busy || !supplement.trim() }, t("saveSupplement")),
-            h23("button", { type: "button", className: "pw-button pw-quiet", disabled: busy, onClick: () => setSupplementing(false) }, t("cancel"))
-          )
+            { className: "pw-reading-block" },
+            h24("h3", { className: "pw-reading-label" }, t("refs")),
+            h24(TaskReferences, { refs: issue.refs, openWikiPage })
+          ),
+          !hasExtraInfo && h24("p", { className: "pw-text pw-note" }, t("taskInfoEmpty"))
         )
-      ),
-      recording && h23(TaskResultForm, {
-        task: issue,
-        since: req.deliveryStartedAt,
-        t,
-        busy,
-        onClose: () => setRecording(false),
-        onSave: (params) => mutate("issue/update", { root, reqId: req.id, id: issue.id, ...params }, { inlineError: true })
-      })
+      };
+      if (kind === "prds" && renderPrds) drawer = {
+        key: kind,
+        scrollKey: initialPrdId,
+        trigger,
+        title: t("reqRelatedPrds"),
+        focusId: drawerView.returnFocus ? "pw-prd-open-full" : void 0,
+        body: renderPrds(setPrdSummary, { readOnly: true })
+      };
+      if (kind === "evidence") drawer = { key: kind, trigger, title: t("taskReviewRecords"), body: h24(TaskVerificationRecords, { task: issue, t, since: req.deliveryStartedAt }) };
+      if (kind === "progress") drawer = {
+        key: kind,
+        trigger,
+        title: t("progressRecords"),
+        focusId: initialProgress && "pw-task-current-progress",
+        body: h24(UpdateLog, {
+          key: initialProgress,
+          activity: issue.activity,
+          t,
+          timeline: true,
+          userFacing: true,
+          openWikiPage,
+          initialProgress,
+          showTimelineHeading: false
+        })
+      };
+    }
+    const scrollKey = `${projectKey}:${issue.id}` + (reviewing ? `:review:${issue.inReviewAt || issue.deliveryStartedAt || 0}` : "");
+    return h24(
+      ReadingLayout,
+      { t, rail, drawer, onClose: closeDrawer, scrollMemory, scrollKey, modalActive: modalActive || recording },
+      !editing && drawerView?.kind !== "prds" && renderPrds?.(setPrdSummary, { summaryOnly: true }),
+      h24(
+        "section",
+        { className: "pw-subpage pw-issue-page" + (editing ? "" : " pw-read-card"), "aria-label": t("issueDetail") },
+        h24(
+          "header",
+          { className: "pw-subpage-head" },
+          h24(
+            "div",
+            { className: "pw-read-title" },
+            h24("h2", { id: "pw-task-title", tabIndex: -1, "aria-describedby": "pw-task-status" }, issue.title),
+            h24("span", { id: "pw-task-status", className: "pw-count pw-read-status", "data-status": issue.status }, t("st_" + issue.status))
+          ),
+          !editing && !terminal && h24("button", { className: "pw-button", onClick: () => begin() }, t("edit"))
+        ),
+        !editing && h24(
+          "section",
+          { className: "pw-task-info", "aria-labelledby": "pw-task-info-heading" },
+          h24(
+            "div",
+            { className: "pw-task-info-head" },
+            h24("h3", { id: "pw-task-info-heading", className: "pw-reading-label" }, t("taskInfo")),
+            h24("button", {
+              type: "button",
+              className: "pw-button",
+              "aria-expanded": infoOpen,
+              onClick: (event) => infoOpen ? closeDrawer() : showDrawer("info", event.currentTarget)
+            }, t("taskOpenInfo"), h24("span", { className: "pw-reading-chevron", "aria-hidden": true }, "\u203A"))
+          ),
+          h24("p", { className: "pw-text pw-preview" }, overview || t("taskMissing"))
+        ),
+        notice && h24("p", { className: "pw-note", role: "status" }, notice),
+        runLocked && !editing && !reviewing && h24("p", { className: "pw-note", role: "status" }, t("runRunning")),
+        editing ? h24(TaskForm, { form: { ...form, change: (...args) => {
+          setFormError(null);
+          form.change(...args);
+        } }, t, busy, focus: formFocus, error: formError, onSave: save, onCancel: form.finish }) : h24(
+          import_react24.default.Fragment,
+          null,
+          reviewStep,
+          reworkReason && h24(
+            "section",
+            { className: "pw-task-review-step", "aria-labelledby": "pw-task-rework" },
+            h24("h3", { id: "pw-task-rework", tabIndex: -1 }, t("taskRejected")),
+            h24("p", { className: "pw-text" }, reworkReason),
+            h24("p", { className: "pw-note" }, t(reviewReady ? "taskReworkReady" : "taskReworkNext")),
+            actions
+          ),
+          h24(
+            TaskReading,
+            {
+              task: issue,
+              since: req.deliveryStartedAt,
+              t,
+              hidePriorResult: !!reworkReason && !hasResult,
+              evidenceOpen: drawerView?.kind === "evidence",
+              reviewTools: reviewing && h24(AcceptanceAssist, {
+                req,
+                issue,
+                root,
+                t,
+                compact: true,
+                showInstructions: false,
+                busy: busy || runLocked,
+                memory: uiMemory2,
+                onRunningChange: setAssistRunning
+              }),
+              onReadProgress: readProgress,
+              onReadEvidence: readEvidence,
+              onAdd: terminal || inactive ? void 0 : (text) => mutate("issue/addUpdate", { root, reqId: req.id, id: issue.id, text })
+            },
+            inactive && h24("p", { className: "pw-note" }, t(req.pendingReopen ? "errReopenPending" : "errNotActive")),
+            !reworkReason && actions,
+            supplementing && h24(
+              "form",
+              { className: "pw-progress-form", onSubmit: saveSupplement },
+              h24("textarea", { className: "pw-textarea", autoFocus: true, rows: 3, "aria-label": t("supplement"), placeholder: t("supplementPlaceholder"), value: supplement, onChange: (e) => setSupplement(e.target.value) }),
+              h24(
+                "div",
+                { className: "pw-actions" },
+                h24("button", { type: "submit", className: "pw-button", disabled: busy || !supplement.trim() }, t("saveSupplement")),
+                h24("button", { type: "button", className: "pw-button pw-quiet", disabled: busy, onClick: () => setSupplementing(false) }, t("cancel"))
+              )
+            )
+          )
+        ),
+        recording && h24(TaskResultForm, {
+          task: issue,
+          since: req.deliveryStartedAt,
+          t,
+          busy,
+          onClose: () => setRecording(false),
+          onSave: (params) => mutate("issue/update", { root, reqId: req.id, id: issue.id, ...params }, { inlineError: true })
+        })
+      )
     );
   }
+  var taskDetailCss = `
+.pw-task-info{display:grid;gap:4px;padding-block-end:10px;margin-block-end:14px;border-block-end:1px solid var(--dsw-alias-border-l3)}
+.pw-task-info-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px 12px}
+.pw-task-info-head .pw-reading-label,.pw-task-info .pw-preview{margin:0}
+.pw-task-info .pw-preview{line-height:1.5}
+.pw-task-info-head .pw-reading-chevron{margin-inline-start:6px}
+.pw-task-info-body{line-height:1.6}
+.pw-task-info-body:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:3px}
+.pw-issue-page .pw-task-reading{container-type:inline-size;max-width:none;gap:18px}
+.pw-task-reading>.pw-reading-block,.pw-task-acceptance>.pw-reading-block,.pw-task-progress-preview{max-inline-size:46em}
+.pw-issue-page .pw-task-acceptance{max-width:none;gap:14px}
+.pw-task-review-step{display:grid;gap:8px;padding:12px 14px;margin-block-end:16px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base)}
+.pw-task-review-head,.pw-task-review-checks{display:flex;align-items:center;justify-content:space-between;gap:8px 16px;flex-wrap:wrap}
+.pw-task-review-head>div:first-child{flex:1 1 240px}
+.pw-task-review-step h3{margin:0;font-size:1.08em}
+.pw-task-review-step :is(.pw-note,.pw-text){margin:0;line-height:1.55;overflow-wrap:anywhere}
+.pw-task-review-step .pw-note,.pw-task-review-checks .pw-note{color:var(--dsw-alias-label-secondary)}
+.pw-task-review-step .pw-task-review-notice{color:var(--dsw-alias-label-primary);border-block-start:1px solid var(--dsw-alias-border-l3);padding-block-start:8px}
+.pw-task-review-step .pw-button,.pw-task-review-checks .pw-button{min-height:34px;max-width:100%;overflow-wrap:anywhere}
+.pw-task-review-compare{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}
+.pw-task-review-compare>.pw-reading-block{min-width:0;padding:10px 14px;border:1px solid var(--dsw-alias-border-l3);border-radius:8px}
+.pw-task-review-checks{border-block-start:1px solid var(--dsw-alias-border-l3);padding-block-start:10px}
+.pw-task-review-checks .pw-note{margin:0}
+.pw-task-review-checks .pw-reading-chevron{margin-inline-start:6px}
+.pw-task-acceptance .pw-acceptance-assist{border-block-start:1px solid var(--dsw-alias-border-l3);padding-block-start:10px;overflow-wrap:anywhere}
+.pw-task-acceptance .pw-assist-actions>.pw-button{flex:0 1 auto}
+.pw-task-acceptance .pw-assist-hint{margin:2px 0 0;color:var(--dsw-alias-label-secondary);font-size:.86em;line-height:1.4}
+.pw-task-acceptance .pw-assist-actions+.pw-assist-hint{margin-block-start:6px}
+.pw-task-verification-pair{display:grid;gap:12px;align-items:start;grid-template-columns:minmax(0,1fr)}
+.pw-task-verification-pair>*{min-inline-size:0}
+.pw-task-verification{padding-block:7px}
+.pw-task-verification>.pw-quiet{padding-inline:0;color:var(--dsw-alias-brand-primary);margin-top:3px}
+@container (min-width:545px){
+  .pw-task-verification-pair:has(.pw-reading-criteria){grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px}
+  .pw-task-verification-pair:has(.pw-reading-criteria)>.pw-task-verification{padding-inline-start:16px;border-inline-start:1px solid var(--dsw-alias-border-l3)}
+}
+@container (min-width:475px){.pw-task-review-compare{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}}
+.pw-task-progress-preview{padding-block-start:10px;border-block-start:1px solid var(--dsw-alias-border-l3)}
+.pw-task-progress-preview .pw-text{margin:0 0 6px}
+.pw-task-progress-preview .pw-actions>.pw-quiet{padding-inline:7px}
+.pw-task-progress-records .pw-progress-item[open] summary .pw-preview{display:block}
+.pw-task-evidence,.pw-task-info-body{display:grid;gap:12px;min-width:0}
+:is(.pw-task-evidence,.pw-task-info-body) :is(.pw-reading-block,.pw-text){margin-block:0}
+.pw-task-evidence .pw-text{white-space:pre-wrap;overflow-wrap:anywhere}
+`;
 
   // client-src/shell/main-shell.js
-  var h24 = import_react24.default.createElement;
-  var { useCallback: useCallback5, useEffect: useEffect14, useRef: useRef10, useState: useState15 } = import_react24.default;
+  var h25 = import_react25.default.createElement;
+  var { useCallback: useCallback5, useEffect: useEffect15, useRef: useRef12, useState: useState16 } = import_react25.default;
   var EMPTY_WORKSPACES = [];
   var useNoWorkspaces = (selector) => selector({ items: EMPTY_WORKSPACES });
   var useNoSessionStatus = () => void 0;
@@ -5864,7 +7109,7 @@ ${detail.trim()}` : value);
   ]);
   var diagListView = (diags, t) => {
     const labels = new Set(diags.map((d) => diagnosticLabels.get(d.code) ?? "diagInconsistent"));
-    return h24("ul", { className: "pw-diaglist" }, Array.from(labels, (label) => h24("li", { key: label }, t(label))));
+    return h25("ul", { className: "pw-diaglist" }, Array.from(labels, (label) => h25("li", { key: label }, t(label))));
   };
   var PAGE_COMPONENTS = { home: HomePage, pool: PoolPage, review: ReviewPage, ready: ReadyPage, dev: DevPage, blocked: BlockedPage, board: BoardPage, pending: PendingPage, records: RecordsPage };
   var pageLabel = (page) => ({ home: "navHome", pool: "navPool", review: "navReview", ready: "navReady", dev: "navDev", blocked: "navBlocked", board: "navBoard", pending: "navPending", records: "navRecords", wiki: "navWiki", arch: "navArch", prds: "navPrds", sync: "viewSync" })[page] ?? "navHome";
@@ -5875,10 +7120,10 @@ ${detail.trim()}` : value);
     const sessionRoot = session?.cwd;
     const sessionIndex = useSessions((s) => s?.byId ?? {});
     const sessionStatus = (useSessionStatus ?? useNoSessionStatus)((s) => s);
-    const sessionStatusRef = useRef10(sessionStatus);
+    const sessionStatusRef = useRef12(sessionStatus);
     sessionStatusRef.current = sessionStatus;
-    const mountedRef = useRef10(true);
-    useEffect14(() => {
+    const mountedRef = useRef12(true);
+    useEffect15(() => {
       mountedRef.current = true;
       return () => {
         mountedRef.current = false;
@@ -5887,57 +7132,58 @@ ${detail.trim()}` : value);
     const useWorkspaceList = useWorkspaces ?? useNoWorkspaces;
     const workspaces = useWorkspaceList((s) => s?.items ?? EMPTY_WORKSPACES) ?? EMPTY_WORKSPACES;
     const workspaceOptions = useWorkspaces ? workspaces : foldersFromSessions(sessionIndex);
-    const [picked, setPicked] = useState15(() => uiMemory2.picked ?? null);
+    const [picked, setPicked] = useState16(() => uiMemory2.picked ?? null);
     const pickedWorkspace = picked?.id ? workspaces.find((w) => w.workspaceId === picked.id) : void 0;
     const removedWorkspace = !!picked?.id && !pickedWorkspace;
     const root = picked?.id ? pickedWorkspace?.path : picked?.path;
     const currentWorkspace = pickedWorkspace;
     const wsTitle = currentWorkspace?.title || baseName2(root) || t("title");
     const projectKey = picked?.id ? "id:" + picked.id : root ? "path:" + root : "";
-    const prevKey = useRef10(projectKey);
+    const prevKey = useRef12(projectKey);
     const keyChanged = prevKey.current !== projectKey;
     prevKey.current = projectKey;
-    const rootRef = useRef10(root);
+    const rootRef = useRef12(root);
     const rootChanged = rootRef.current !== root;
     rootRef.current = root;
-    const [nav, setNav] = useState15(() => normalizeViewState(uiMemory2.views[projectKey]));
-    const navRef = useRef10(nav);
+    const [nav, setNav] = useState16(() => normalizeViewState(uiMemory2.views[projectKey]));
+    const navRef = useRef12(nav);
     navRef.current = nav;
-    const lastWritten = useRef10(uiMemory2.views[projectKey]);
-    const [data, setData] = useState15(null);
-    const [error, setError] = useState15("");
-    const [notice, setNotice] = useState15("");
-    const [home, setHome] = useState15(null);
-    const [homeError, setHomeError] = useState15(null);
-    const [runFacts, setRunFacts] = useState15(null);
-    const [runError, setRunError] = useState15(null);
-    const runAuthSnapshot = useRef10(null);
-    const [blocked, setBlocked] = useState15({ proposals: null, deliveryFailed: [] });
-    const [modal, setModal] = useState15(null);
-    const modalRef = useRef10(modal);
+    const lastWritten = useRef12(uiMemory2.views[projectKey]);
+    const [data, setData] = useState16(null);
+    const [error, setError] = useState16("");
+    const [notice, setNotice] = useState16("");
+    const [home, setHome] = useState16(null);
+    const [homeError, setHomeError] = useState16(null);
+    const [runFacts, setRunFacts] = useState16(null);
+    const [runError, setRunError] = useState16(null);
+    const runAuthSnapshot = useRef12(null);
+    const [blocked, setBlocked] = useState16({ proposals: null, deliveryFailed: [] });
+    const [modal, setModal] = useState16(null);
+    const modalRef = useRef12(modal);
     modalRef.current = modal;
-    const [saving, setSaving] = useState15(false);
+    const [saving, setSaving] = useState16(false);
     const reorderMemory = uiMemory2.reorders ??= {};
-    const [, setReorderRevision] = useState15(0);
+    const [, setReorderRevision] = useState16(0);
     const pendingReorder = reorderMemory[projectKey];
-    const [focusTarget, setFocusTarget] = useState15("");
-    const [editFocus, setEditFocus] = useState15(null);
-    const [undo, setUndo] = useState15(null);
-    const [git, setGit] = useState15(null);
-    const [wsMenu, setWsMenu] = useState15(false);
-    const wsAnchor = useRef10(null);
-    const [newDraft, setNewDraft] = useState15(() => uiMemory2.newRequirements[projectKey] ?? emptyRequirementDraft);
-    const [detailDirty, setDetailDirty] = useState15(false);
-    const listSeq = useRef10(0);
-    const gitSeq = useRef10(0);
-    const homeSeq = useRef10(0);
-    const blockedSeq = useRef10(0);
-    const runSeq = useRef10(0);
-    const runFactsRef = useRef10(null);
+    const [focusTarget, setFocusTarget] = useState16("");
+    const contentRef = useRef12(null);
+    const [editFocus, setEditFocus] = useState16(null);
+    const [undo, setUndo] = useState16(null);
+    const [git, setGit] = useState16(null);
+    const [wsMenu, setWsMenu] = useState16(false);
+    const wsAnchor = useRef12(null);
+    const [newDraft, setNewDraft] = useState16(() => uiMemory2.newRequirements[projectKey] ?? emptyRequirementDraft);
+    const [detailDirty, setDetailDirty] = useState16(false);
+    const listSeq = useRef12(0);
+    const gitSeq = useRef12(0);
+    const homeSeq = useRef12(0);
+    const blockedSeq = useRef12(0);
+    const runSeq = useRef12(0);
+    const runFactsRef = useRef12(null);
     if (keyChanged || rootChanged) runFactsRef.current = null;
-    const homeStamp = useRef10(null);
-    const homeAuthSnapshot = useRef10(null);
-    const dataRef = useRef10(data);
+    const homeStamp = useRef12(null);
+    const homeAuthSnapshot = useRef12(null);
+    const dataRef = useRef12(data);
     dataRef.current = data;
     const initialized = !!(data && data.project);
     const refresh = useCallback5(async () => {
@@ -6063,7 +7309,7 @@ ${detail.trim()}` : value);
       }
       setBlocked((prev) => ({ ...prev, deliveryFailed: failed }));
     }, [root]);
-    useEffect14(() => {
+    useEffect15(() => {
       if (keyChanged || rootChanged) {
         setData(null);
         setError("");
@@ -6090,7 +7336,7 @@ ${detail.trim()}` : value);
       refreshGit();
     }, [projectKey, refresh, refreshGit]);
     const page = nav.page;
-    useEffect14(() => {
+    useEffect15(() => {
       if (!root) return;
       if (page === "home") refreshHome();
       else if (page === "blocked") {
@@ -6098,19 +7344,19 @@ ${detail.trim()}` : value);
         refreshBlocked();
       } else refresh();
     }, [page, projectKey, root, initialized]);
-    useEffect14(() => {
+    useEffect15(() => {
       if (!root || !initialized) return;
       if (page === "home") refreshHome();
       else if (page === "blocked") refreshBlocked();
     }, [authStatusRevision]);
-    useEffect14(() => {
+    useEffect15(() => {
       if (!root || !initialized || page !== "home") return;
       const timer = setInterval(() => {
         if (!document.hidden) refreshHome();
       }, 1e4);
       return () => clearInterval(timer);
     }, [root, initialized, page, refreshHome]);
-    useEffect14(() => {
+    useEffect15(() => {
       const onVisibility = () => {
         if (document.hidden || !rootRef.current) return;
         refresh();
@@ -6120,7 +7366,7 @@ ${detail.trim()}` : value);
       document.addEventListener("visibilitychange", onVisibility);
       return () => document.removeEventListener("visibilitychange", onVisibility);
     }, [refresh, refreshHome, refreshBlocked]);
-    useEffect14(() => {
+    useEffect15(() => {
       const changed = () => {
         setReorderRevision((n) => n + 1);
         refresh();
@@ -6128,25 +7374,25 @@ ${detail.trim()}` : value);
       window.addEventListener("pw-reorder-changed", changed);
       return () => window.removeEventListener("pw-reorder-changed", changed);
     }, [refresh]);
-    useEffect14(() => {
+    useEffect15(() => {
       if (!projectKey || keyChanged || rootChanged) return;
       uiMemory2.views[projectKey] = nav;
       lastWritten.current = nav;
       uiMemory2.newRequirements[projectKey] = newDraft;
       uiMemory2.picked = picked ? { id: picked.id, path: root } : null;
     }, [projectKey, nav, newDraft, picked, root, keyChanged, rootChanged]);
-    useEffect14(() => {
+    useEffect15(() => {
       const external = uiMemory2.views[projectKey];
       if (external && external !== navRef.current && external !== lastWritten.current) {
         lastWritten.current = external;
         setNav(normalizeViewState(external));
       }
     }, [uiMemory2.views[projectKey], projectKey]);
-    useEffect14(() => {
+    useEffect15(() => {
       const ext = uiMemory2.picked;
       if (ext && (ext.id !== picked?.id || ext.path !== picked?.path)) setPicked(ext);
     }, [uiMemory2.picked]);
-    useEffect14(() => {
+    useEffect15(() => {
       if (!wsMenu) return;
       const close = () => setWsMenu(false);
       const onKey = (e) => {
@@ -6159,8 +7405,8 @@ ${detail.trim()}` : value);
         window.removeEventListener("keydown", onKey);
       };
     }, [wsMenu]);
-    useEffect14(() => {
-      if (!focusTarget || keyChanged || rootChanged) return;
+    useEffect15(() => {
+      if (!focusTarget || focusTarget.startsWith("pw-list-item-") || keyChanged || rootChanged) return;
       document.getElementById(focusTarget)?.focus();
       setFocusTarget("");
     }, [focusTarget, keyChanged, rootChanged]);
@@ -6221,10 +7467,9 @@ ${detail.trim()}` : value);
       if (hasUnsaved) setModal({ kind: "leave", action });
       else action();
     };
-    const guardRef = useRef10(guardLeave);
-    guardRef.current = guardLeave;
     const navigate = (page2) => guardLeave(() => {
       setEditFocus(null);
+      setFocusTarget("");
       writeNav({ ...navRef.current, page: page2, params: null, history: [] });
     });
     const openDetailAt = (params2, page2) => guardLeave(() => writeNav(openDetail(navRef.current, params2, page2 ?? navRef.current.page)));
@@ -6236,10 +7481,36 @@ ${detail.trim()}` : value);
     });
     const back = () => guardLeave(() => {
       const cur = navRef.current;
-      if (cur.params?.issueId) setFocusTarget("pw-task-" + cur.params.issueId);
+      const previous = backOf(cur);
+      if (cur.params?.issueId && previous.params?.reqId === cur.params.reqId) {
+        setFocusTarget("pw-task-" + cur.params.issueId);
+      } else if (!previous.params) {
+        const record = cur.params?.record;
+        const id = record ? record.reqId + "|" + (record.marker || record.round) : cur.params?.prdId || cur.params?.reqId;
+        setFocusTarget(id ? "pw-list-item-" + id : "");
+      }
       setEditFocus(null);
-      writeNav(backOf(cur));
+      writeNav(previous);
     });
+    const backRef = useRef12(back);
+    backRef.current = back;
+    useEffect15(() => {
+      if (nav.params || !focusTarget?.startsWith("pw-list-item-") || !contentRef.current) return;
+      const restore = () => {
+        const item = document.getElementById(focusTarget);
+        if (!contentRef.current?.contains(item)) return false;
+        item.focus({ preventScroll: true });
+        item.scrollIntoView({ block: "nearest" });
+        setFocusTarget("");
+        return true;
+      };
+      if (restore()) return;
+      const observer = new MutationObserver(() => {
+        if (restore()) observer.disconnect();
+      });
+      observer.observe(contentRef.current, { childList: true, subtree: true });
+      return () => observer.disconnect();
+    }, [focusTarget, nav.params, nav.page, projectKey]);
     const setFilter = (page2, patch) => writeNav(withFilter(navRef.current, page2, patch));
     const createReq = async (openAfter = false) => {
       const invalid = requirementFormError(newDraft);
@@ -6408,12 +7679,18 @@ ${detail.trim()}` : value);
       }
       setModal({ kind, req, onOk: () => submit(void 0, true) });
     }, [mutate, root, t, saving, modal]);
-    const moveIssue = (req, issue, to) => {
+    const moveIssue = (req, issue, to, triggerId) => {
       const label = ISSUE_MOVES[issue.status]?.[to];
-      if (!label || req.status !== "in_progress" || req.pendingReopen || saving || modal) return;
+      const rejecting = issue.status === "in_review" && to === "doing";
+      if (!label && !rejecting || req.status !== "in_progress" || req.pendingReopen || saving || modal) return;
       const item = { root, reqId: req.id, id: issue.id, fileHash: issue.hash };
-      if (to === "done") {
-        setModal({ kind: "confirmIssue", issue, req, reqId: req.id });
+      if (to === "done" || rejecting) {
+        const restoreFocus = triggerId && ((saved) => {
+          if (rootRef.current === root && navRef.current.params?.issueId === issue.id) {
+            setFocusTarget(saved ? rejecting ? "pw-task-rework" : "pw-task-title" : triggerId);
+          }
+        });
+        setModal({ kind: rejecting ? "rejectTaskAcceptance" : "confirmIssue", issue, req, reqId: req.id, restoreFocus });
         return;
       }
       setModal({ kind: "reason", title: t(label), body: issue.title, onOk: (value) => mutate("issue/move", {
@@ -6503,18 +7780,14 @@ ${detail.trim()}` : value);
       writeNav(defaultViewState());
       setNotice(t("workbenchHint"));
     };
-    useEffect14(() => {
+    useEffect15(() => {
       const onKey = (e) => {
-        if (e.key !== "Escape" || modalRef.current || wsMenu) return;
+        if (e.key !== "Escape" || e.defaultPrevented || modalRef.current || wsMenu) return;
         const tag = (e.target.tagName || "").toLowerCase();
         if (tag === "input" || tag === "textarea" || tag === "select" || e.target.isContentEditable) return;
         if (navRef.current.params) {
           e.preventDefault();
-          guardRef.current(() => {
-            const cur = navRef.current;
-            if (cur.params?.issueId) setFocusTarget("pw-task-" + cur.params.issueId);
-            writeNav(backOf(cur));
-          });
+          backRef.current();
         }
       };
       window.addEventListener("keydown", onKey);
@@ -6562,10 +7835,10 @@ ${detail.trim()}` : value);
     const titles = workspaceOptions.map((w) => w.title);
     const dupTitles = new Set(titles.filter((x, i) => titles.indexOf(x) !== i));
     const isCurrentProject = (w) => picked?.id ? w.workspaceId === picked.id : w.path === root;
-    const wsDropdown = wsMenu && h24(
+    const wsDropdown = wsMenu && h25(
       "div",
       { className: "pw-ws-menu", role: "menu", "aria-label": t("switchWorkspace"), onClick: (e) => e.stopPropagation() },
-      workspaceOptions.map((w) => h24(
+      workspaceOptions.map((w) => h25(
         "button",
         {
           key: w.workspaceId,
@@ -6576,15 +7849,15 @@ ${detail.trim()}` : value);
             pickProject(w);
           }
         },
-        h24("span", { className: "pw-ws-check", "aria-hidden": true }, isCurrentProject(w) ? "\u2713" : ""),
+        h25("span", { className: "pw-ws-check", "aria-hidden": true }, isCurrentProject(w) ? "\u2713" : ""),
         w.title,
-        dupTitles.has(w.title) && h24("span", { className: "pw-count" }, w.path)
+        dupTitles.has(w.title) && h25("span", { className: "pw-count" }, w.path)
       ))
     );
-    const wsSwitch = workspaceOptions.length > 0 || picked || renderFactorySlot && useWorkspaces ? h24(
+    const wsSwitch = workspaceOptions.length > 0 || picked || renderFactorySlot && useWorkspaces ? h25(
       "div",
       { className: "pw-ws-switch", "data-window-drag-exclude": true },
-      h24("button", {
+      h25("button", {
         ref: wsAnchor,
         className: "pw-ws-button",
         title: t("switchWorkspace"),
@@ -6594,7 +7867,7 @@ ${detail.trim()}` : value);
           e.stopPropagation();
           setWsMenu((v) => !v);
         }
-      }, h24("span", { className: "pw-ws-name" }, wsTitle), h24("span", { className: "pw-ws-caret", "aria-hidden": true }, "\u25BE")),
+      }, h25("span", { className: "pw-ws-name" }, wsTitle), h25("span", { className: "pw-ws-caret", "aria-hidden": true }, "\u25BE")),
       renderFactorySlot && useWorkspaces ? renderFactorySlot("workspace.picker", {
         open: wsMenu,
         anchorRef: wsAnchor,
@@ -6605,152 +7878,179 @@ ${detail.trim()}` : value);
         },
         onClose: () => setWsMenu(false)
       }, { fallback: wsDropdown }) : wsDropdown
-    ) : h24("h1", { className: "pw-title" }, t("title"));
-    const menuButton = (item) => h24("button", {
+    ) : h25("h1", { className: "pw-title" }, t("title"));
+    const menuButton = (item) => h25("button", {
       key: item.page,
       type: "button",
       className: "pw-menu-item",
       "aria-current": page === item.page ? "page" : void 0,
       onClick: () => navigate(item.page)
     }, t(item.label));
-    const menu = h24(
+    const menu = h25(
       "nav",
       { className: "pw-menu", "aria-label": t("title") },
-      h24("div", { className: "pw-menu-primary" }, MENU.filter((entry) => !entry.group).map(menuButton)),
-      MENU.filter((entry) => entry.group).map((entry) => h24(
+      h25("div", { className: "pw-menu-primary" }, MENU.filter((entry) => !entry.group).map(menuButton)),
+      MENU.filter((entry) => entry.group).map((entry) => h25(
         "div",
         { key: entry.group, className: "pw-menu-group", role: "group", "aria-label": t(entry.group) },
-        h24("span", { className: "pw-menu-grouptitle", "aria-hidden": true }, t(entry.group)),
+        h25("span", { className: "pw-menu-grouptitle", "aria-hidden": true }, t(entry.group)),
         entry.items.map(menuButton)
       ))
     );
-    const topBar = h24(
+    const topBar = h25(
       "div",
       { className: "pw-top", "data-window-drag": true },
       wsSwitch,
-      h24("div", { className: "pw-spacer" }),
-      initialized && h24("button", { className: "pw-button" + (page === "sync" ? " primary" : ""), onClick: () => navigate("sync") }, t("viewSync")),
-      saving && h24("span", { className: "pw-count" }, t("saving")),
-      initialized && git && (git.available ? h24(
+      h25("div", { className: "pw-spacer" }),
+      initialized && h25("button", { className: "pw-button" + (page === "sync" ? " primary" : ""), onClick: () => navigate("sync") }, t("viewSync")),
+      saving && h25("span", { className: "pw-count" }, t("saving")),
+      initialized && git && (git.available ? h25(
         "button",
         { className: "pw-button", onClick: doCommit, title: t("commit") },
         git.uncommitted > 0 ? `${t("commit")} \xB7 ${t("uncommitted").replace("{n}", String(git.uncommitted))}` : t("commit")
-      ) : h24("span", { className: "pw-count", title: t("gitUnavailable") }, t("gitUnavailable"))),
-      h24("button", { className: "pw-button", onClick: () => guardLeave(showConversation) }, t("back"))
+      ) : h25("span", { className: "pw-count", title: t("gitUnavailable") }, t("gitUnavailable"))),
+      h25("button", { className: "pw-button", onClick: () => guardLeave(showConversation) }, t("back"))
     );
-    const errorBanner = error && h24(
+    const errorBanner = error && h25(
       "div",
       { className: "pw-banner pw-error", role: "alert" },
-      h24(ErrorDetails, { error, t, showRaw: false }),
-      h24("button", { className: "pw-button", style: { marginLeft: "auto" }, onClick: refresh }, t("retryRead"))
+      h25(ErrorDetails, { error, t, showRaw: false }),
+      h25("button", { className: "pw-button", style: { marginLeft: "auto" }, onClick: refresh }, t("retryRead"))
     );
-    const frame = (content2) => h24(
+    const frame = (content2) => h25(
       "main",
       { className: "pw-page", "aria-label": t("title") },
-      h24("style", null, css2 + prdCss),
+      h25("style", null, css2 + prdCss),
       topBar,
-      h24("div", { className: "pw-shell-body" }, menu, h24("div", { className: "pw-content" }, content2))
+      h25("div", { className: "pw-shell-body" }, menu, h25("div", { className: "pw-content", ref: contentRef }, content2))
     );
     if (!root) {
-      return frame(h24(
+      return frame(h25(
         "div",
         { className: "pw-init" },
-        h24("h2", null, t("chooseWorkspace")),
-        h24("p", { className: "pw-note" }, removedWorkspace ? t("workspaceRemoved") : workspaceOptions.length ? t("chooseWorkspaceHint") : t("noWorkspacesHint")),
-        !!workspaceOptions.length && h24("div", { className: "pw-workspace-list" }, workspaceOptions.map((w) => h24("button", {
+        h25("h2", null, t("chooseWorkspace")),
+        h25("p", { className: "pw-note" }, removedWorkspace ? t("workspaceRemoved") : workspaceOptions.length ? t("chooseWorkspaceHint") : t("noWorkspacesHint")),
+        !!workspaceOptions.length && h25("div", { className: "pw-workspace-list" }, workspaceOptions.map((w) => h25("button", {
           key: w.workspaceId,
           className: "pw-workspace-card",
           onClick: () => pickProject(w)
-        }, h24("strong", null, w.title), h24("span", { className: "pw-count" }, w.path))))
+        }, h25("strong", null, w.title), h25("span", { className: "pw-count" }, w.path))))
       ));
     }
     if (!data || keyChanged || rootChanged) {
-      return frame(error ? h24(
+      return frame(error ? h25(
         "div",
         { className: "pw-init" },
-        h24("h2", null, t("readFailedTitle")),
-        h24(ErrorDetails, { error, t, showRaw: false }),
-        h24("button", { className: "pw-button primary", onClick: refresh }, t("retryRead"))
-      ) : h24("div", { className: "pw-init" }, h24("p", null, t("loading"))));
+        h25("h2", null, t("readFailedTitle")),
+        h25(ErrorDetails, { error, t, showRaw: false }),
+        h25("button", { className: "pw-button primary", onClick: refresh }, t("retryRead"))
+      ) : h25("div", { className: "pw-init" }, h25("p", null, t("loading"))));
     }
     const { diags, readFailed } = classifyProject(data);
     if (readFailed) {
-      return frame(h24(
+      return frame(h25(
         "div",
         { className: "pw-init" },
-        h24("h2", null, t("readFailedTitle")),
-        h24("p", { className: "pw-note" }, t("readFailedHint")),
+        h25("h2", null, t("readFailedTitle")),
+        h25("p", { className: "pw-note" }, t("readFailedHint")),
         errorBanner,
         diagListView(diags, t),
-        h24("button", { className: "pw-button primary", onClick: refresh }, t("retryRead"))
+        h25("button", { className: "pw-button primary", onClick: refresh }, t("retryRead"))
       ));
     }
     if (!initialized) {
-      return frame(h24(
+      return frame(h25(
         "div",
         { className: "pw-init" },
-        h24("h2", null, t("initTitle")),
-        h24("p", { className: "pw-note" }, t("initBody")),
-        h24("strong", null, wsTitle),
-        h24("p", { className: "pw-note", style: { overflowWrap: "anywhere" } }, root),
+        h25("h2", null, t("initTitle")),
+        h25("p", { className: "pw-note" }, t("initBody")),
+        h25("strong", null, wsTitle),
+        h25("p", { className: "pw-note", style: { overflowWrap: "anywhere" } }, root),
         errorBanner,
-        h24("button", { className: "pw-button primary", onClick: enableProject }, t("initTitle"))
+        h25("button", { className: "pw-button primary", onClick: enableProject }, t("initTitle"))
       ));
     }
-    const breadcrumbs = h24(
+    const breadcrumbs = h25(
       "nav",
       { className: "pw-breadcrumb", "aria-label": "Breadcrumb" },
-      h24("button", { className: "pw-crumb", onClick: () => guardLeave(() => writeNav({ ...navRef.current, params: null, history: [] })) }, t(pageLabel(page))),
-      selected && h24(
-        import_react24.default.Fragment,
+      h25("button", { className: "pw-crumb", onClick: () => guardLeave(() => writeNav({ ...navRef.current, params: null, history: [] })) }, t(pageLabel(page))),
+      selected && h25(
+        import_react25.default.Fragment,
         null,
-        h24("span", { className: "pw-crumb-sep" }, "/"),
-        selectedIssue || page === "pending" && params?.reqId && !selectedRecord ? h24("button", { className: "pw-crumb", onClick: back, title: selected.title }, t(page === "pending" ? "navPending" : "backToTasks")) : h24("span", { className: "pw-crumb-current" }, selected.title)
+        h25("span", { className: "pw-crumb-sep" }, "/"),
+        selectedIssue || page === "pending" && params?.reqId && !selectedRecord ? h25("button", { className: "pw-crumb", onClick: back, title: selected.title }, t(page === "pending" ? "navPending" : "backToTasks")) : h25("span", { className: "pw-crumb-current" }, selected.title)
       ),
-      selectedIssue && h24(
-        import_react24.default.Fragment,
+      selectedIssue && h25(
+        import_react25.default.Fragment,
         null,
-        h24("span", { className: "pw-crumb-sep" }, "/"),
-        h24("span", { className: "pw-crumb-current" }, selectedIssue.title)
+        h25("span", { className: "pw-crumb-sep" }, "/"),
+        h25("span", { className: "pw-crumb-current" }, selectedIssue.title)
       ),
-      selectedRecord && h24(
-        import_react24.default.Fragment,
+      selectedRecord && h25(
+        import_react25.default.Fragment,
         null,
-        h24("span", { className: "pw-crumb-sep" }, "/"),
-        h24("span", { className: "pw-crumb-current" }, t("recordDetail"))
+        h25("span", { className: "pw-crumb-sep" }, "/"),
+        h25("span", { className: "pw-crumb-current" }, t("recordDetail"))
       )
     );
-    const renderPrds = (onSummary) => h24(PrdDocuments, {
+    const selectAssociatedPrd = (prdId) => {
+      const view = navRef.current;
+      if (view.params?.reqId !== selected?.id) return;
+      writeNav({ ...view, params: { ...view.params, prdId, restorePrds: true } });
+    };
+    const closeAssociatedPrds = () => {
+      const view = navRef.current;
+      if (view.params?.reqId !== selected?.id || !view.params?.prdId && !view.params?.restorePrds) return;
+      const { prdId, restorePrds, ...remaining } = view.params;
+      writeNav({ ...view, params: remaining });
+    };
+    const openAssociatedFull = (prdId) => {
+      setFocusTarget(null);
+      openDetailAt({ prdId, fromReading: true }, "prds");
+    };
+    const prdReadingMemory = uiMemory2.prdReading ??= {};
+    const renderPrds = (onSummary, { readOnly, summaryOnly, manage } = {}) => h25(PrdDocuments, {
       key: projectKey + ":" + selected.id,
       root,
       reqId: selected.id,
       requirements,
       t,
-      activeId: params?.prdId,
       onSummary,
-      onRead: (prdId) => {
-        const view = navRef.current;
-        writeNav({ ...view, params: { ...view.params, prdId } });
-      },
+      readOnly,
+      summaryOnly,
+      activeId: manage ? null : params?.prdId,
+      onRead: selectAssociatedPrd,
+      onOpenFull: openAssociatedFull,
       onEdit: editPrd,
-      onNew: (reqId) => editPrd(void 0, reqId)
+      onNew: (reqId) => editPrd(void 0, reqId),
+      readingMemory: prdReadingMemory
     });
     let content;
     if (page === "prds" && params?.prdId) {
-      content = h24(PrdReader, { key: projectKey + ":" + params.prdId, root, id: params.prdId, requirements, t, onEdit: editPrd, onBack: back });
+      content = h25(PrdReader, {
+        key: projectKey + ":" + params.prdId,
+        root,
+        id: params.prdId,
+        requirements,
+        t,
+        onEdit: editPrd,
+        onBack: back,
+        backLabel: params.fromReading ? t("backToReading") : void 0,
+        readingMemory: prdReadingMemory
+      });
     } else if (params?.record) {
-      content = selectedRecord ? h24("div", { className: "pw-subpage-stack" }, h24(RecordDetail, {
+      content = selectedRecord ? h25("div", { className: "pw-subpage-stack" }, h25(RecordDetail, {
         record: { ...selectedRecord, reqTitle: requirements.find((r) => r.id === params.record.reqId)?.title ?? selectedRecord.reqTitle },
         req: requirements.find((r) => r.id === params.record.reqId) ?? null,
         t,
         onOpenRequirement: (req) => openDetailAt({ reqId: req.id, issueId: null }, statusPage(req.status))
-      })) : h24("div", { className: "pw-init" }, h24("p", null, t("errMissing")), h24("button", { className: "pw-button", onClick: back }, missingReturnLabel));
+      })) : h25("div", { className: "pw-init" }, h25("p", null, t("errMissing")), h25("button", { className: "pw-button", onClick: back }, missingReturnLabel));
     } else if (params?.reqId && !selected) {
-      content = h24("div", { className: "pw-init" }, h24("p", null, t("errMissing")), h24("button", { className: "pw-button", onClick: back }, missingReturnLabel));
+      content = h25("div", { className: "pw-init" }, h25("p", null, t("errMissing")), h25("button", { className: "pw-button", onClick: back }, missingReturnLabel));
     } else if (params?.issueId && !selectedIssue) {
-      content = h24("div", { className: "pw-init" }, h24("p", null, t("errMissing")), h24("button", { className: "pw-button", onClick: back }, missingReturnLabel));
+      content = h25("div", { className: "pw-init" }, h25("p", null, t("errMissing")), h25("button", { className: "pw-button", onClick: back }, missingReturnLabel));
     } else if (selectedIssue) {
-      content = h24("div", { className: "pw-subpage-stack" }, h24(IssueDetail, {
+      content = h25(IssueDetail, {
         key: projectKey + ":" + selectedIssue.id,
         issue: selectedIssue,
         req: selected,
@@ -6763,50 +8063,57 @@ ${detail.trim()}` : value);
         busy: saving,
         uiMemory: uiMemory2,
         editFocus,
+        renderPrds,
+        initialPrdId: params?.prdId,
+        restorePrds: params?.restorePrds,
+        onClosePrds: closeAssociatedPrds,
+        modalActive: !!modal,
         runFact: (runFacts ?? []).find((f) => f.issueId === selectedIssue.id) ?? null,
         openTask: openTaskSession,
         onStartTask: (issueId) => startTask(selected.id, issueId),
-        onMoveIssue: (to) => moveIssue(selected, selectedIssue, to),
-        openWikiPage: (p) => guardLeave(() => writeNav({ ...navRef.current, page: "wiki", params: { wikiTarget: p }, history: [] }))
-      }));
+        onMoveIssue: (to, triggerId) => moveIssue(selected, selectedIssue, to, triggerId),
+        openWikiPage: (p) => guardLeave(() => writeNav(openDetail(navRef.current, { wikiTarget: p }, "wiki")))
+      });
     } else if (selected) {
-      content = h24(
-        "div",
-        { className: "pw-subpage-stack" },
-        h24(DetailPanel, {
-          key: projectKey + ":" + selected.id,
-          req: selected,
-          t,
-          root,
-          mutate,
-          moveIssue,
-          projectKey,
-          rootRef,
-          initialPrdId: params?.prdId,
-          initialDelivery: page === "pending" && selected.status === "pending",
-          focusTarget,
-          renderPrds,
-          onMove: doMove,
-          onApprove: () => doMove(selected, "ready"),
-          onReject: () => doMove(selected, "backlog"),
-          onDirty: setDetailDirty,
-          busy: saving || !!pendingReorder || !!modal,
-          sessionId: sessionRoot === root ? sessionId : void 0,
-          setModal,
-          uiMemory: uiMemory2,
-          onDelete: () => setModal({ kind: "delete", req: selected }),
-          onOpenIssue: (id) => guardLeave(() => writeNav(openDetail(navRef.current, { reqId: selected.id, issueId: id }))),
-          onReorderTask: (id, direction) => reorder("issue", selected.id, sortedTasks(selected.issues), id, direction),
-          onStartTask: (issueId) => startTask(selected.id, issueId),
-          onCreateTask: () => setModal({ kind: "createTask", req: selected, onCreated: (id) => {
-            if (rootRef.current === root) setFocusTarget("pw-task-" + id);
-          } })
-        })
-      );
+      content = h25(DetailPanel, {
+        key: projectKey + ":" + selected.id,
+        req: selected,
+        t,
+        root,
+        mutate,
+        moveIssue,
+        projectKey,
+        rootRef,
+        initialPrdId: params?.prdId,
+        restorePrds: params?.restorePrds,
+        onClosePrds: closeAssociatedPrds,
+        modalActive: !!modal,
+        initialDelivery: page === "pending" && selected.status === "pending",
+        focusTarget,
+        renderPrds,
+        onMove: doMove,
+        onApprove: () => doMove(selected, "ready"),
+        onReject: () => doMove(selected, "backlog"),
+        onDirty: setDetailDirty,
+        busy: saving || !!pendingReorder || !!modal,
+        sessionId: sessionRoot === root ? sessionId : void 0,
+        setModal,
+        uiMemory: uiMemory2,
+        onDelete: () => setModal({ kind: "delete", req: selected }),
+        onOpenIssue: (id, focusAcceptance) => guardLeave(() => {
+          if (focusAcceptance) setFocusTarget("pw-task-acceptance");
+          writeNav(openDetail(navRef.current, { reqId: selected.id, issueId: id }));
+        }),
+        onReorderTask: (id, direction) => reorder("issue", selected.id, sortedTasks(selected.issues), id, direction),
+        onStartTask: (issueId) => startTask(selected.id, issueId),
+        onCreateTask: () => setModal({ kind: "createTask", req: selected, onCreated: (id) => {
+          if (rootRef.current === root) setFocusTarget("pw-task-" + id);
+        } })
+      });
     } else if (page === "prds") {
-      content = h24(PrdManagement, { key: projectKey, wb, onRead: openPrd, onEdit: editPrd });
+      content = h25(PrdManagement, { key: projectKey, wb, onRead: openPrd, onEdit: editPrd });
     } else if (page === "wiki") {
-      content = h24(WikiView, {
+      content = h25(WikiView, {
         key: root,
         root,
         sessionId: sessionRoot === root ? sessionId : void 0,
@@ -6816,61 +8123,61 @@ ${detail.trim()}` : value);
         onPageChange: (path) => writeNav({ ...navRef.current, params: path ? { wikiTarget: path } : null })
       });
     } else if (page === "arch") {
-      content = h24(ArchView, { key: root, root, sessionId: sessionRoot === root ? sessionId : void 0, t });
+      content = h25(ArchView, { key: root, root, sessionId: sessionRoot === root ? sessionId : void 0, t });
     } else if (page === "sync") {
-      content = h24(SyncView, { key: projectKey, root, sessionId: sessionRoot === root ? sessionId : void 0, t, refresh, requirements, onLocateProposal: locateProposal });
+      content = h25(SyncView, { key: projectKey, root, sessionId: sessionRoot === root ? sessionId : void 0, t, refresh, requirements, onLocateProposal: locateProposal });
     } else {
       const Page = PAGE_COMPONENTS[page] ?? HomePage;
-      content = h24(Page, { wb });
+      content = h25(Page, { wb });
     }
-    return frame(h24(
-      import_react24.default.Fragment,
+    return frame(h25(
+      import_react25.default.Fragment,
       null,
       breadcrumbs,
       errorBanner,
-      pendingReorder && h24(
+      pendingReorder && h25(
         "div",
         { className: "pw-banner pw-warn", role: "status" },
-        h24(
+        h25(
           "div",
           null,
-          h24("span", null, t("reorderProgress").replace("{done}", String(pendingReorder.next)).replace("{total}", String(pendingReorder.steps.length))),
-          pendingReorder.error && h24("p", null, t("reorderFailed")),
-          pendingReorder.error && h24(ErrorDetails, { error: pendingReorder.error, t, showRaw: false })
+          h25("span", null, t("reorderProgress").replace("{done}", String(pendingReorder.next)).replace("{total}", String(pendingReorder.steps.length))),
+          pendingReorder.error && h25("p", null, t("reorderFailed")),
+          pendingReorder.error && h25(ErrorDetails, { error: pendingReorder.error, t, showRaw: false })
         ),
-        pendingReorder.error && h24("button", { className: "pw-button", disabled: pendingReorder.running, onClick: () => resumeReorder(pendingReorder) }, t("reorderRetry")),
-        pendingReorder.error && h24("button", { className: "pw-button", disabled: pendingReorder.running, onClick: () => {
+        pendingReorder.error && h25("button", { className: "pw-button", disabled: pendingReorder.running, onClick: () => resumeReorder(pendingReorder) }, t("reorderRetry")),
+        pendingReorder.error && h25("button", { className: "pw-button", disabled: pendingReorder.running, onClick: () => {
           delete reorderMemory[projectKey];
           setReorderRevision((n) => n + 1);
           refresh();
         } }, t("reorderDiscard"))
       ),
-      notice && h24(
+      notice && h25(
         "div",
         { className: "pw-banner", role: "status" },
         notice,
-        h24("button", { className: "pw-button", style: { marginLeft: "auto" }, onClick: () => setNotice(""), "aria-label": t("dismiss") }, "\u2715")
+        h25("button", { className: "pw-button", style: { marginLeft: "auto" }, onClick: () => setNotice(""), "aria-label": t("dismiss") }, "\u2715")
       ),
-      diags.length > 0 && h24(
+      diags.length > 0 && h25(
         "div",
         { className: "pw-banner pw-warn", role: "status" },
-        h24(
+        h25(
           "div",
           { className: "pw-diagwrap" },
-          h24("strong", null, t("dataProblems").replace("{n}", String(diags.length))),
-          h24("details", null, h24("summary", null, t("details")), diagListView(diags, t))
+          h25("strong", null, t("dataProblems").replace("{n}", String(diags.length))),
+          h25("details", null, h25("summary", null, t("details")), diagListView(diags, t))
         ),
-        h24("button", { className: "pw-button", style: { marginLeft: "auto" }, onClick: refresh }, t("retryRead"))
+        h25("button", { className: "pw-button", style: { marginLeft: "auto" }, onClick: refresh }, t("retryRead"))
       ),
-      undo && h24(
+      undo && h25(
         "div",
         { className: "pw-banner", role: "status" },
         t("trashed"),
-        h24("button", { className: "pw-button", style: { marginLeft: "auto" }, onClick: doUndo }, t("undo")),
-        h24("button", { className: "pw-button", onClick: () => setUndo(null), "aria-label": t("dismiss") }, "\u2715")
+        h25("button", { className: "pw-button", style: { marginLeft: "auto" }, onClick: doUndo }, t("undo")),
+        h25("button", { className: "pw-button", onClick: () => setUndo(null), "aria-label": t("dismiss") }, "\u2715")
       ),
       content,
-      modal?.kind === "prdEditor" && h24(PrdEditor, {
+      modal?.kind === "prdEditor" && h25(PrdEditor, {
         key: [root, modal.id, modal.reqId].join(":"),
         root,
         id: modal.id,
@@ -6883,7 +8190,7 @@ ${detail.trim()}` : value);
           setModal((current) => current === modal ? null : current);
         }
       }),
-      modal && !["leave", "prdEditor"].includes(modal.kind) && h24(ReasonModal, {
+      modal && !["leave", "prdEditor"].includes(modal.kind) && h25(ReasonModal, {
         key: modal.kind,
         modal,
         t,
@@ -6899,7 +8206,7 @@ ${detail.trim()}` : value);
         createReq: () => createReq(true),
         reopenState: modal.kind === "reopenRequirement" && requirements.find((req) => req.id === modal.req.id)?.pendingReopen
       }),
-      modal?.kind === "leave" && h24(LeaveModal, {
+      modal?.kind === "leave" && h25(LeaveModal, {
         modal,
         t,
         busy: saving,
@@ -6940,7 +8247,7 @@ ${detail.trim()}` : value);
   }
 
   // client-src/rightbar/task-pane.js
-  var import_react25 = __toESM(__require("react"), 1);
+  var import_react26 = __toESM(__require("react"), 1);
 
   // client-src/rightbar/task-state.js
   function taskRunView(status, run) {
@@ -6965,8 +8272,8 @@ ${detail.trim()}` : value);
   var terminalTask = (task) => ["done", "cancelled"].includes(task?.status);
 
   // client-src/rightbar/task-pane.js
-  var h25 = import_react25.default.createElement;
-  var { useCallback: useCallback6, useEffect: useEffect15, useRef: useRef11, useState: useState16 } = import_react25.default;
+  var h26 = import_react26.default.createElement;
+  var { useCallback: useCallback6, useEffect: useEffect16, useRef: useRef13, useState: useState17 } = import_react26.default;
   var EMPTY_WORKSPACES2 = [];
   var useNoWorkspaces2 = (selector) => selector({ items: EMPTY_WORKSPACES2 });
   var useNoSessionStatus2 = () => void 0;
@@ -7098,11 +8405,11 @@ ${detail.trim()}` : value);
       uiMemory2.views[projectKey] = wikiPage ? { ...current, page: "wiki", params: { wikiTarget: wikiPage }, history: [] } : openDetail(current, { reqId, issueId: null }, statusPage(status));
       openMain();
     };
-    return h25(
+    return h26(
       "aside",
       { className: "pw-page pw-task-pane", "aria-label": t("issueDetail") },
-      h25("style", null, css2),
-      root ? h25(LinkedTask, {
+      h26("style", null, css2),
+      root ? h26(LinkedTask, {
         key: root + "|" + sessionId,
         root,
         sessionId,
@@ -7115,39 +8422,39 @@ ${detail.trim()}` : value);
         showConversation,
         openRequirement: (reqId, status) => openObject(reqId, null, status),
         openWikiPage: (reqId, path) => openObject(reqId, path)
-      }) : h25("p", null, t("noWorkspace"))
+      }) : h26("p", null, t("noWorkspace"))
     );
   }
-  function LinkedTask({ root, sessionId, sessionStatus, visible, projectKey, t, uiMemory: uiMemory2, openMain, showConversation, openRequirement, openWikiPage }) {
-    const [linkState, setLinkState] = useState16(null);
-    const [task, setTask] = useState16(null);
-    const [req, setReq] = useState16(null);
-    const [proposals, setProposals] = useState16([]);
-    const [delivery, setDelivery] = useState16(null);
-    const [missing, setMissing] = useState16(false);
-    const [readError, setReadError] = useState16(null);
-    const [error, setError] = useState16(null);
-    const [notice, setNotice] = useState16("");
-    const [busy, setBusy] = useState16(false);
-    const [loading, setLoading] = useState16(true);
-    const [syncing, setSyncing] = useState16(true);
-    const [externalUpdate, setExternalUpdate] = useState16(false);
-    const [picking, setPicking] = useState16(false);
-    const [choices, setChoices] = useState16(null);
-    const [pickerBusy, setPickerBusy] = useState16(false);
-    const [createdTask, setCreatedTask] = useState16(null);
-    const [leave, setLeave] = useState16(null);
-    const active = useRef11(false);
-    const linkSeq = useRef11(0);
-    const taskSeq = useRef11(0);
-    const choiceSeq = useRef11(0);
-    const stamp = useRef11({ modified: null, hash: null });
-    const linkRef = useRef11(null);
-    const taskRef = useRef11(null);
-    const leaveRef = useRef11(null);
-    const switchButton = useRef11(null);
-    const focusSwitch = useRef11(false);
-    const visibleRef = useRef11(visible);
+  function LinkedTask({ root, sessionId, sessionStatus, visible, projectKey, t, uiMemory: uiMemory2, openMain, showConversation, openRequirement: openRequirement2, openWikiPage }) {
+    const [linkState, setLinkState] = useState17(null);
+    const [task, setTask] = useState17(null);
+    const [req, setReq] = useState17(null);
+    const [proposals, setProposals] = useState17([]);
+    const [delivery, setDelivery] = useState17(null);
+    const [missing, setMissing] = useState17(false);
+    const [readError, setReadError] = useState17(null);
+    const [error, setError] = useState17(null);
+    const [notice, setNotice] = useState17("");
+    const [busy, setBusy] = useState17(false);
+    const [loading, setLoading] = useState17(true);
+    const [syncing, setSyncing] = useState17(true);
+    const [externalUpdate, setExternalUpdate] = useState17(false);
+    const [picking, setPicking] = useState17(false);
+    const [choices, setChoices] = useState17(null);
+    const [pickerBusy, setPickerBusy] = useState17(false);
+    const [createdTask, setCreatedTask] = useState17(null);
+    const [leave, setLeave] = useState17(null);
+    const active = useRef13(false);
+    const linkSeq = useRef13(0);
+    const taskSeq = useRef13(0);
+    const choiceSeq = useRef13(0);
+    const stamp = useRef13({ modified: null, hash: null });
+    const linkRef = useRef13(null);
+    const taskRef = useRef13(null);
+    const leaveRef = useRef13(null);
+    const switchButton = useRef13(null);
+    const focusSwitch = useRef13(false);
+    const visibleRef = useRef13(visible);
     visibleRef.current = visible;
     linkRef.current = linkState?.link ?? null;
     taskRef.current = task;
@@ -7227,12 +8534,12 @@ ${detail.trim()}` : value);
       setSyncing(false);
       return currentTask;
     }, [root, sessionId, loadTask]);
-    useEffect15(() => {
+    useEffect16(() => {
       if (picking || !focusSwitch.current) return;
       focusSwitch.current = false;
       switchButton.current?.focus();
     }, [picking]);
-    useEffect15(() => {
+    useEffect16(() => {
       active.current = true;
       return () => {
         active.current = false;
@@ -7241,14 +8548,14 @@ ${detail.trim()}` : value);
         choiceSeq.current++;
       };
     }, [load]);
-    useEffect15(() => {
+    useEffect16(() => {
       if (visible) load();
       else {
         linkSeq.current++;
         taskSeq.current++;
       }
     }, [load, visible]);
-    useEffect15(() => {
+    useEffect16(() => {
       const onVisibility = () => {
         if (document.hidden) {
           linkSeq.current++;
@@ -7258,12 +8565,12 @@ ${detail.trim()}` : value);
       document.addEventListener("visibilitychange", onVisibility);
       return () => document.removeEventListener("visibilitychange", onVisibility);
     }, [load]);
-    const wasRunning = useRef11(runView.running);
-    useEffect15(() => {
+    const wasRunning = useRef13(runView.running);
+    useEffect16(() => {
       if (visible && wasRunning.current && !runView.running) load();
       wasRunning.current = runView.running;
     }, [runView.running, load, visible]);
-    useEffect15(() => {
+    useEffect16(() => {
       if (!visible || !task || readError) return;
       const timer = setInterval(async () => {
         if (document.hidden || !visibleRef.current || !active.current || !linkRef.current) return;
@@ -7283,7 +8590,7 @@ ${detail.trim()}` : value);
       }, 3e3);
       return () => clearInterval(timer);
     }, [root, task?.id, task?.hash, !!readError, loadTask, visible]);
-    const actionRef = useRef11(null);
+    const actionRef = useRef13(null);
     if (!actionRef.current) actionRef.current = createCardActions({
       getKey: () => active.current ? sessionId : null,
       rpc,
@@ -7360,40 +8667,40 @@ ${detail.trim()}` : value);
       return res;
     };
     const switchHint = runView.switchHint ? t(runView.switchHint) : syncing ? t("switchSyncing") : "";
-    const notices = h25(
-      import_react25.default.Fragment,
+    const notices = h26(
+      import_react26.default.Fragment,
       null,
-      switchHint && !loading && h25(
+      switchHint && !loading && h26(
         "div",
         { className: "pw-sidebar-notice", role: "status" },
-        h25("span", null, switchHint),
-        runView.locked && !runView.running && !runView.waiting && h25("button", { className: "pw-button pw-quiet", disabled: syncing, onClick: load }, t("retry"))
+        h26("span", null, switchHint),
+        runView.locked && !runView.running && !runView.waiting && h26("button", { className: "pw-button pw-quiet", disabled: syncing, onClick: load }, t("retry"))
       ),
-      h25(ErrorDetails, { error, t, showRaw: false }),
-      notice && h25("p", { className: "pw-note", role: "status" }, notice),
-      readError && h25(
+      h26(ErrorDetails, { error, t, showRaw: false }),
+      notice && h26("p", { className: "pw-note", role: "status" }, notice),
+      readError && h26(
         "div",
         { className: "pw-sidebar-notice" },
-        h25(ErrorDetails, { error: readError, t, showRaw: false }),
-        h25("button", { className: "pw-button pw-quiet", disabled: syncing, onClick: load }, t("retry"))
+        h26(ErrorDetails, { error: readError, t, showRaw: false }),
+        h26("button", { className: "pw-button pw-quiet", disabled: syncing, onClick: load }, t("retry"))
       ),
-      loading && !task && !readError && h25("p", { className: "pw-note", role: "status" }, t("loading"))
+      loading && !task && !readError && h26("p", { className: "pw-note", role: "status" }, t("loading"))
     );
-    const toolbar = (children, canSwitch = false) => h25(
+    const toolbar = (children, canSwitch = false) => h26(
       "div",
       { className: "pw-task-toolbar" },
-      h25("button", { className: "pw-button pw-quiet", onClick: openMainGuard }, h25("span", { "aria-hidden": true }, "\u2039 "), t("backMain")),
-      h25(
+      h26("button", { className: "pw-button pw-quiet", onClick: openMainGuard }, h26("span", { "aria-hidden": true }, "\u2039 "), t("backMain")),
+      h26(
         "div",
         { className: "pw-task-tools" },
-        canSwitch && h25("button", { className: "pw-button pw-quiet", ref: switchButton, disabled: busy || !!switchHint, title: switchHint, onClick: choose }, t("swapTask")),
+        canSwitch && h26("button", { className: "pw-button pw-quiet", ref: switchButton, disabled: busy || !!switchHint, title: switchHint, onClick: choose }, t("swapTask")),
         children
       )
     );
-    return h25(
-      import_react25.default.Fragment,
+    return h26(
+      import_react26.default.Fragment,
       null,
-      task && h25("div", { hidden: picking }, h25(LinkedTaskDetails, {
+      task && h26("div", { hidden: picking }, h26(LinkedTaskDetails, {
         key: task.reqId + "|" + task.id,
         task,
         req,
@@ -7409,7 +8716,7 @@ ${detail.trim()}` : value);
         busy,
         act,
         start,
-        openRequirement: (reqId, status) => guardLeave(() => openRequirement(reqId, status)),
+        openRequirement: (reqId, status) => guardLeave(() => openRequirement2(reqId, status)),
         openWikiPage: (reqId, path) => guardLeave(() => openWikiPage(reqId, path)),
         showConversation: () => guardLeave(showConversation),
         readError,
@@ -7421,12 +8728,12 @@ ${detail.trim()}` : value);
         notices,
         reload: load
       })),
-      (picking || !task) && h25(
-        import_react25.default.Fragment,
+      (picking || !task) && h26(
+        import_react26.default.Fragment,
         null,
         toolbar(),
         notices,
-        !loading && h25(TaskPicker, {
+        !loading && h26(TaskPicker, {
           requirements: choices,
           t,
           busy: busy || !!switchHint,
@@ -7446,7 +8753,7 @@ ${detail.trim()}` : value);
           onCancel: closePicker
         })
       ),
-      leave && h25(LeaveModal, {
+      leave && h26(LeaveModal, {
         modal: leave,
         t,
         busy,
@@ -7490,23 +8797,23 @@ ${detail.trim()}` : value);
     onCancel,
     onRetryLink
   }) {
-    const [query, setQuery] = useState16("");
-    const [reqId, setReqId] = useState16("");
-    const [choice, setChoice] = useState16("");
-    const [draft, setDraft] = useState16(issueDraftFrom);
-    const [createReqId, setCreateReqId] = useState16("");
-    const [error, setError] = useState16(null);
-    if (!requirements) return h25(
+    const [query, setQuery] = useState17("");
+    const [reqId, setReqId] = useState17("");
+    const [choice, setChoice] = useState17("");
+    const [draft, setDraft] = useState17(issueDraftFrom);
+    const [createReqId, setCreateReqId] = useState17("");
+    const [error, setError] = useState17(null);
+    if (!requirements) return h26(
       "section",
       { className: "pw-subpage pw-task-picker", "aria-label": t("pickTask") },
-      h25("h2", null, t(missing ? "taskMissingTitle" : "pickTask")),
-      h25("p", { className: "pw-note" }, t(loading ? "loading" : missing ? "linkMissing" : picking ? "errUnreadable" : "noLinkedTask")),
-      h25(
+      h26("h2", null, t(missing ? "taskMissingTitle" : "pickTask")),
+      h26("p", { className: "pw-note" }, t(loading ? "loading" : missing ? "linkMissing" : picking ? "errUnreadable" : "noLinkedTask")),
+      h26(
         "div",
         { className: "pw-actions" },
-        missing && !picking && h25("button", { className: "pw-button pw-quiet", disabled: retryBusy, onClick: onRetry }, t("retry")),
-        !loading && h25("button", { className: "pw-button primary", disabled: busy, onClick: onChoose }, t(picking ? "retry" : "pickTask")),
-        picking && h25("button", { className: "pw-button pw-quiet", onClick: onCancel }, t("cancel"))
+        missing && !picking && h26("button", { className: "pw-button pw-quiet", disabled: retryBusy, onClick: onRetry }, t("retry")),
+        !loading && h26("button", { className: "pw-button primary", disabled: busy, onClick: onChoose }, t(picking ? "retry" : "pickTask")),
+        picking && h26("button", { className: "pw-button pw-quiet", onClick: onCancel }, t("cancel"))
       )
     );
     const items = taskChoices(requirements, { query, reqId });
@@ -7520,53 +8827,53 @@ ${detail.trim()}` : value);
       if (invalid || !createFor) return;
       onCreate(createFor, newTaskInput(draft));
     };
-    return h25(
+    return h26(
       "section",
       { className: "pw-subpage pw-task-picker", "aria-label": t("pickTask") },
-      h25(
+      h26(
         "div",
         { className: "pw-task-picker-head" },
-        h25("h2", null, t(currentId ? "swapTask" : "pickTask")),
-        h25("button", { className: "pw-button pw-quiet", disabled: busy, onClick: onCancel }, t("cancel"))
+        h26("h2", null, t(currentId ? "swapTask" : "pickTask")),
+        h26("button", { className: "pw-button pw-quiet", disabled: busy, onClick: onCancel }, t("cancel"))
       ),
-      createdTask ? h25(
+      createdTask ? h26(
         "div",
         { className: "pw-sidebar-notice", role: "status" },
-        h25("p", { className: "pw-text" }, t("createLinkFailed")),
-        h25("strong", null, createdTask.title),
-        h25("button", { className: "pw-button primary", disabled: busy, onClick: onRetryLink }, t("retryLink"))
-      ) : h25(
-        import_react25.default.Fragment,
+        h26("p", { className: "pw-text" }, t("createLinkFailed")),
+        h26("strong", null, createdTask.title),
+        h26("button", { className: "pw-button primary", disabled: busy, onClick: onRetryLink }, t("retryLink"))
+      ) : h26(
+        import_react26.default.Fragment,
         null,
-        h25(
+        h26(
           "label",
           { className: "pw-field" },
-          h25("span", { className: "pw-label" }, t("searchTasks")),
-          h25("input", { className: "pw-input", autoFocus: true, value: query, onChange: (event) => {
+          h26("span", { className: "pw-label" }, t("searchTasks")),
+          h26("input", { className: "pw-input", autoFocus: true, value: query, onChange: (event) => {
             setQuery(event.target.value);
             setChoice("");
           } })
         ),
-        h25(
+        h26(
           "label",
           { className: "pw-field" },
-          h25("span", { className: "pw-label" }, t("parentRequirement")),
-          h25(
+          h26("span", { className: "pw-label" }, t("parentRequirement")),
+          h26(
             "select",
             { className: "pw-select", value: reqId, onChange: (event) => {
               setReqId(event.target.value);
               setChoice("");
             } },
-            h25("option", { value: "" }, t("allRequirements")),
-            requirements.map((req) => h25("option", { key: req.id, value: req.id }, req.title))
+            h26("option", { value: "" }, t("allRequirements")),
+            requirements.map((req) => h26("option", { key: req.id, value: req.id }, req.title))
           )
         ),
-        items.length ? h25("div", { className: "pw-choice-list", role: "radiogroup", "aria-label": t("pickTask") }, items.map((issue) => {
+        items.length ? h26("div", { className: "pw-choice-list", role: "radiogroup", "aria-label": t("pickTask") }, items.map((issue) => {
           const current = currentId === issue.id;
-          return h25(
+          return h26(
             "label",
             { key: issue.id, className: "pw-choice", "data-selected": choice === issue.id },
-            h25("input", {
+            h26("input", {
               type: "radio",
               name: "pw-task-choice",
               value: issue.id,
@@ -7574,46 +8881,46 @@ ${detail.trim()}` : value);
               disabled: current || busy,
               onChange: () => setChoice(issue.id)
             }),
-            h25(
+            h26(
               "span",
               { className: "pw-choice-copy" },
-              h25("strong", null, issue.title),
-              h25("span", { className: "pw-note" }, issue.requirementTitle, " \xB7 ", t("st_" + issue.status), current && " \xB7 " + t("linkedTask")),
-              taskOverview(issue) && h25("span", { className: "pw-preview" }, taskOverview(issue))
+              h26("strong", null, issue.title),
+              h26("span", { className: "pw-note" }, issue.requirementTitle, " \xB7 ", t("st_" + issue.status), current && " \xB7 " + t("linkedTask")),
+              taskOverview(issue) && h26("span", { className: "pw-preview" }, taskOverview(issue))
             )
           );
-        })) : h25("p", { className: "pw-note" }, t("noTaskChoices")),
-        items.length > 0 && h25(
+        })) : h26("p", { className: "pw-note" }, t("noTaskChoices")),
+        items.length > 0 && h26(
           "button",
           { className: "pw-button primary", disabled: busy || !choice, onClick: () => onAttach(choice) },
           t(currentId ? "pickNewTask" : "linkTask")
         ),
-        development.length > 0 && h25(
+        development.length > 0 && h26(
           Disclosure,
           { label: t("createAndLink") },
-          h25(
+          h26(
             "form",
             { noValidate: true, onSubmit: create },
-            h25(
+            h26(
               "label",
               { className: "pw-field" },
-              h25("span", { className: "pw-label" }, t("parentRequirement")),
-              h25(
+              h26("span", { className: "pw-label" }, t("parentRequirement")),
+              h26(
                 "select",
                 { className: "pw-select", value: createFor, disabled: busy, onChange: (event) => {
                   setCreateReqId(event.target.value);
                   setError(null);
                 } },
-                h25("option", { value: "" }, t("selectDevRequirement")),
-                development.map((req) => h25("option", { key: req.id, value: req.id }, req.title))
+                h26("option", { value: "" }, t("selectDevRequirement")),
+                development.map((req) => h26("option", { key: req.id, value: req.id }, req.title))
               )
             ),
-            h25(TaskFields, { form: { draft, change: (name, value) => {
+            h26(TaskFields, { form: { draft, change: (name, value) => {
               setError(null);
               setDraft((previous) => ({ ...previous, [name]: value }));
             } }, t, busy, focus: null }),
-            h25(ErrorDetails, { error, t, showRaw: false }),
-            h25("button", { className: "pw-button", type: "submit", disabled: busy }, t("createAndLink"))
+            h26(ErrorDetails, { error, t, showRaw: false }),
+            h26("button", { className: "pw-button", type: "submit", disabled: busy }, t("createAndLink"))
           )
         )
       )
@@ -7634,7 +8941,7 @@ ${detail.trim()}` : value);
     busy,
     act,
     start,
-    openRequirement,
+    openRequirement: openRequirement2,
     openWikiPage,
     showConversation,
     readError,
@@ -7647,28 +8954,28 @@ ${detail.trim()}` : value);
     reload
   }) {
     const form = useTaskDraft(issueDraftKey(projectKey, task.reqId, task.id), task, uiMemory2);
-    const [formFocus, setFormFocus] = useState16("title");
-    const [formError, setFormError] = useState16(null);
-    const [continueEditing, setContinueEditing] = useState16(false);
-    const [continueText, setContinueText] = useState16("");
-    const [continueSaved, setContinueSaved] = useState16(false);
-    const [supplementing, setSupplementing] = useState16(false);
-    const [supplement, setSupplement] = useState16("");
-    const [reasonMove, setReasonMove] = useState16(null);
-    const [reason, setReason] = useState16("");
-    const [reasonError, setReasonError] = useState16(null);
-    const [notice, setNotice] = useState16("");
-    const [recording, setRecording] = useState16(false);
-    const [manualReview, setManualReview] = useState16(null);
-    const [reviewError, setReviewError] = useState16(null);
-    const [assistRunning, setAssistRunning] = useState16(false);
+    const [formFocus, setFormFocus] = useState17("title");
+    const [formError, setFormError] = useState17(null);
+    const [continueEditing, setContinueEditing] = useState17(false);
+    const [continueText, setContinueText] = useState17("");
+    const [continueSaved, setContinueSaved] = useState17(false);
+    const [supplementing, setSupplementing] = useState17(false);
+    const [supplement, setSupplement] = useState17("");
+    const [reasonMove, setReasonMove] = useState17(null);
+    const [reason, setReason] = useState17("");
+    const [reasonError, setReasonError] = useState17(null);
+    const [notice, setNotice] = useState17("");
+    const [recording, setRecording] = useState17(false);
+    const [manualReview, setManualReview] = useState17(null);
+    const [reviewError, setReviewError] = useState17(null);
+    const [assistRunning, setAssistRunning] = useState17(false);
     const deliveryDraftKey = "delivery:" + projectKey + "|" + task.reqId;
-    const [deliveryDraftDirty, setDeliveryDraftDirty] = useState16(() => !!uiMemory2.drafts[deliveryDraftKey]);
-    const lastDeliveryReq = useRef11(null);
+    const [deliveryDraftDirty, setDeliveryDraftDirty] = useState17(() => !!uiMemory2.drafts[deliveryDraftKey]);
+    const lastDeliveryReq = useRef13(null);
     if (lastDeliveryReq.current?.id !== task.reqId) lastDeliveryReq.current = null;
     if (req?.id === task.reqId) lastDeliveryReq.current = req;
     const deliveryReq = req?.id === task.reqId ? req : lastDeliveryReq.current;
-    const menu = useRef11(null);
+    const menu = useRef13(null);
     const terminal = terminalTask(task);
     const item = { root, reqId: task.reqId, id: task.id };
     const inactive = req?.status !== "in_progress" || !!req.pendingReopen;
@@ -7699,13 +9006,13 @@ ${detail.trim()}` : value);
       else setFormError(res);
       return res;
     };
-    useEffect15(() => {
+    useEffect16(() => {
       leaveRef.current = { dirty: () => form.dirty, save, discard: form.finish };
       return () => {
         leaveRef.current = null;
       };
     });
-    useEffect15(() => {
+    useEffect16(() => {
       const clickOutside = (event) => {
         if (menu.current?.open && !menu.current.contains(event.target)) menu.current.open = false;
       };
@@ -7772,7 +9079,7 @@ ${detail.trim()}` : value);
       setReasonMove(to);
     };
     const mayRecord = available && ["todo", "doing", "blocked"].includes(task.status);
-    const menuAction = (label, onClick, danger = false) => h25("button", {
+    const menuAction = (label, onClick, danger = false) => h26("button", {
       key: label,
       className: "pw-button pw-quiet" + (danger ? " danger" : ""),
       disabled: busy,
@@ -7795,7 +9102,7 @@ ${detail.trim()}` : value);
       !terminal && menuAction("cancelTask", () => beginMove("cancelled"), true),
       terminal && menuAction(task.status === "done" ? "reopenTaskAction" : "restoreTask", () => beginMove("todo"))
     ].filter(Boolean) : [];
-    const more = menuItems.length > 0 && h25(
+    const more = menuItems.length > 0 && h26(
       "details",
       {
         className: "pw-task-menu",
@@ -7807,22 +9114,22 @@ ${detail.trim()}` : value);
           menu.current.querySelector("summary")?.focus();
         }
       },
-      h25("summary", { "aria-label": t("moreActions"), title: t("moreActions") }, h25("span", { "aria-hidden": true }, "\u22EF")),
-      h25("div", { className: "pw-task-menu-items" }, menuItems)
+      h26("summary", { "aria-label": t("moreActions"), title: t("moreActions") }, h26("span", { "aria-hidden": true }, "\u22EF")),
+      h26("div", { className: "pw-task-menu-items" }, menuItems)
     );
-    const primary = (label, onClick, disabled = busy) => h25("button", { className: "pw-button primary", disabled, onClick }, t(label));
-    const quiet = (label, onClick, disabled = busy) => h25("button", { className: "pw-button pw-quiet", disabled, onClick }, t(label));
-    const row = (...actions) => h25("div", { className: "pw-task-action-row" }, actions);
+    const primary = (label, onClick, disabled = busy) => h26("button", { className: "pw-button primary", disabled, onClick }, t(label));
+    const quiet = (label, onClick, disabled = busy) => h26("button", { className: "pw-button pw-quiet", disabled, onClick }, t(label));
+    const row = (...actions) => h26("div", { className: "pw-task-action-row" }, actions);
     let action;
     if (!terminal && (runView.waiting || runView.running)) {
       action = row(primary(runView.action, showConversation));
     } else if (available && task.status === "in_review") {
-      action = h25(
+      action = h26(
         "div",
         { className: "pw-review-actions" },
         row(
           primary("demoConfirm", () => confirm(task), !reviewable),
-          h25(
+          h26(
             "div",
             { className: "pw-review-options" },
             quiet("reviseTask", () => setContinueEditing((value) => !value), busy || assistRunning),
@@ -7832,79 +9139,79 @@ ${detail.trim()}` : value);
             })
           )
         ),
-        continueEditing && h25(
+        continueEditing && h26(
           "form",
           { className: "pw-progress-form", onSubmit: continueWork },
-          h25("textarea", { className: "pw-textarea", rows: 3, autoFocus: true, "aria-label": t("askFix"), placeholder: t("askFix"), value: continueText, onChange: (event) => setContinueText(event.target.value) }),
-          h25("button", { type: "submit", className: "pw-button", disabled: busy || assistRunning || !continueText.trim() }, t("submitAndContinue"))
+          h26("textarea", { className: "pw-textarea", rows: 3, autoFocus: true, "aria-label": t("askFix"), placeholder: t("askFix"), value: continueText, onChange: (event) => setContinueText(event.target.value) }),
+          h26("button", { type: "submit", className: "pw-button", disabled: busy || assistRunning || !continueText.trim() }, t("submitAndContinue"))
         )
       );
     } else if (available && task.status === "blocked") {
-      action = h25(
-        import_react25.default.Fragment,
+      action = h26(
+        import_react26.default.Fragment,
         null,
         row(
           primary("supplement", () => setSupplementing((value) => !value)),
           quiet(missing.length ? "completeTaskInfo" : "demoContinue", startWork)
         ),
-        supplementing && h25(
+        supplementing && h26(
           "form",
           { className: "pw-progress-form", onSubmit: saveSupplement },
-          h25("textarea", { className: "pw-textarea", autoFocus: true, rows: 3, "aria-label": t("supplement"), placeholder: t("supplementPlaceholder"), value: supplement, onChange: (event) => setSupplement(event.target.value) }),
-          h25("button", { type: "submit", className: "pw-button", disabled: busy || !supplement.trim() }, t("saveSupplement"))
+          h26("textarea", { className: "pw-textarea", autoFocus: true, rows: 3, "aria-label": t("supplement"), placeholder: t("supplementPlaceholder"), value: supplement, onChange: (event) => setSupplement(event.target.value) }),
+          h26("button", { type: "submit", className: "pw-button", disabled: busy || !supplement.trim() }, t("saveSupplement"))
         )
       );
     } else if (available && ["todo", "doing"].includes(task.status)) {
       action = row(primary(missing.length ? "completeTaskInfo" : task.status === "todo" ? "startTask" : "demoContinue", startWork));
     }
     const activeDelivery = !!deliveryReq && (deliveryReq.status === "pending" || deliveryReq.status === "in_progress" && delivery?.status === "failed" || deliveryDraftDirty);
-    return h25(
-      import_react25.default.Fragment,
+    return h26(
+      import_react26.default.Fragment,
       null,
       toolbar(more, true),
       notices,
-      h25(
+      h26(
         "section",
         { className: "pw-subpage pw-read-card pw-sidebar-detail", "aria-label": t("issueDetail") },
-        h25(
+        h26(
           "header",
           { className: "pw-sidebar-heading" },
-          h25(
+          h26(
             "div",
             { className: "pw-sidebar-title" },
-            h25("h2", null, task.title),
+            h26("h2", null, task.title),
             !terminal && !form.editing && quiet("edit", () => begin())
           ),
-          h25(
+          h26(
             "div",
             { className: "pw-sidebar-meta" },
-            h25("span", { className: "pw-count pw-read-status", "data-status": task.status }, t("st_" + task.status)),
-            req && h25(
+            h26("span", { className: "pw-count pw-read-status", "data-status": task.status }, t("st_" + task.status)),
+            req && h26(
               "button",
-              { className: "pw-button pw-quiet pw-parent-link", onClick: () => openRequirement(req.id, req.status) },
+              { className: "pw-button pw-quiet pw-parent-link", onClick: () => openRequirement2(req.id, req.status) },
               t("parentRequirement"),
               " \xB7 ",
               req.title
             )
           ),
-          runView.locked && h25("p", { className: "pw-note", role: "status" }, t(runView.description))
+          runView.locked && h26("p", { className: "pw-note", role: "status" }, t(runView.description))
         ),
-        form.updateAvailable && h25(
+        form.updateAvailable && h26(
           "div",
           { className: "pw-banner pw-warn", role: "alert" },
-          h25("span", null, t("newAiUpdate")),
+          h26("span", null, t("newAiUpdate")),
           quiet("keepMyDraft", form.keepUpdate),
           quiet("loadNewContent", () => {
             setFormError(null);
             form.loadUpdate();
           })
         ),
-        notice && h25("p", { className: "pw-note", role: "status" }, notice),
-        continueSaved && h25("p", { className: "pw-text pw-error", role: "alert" }, t("continueSaved")),
-        form.editing && !terminal ? h25(
-          import_react25.default.Fragment,
+        notice && h26("p", { className: "pw-note", role: "status" }, notice),
+        continueSaved && h26("p", { className: "pw-text pw-error", role: "alert" }, t("continueSaved")),
+        form.editing && !terminal ? h26(
+          import_react26.default.Fragment,
           null,
-          h25(TaskForm, {
+          h26(TaskForm, {
             form: { ...form, change: (...args) => {
               setFormError(null);
               form.change(...args);
@@ -7918,11 +9225,11 @@ ${detail.trim()}` : value);
             }) : form.finish()
           }),
           available && missing.length > 0 && quiet(busy ? "drafting" : "aiTaskDraft", () => act("issue/draft", { ...item, sessionId }))
-        ) : h25(
-          import_react25.default.Fragment,
+        ) : h26(
+          import_react26.default.Fragment,
           null,
-          inactive && h25("p", { className: "pw-note" }, t(req?.pendingReopen ? "errReopenPending" : "errNotActive")),
-          h25(
+          inactive && h26("p", { className: "pw-note" }, t(req?.pendingReopen ? "errReopenPending" : "errNotActive")),
+          h26(
             TaskReading,
             {
               task,
@@ -7931,10 +9238,10 @@ ${detail.trim()}` : value);
               t,
               sidebar: true,
               openWikiPage: (path) => openWikiPage(task.reqId, path),
-              resultActions: task.status === "in_review" ? h25(
-                import_react25.default.Fragment,
+              resultActions: task.status === "in_review" ? h26(
+                import_react26.default.Fragment,
                 null,
-                !inactive && h25(AcceptanceAssist, {
+                !inactive && h26(AcceptanceAssist, {
                   req,
                   issue: task,
                   root,
@@ -7948,19 +9255,19 @@ ${detail.trim()}` : value);
                 action
               ) : null
             },
-            !terminal && task.status !== "in_review" && missingText && !runView.locked && h25("p", { className: "pw-note" }, missingText),
+            !terminal && task.status !== "in_review" && missingText && !runView.locked && h26("p", { className: "pw-note" }, missingText),
             task.status !== "in_review" && action,
-            linkState?.link?.unrecorded && h25("p", { className: "pw-note" }, t("demoUnrecorded"))
+            linkState?.link?.unrecorded && h26("p", { className: "pw-note" }, t("demoUnrecorded"))
           ),
-          externalUpdate && h25("p", { className: "pw-note", role: "status" }, t("aiUpdated")),
-          activeDelivery && h25(
+          externalUpdate && h26("p", { className: "pw-note", role: "status" }, t("aiUpdated")),
+          activeDelivery && h26(
             Disclosure,
             { label: t("requirementDelivery") },
-            deliveryReq.status === "pending" && !deliveryDraftDirty ? h25(DeliveryResult, { req: deliveryReq, t, compact: true, userFacing: true }) : h25(
-              import_react25.default.Fragment,
+            deliveryReq.status === "pending" && !deliveryDraftDirty ? h26(DeliveryResult, { req: deliveryReq, t, compact: true, userFacing: true }) : h26(
+              import_react26.default.Fragment,
               null,
-              deliveryReq.status === "in_progress" && delivery?.status === "failed" && h25("p", { className: "pw-error" }, t("demoDeliveryFailed")),
-              h25(ManualDelivery, {
+              deliveryReq.status === "in_progress" && delivery?.status === "failed" && h26("p", { className: "pw-error" }, t("demoDeliveryFailed")),
+              h26(ManualDelivery, {
                 key: root + "|" + deliveryReq.id,
                 req: deliveryReq,
                 t,
@@ -7975,15 +9282,15 @@ ${detail.trim()}` : value);
             )
           )
         ),
-        !terminal && proposals.length > 0 && h25(
+        !terminal && proposals.length > 0 && h26(
           Disclosure,
           { label: t("demoDrafts") },
-          h25(DraftSuggestions, { proposals, act, root, t, busy: busy || form.dirty, dismissMethod: "proposal/dismiss", showHeading: false })
+          h26(DraftSuggestions, { proposals, act, root, t, busy: busy || form.dirty, dismissMethod: "proposal/dismiss", showHeading: false })
         ),
-        h25(
+        h26(
           "div",
           { hidden: form.editing && !terminal },
-          h25(UpdateLog, {
+          h26(UpdateLog, {
             activity: task.activity,
             t,
             onAdd: !terminal && !inactive ? (text) => act("issue/addUpdate", { ...item, text: "\u4EBA\u5DE5\u64CD\u4F5C\uFF1A" + text }) : void 0,
@@ -7993,7 +9300,7 @@ ${detail.trim()}` : value);
           })
         )
       ),
-      recording && h25(TaskResultForm, {
+      recording && h26(TaskResultForm, {
         task,
         since: taskSince,
         t,
@@ -8001,13 +9308,13 @@ ${detail.trim()}` : value);
         onClose: () => setRecording(false),
         onSave: (params) => available ? act("issue/update", { ...item, ...params }) : { ok: false, code: "RUNNING" }
       }),
-      manualReview && h25(Modal, { title: t("confirmIssueTitle"), wide: true, onClose: () => {
+      manualReview && h26(Modal, { title: t("confirmIssueTitle"), wide: true, onClose: () => {
         if (!busy) setManualReview(null);
       }, actions: [
         quiet("cancel", () => setManualReview(null)),
         primary("demoConfirm", () => confirm(manualReview), !reviewable || !taskResult(manualReview, taskSince).summary)
-      ] }, h25(TaskResult, { task: manualReview, since: taskSince, t, userFacing: true }), h25(ErrorDetails, { error: reviewError, t, showRaw: false })),
-      reasonMove && h25(
+      ] }, h26(TaskResult, { task: manualReview, since: taskSince, t, userFacing: true }), h26(ErrorDetails, { error: reviewError, t, showRaw: false })),
+      reasonMove && h26(
         Modal,
         { title: reasonTitle, onClose: () => {
           if (!busy) setReasonMove(null);
@@ -8015,7 +9322,7 @@ ${detail.trim()}` : value);
           quiet("cancel", () => setReasonMove(null)),
           primary("ok", move, busy || !reason.trim())
         ] },
-        h25("textarea", {
+        h26("textarea", {
           className: "pw-textarea",
           autoFocus: true,
           rows: 3,
@@ -8026,15 +9333,15 @@ ${detail.trim()}` : value);
             setReasonError(null);
           }
         }),
-        h25(ErrorDetails, { error: reasonError, t, showRaw: false })
+        h26(ErrorDetails, { error: reasonError, t, showRaw: false })
       )
     );
   }
 
   // client-src/conversation.js
-  var import_react26 = __toESM(__require("react"), 1);
+  var import_react27 = __toESM(__require("react"), 1);
   var import_dsh_client_ui_primitives = __require("@deepseek-ai/dsh-client-ui-primitives");
-  var { createElement: h26, useEffect: useEffect16, useRef: useRef12, useState: useState17 } = import_react26.default;
+  var { createElement: h27, useEffect: useEffect17, useRef: useRef14, useState: useState18 } = import_react27.default;
   var generating = /* @__PURE__ */ new Set(["running", "stopping", "starting"]);
   var confirmPrompts = { remove: "removePrompt", restore: "restorePrompt", start: "startPrompt" };
   var confirmActions = { remove: "pwbMoveToTrash", restore: "pwbRestore", start: "pwbStart", prd: "savePrd", reviewEdit: "pwbConfirm" };
@@ -8164,17 +9471,17 @@ ${detail.trim()}` : value);
     return type === "turn/end" || type === "tool/result" || type === "tool/ptc-dispatch" || type === "command/run" && data?.name?.startsWith("pwb-") || type === "command/done";
   }
   function ConversationDock(props) {
-    return h26(SessionConversationDock, { ...props, key: props.sessionId });
+    return h27(SessionConversationDock, { ...props, key: props.sessionId });
   }
   function SessionConversationDock({ sessionId, eventSource, t, useWorkspaces, openMain, enterSession, uiMemory: uiMemory2, css: css2 }) {
-    const [cards, setCards] = useState17([]);
-    const [error, setError] = useState17(null);
-    const [toast, setToast] = useState17(null);
-    const shown = useRef12(/* @__PURE__ */ new Set());
-    const generation = useRef12(0);
+    const [cards, setCards] = useState18([]);
+    const [error, setError] = useState18(null);
+    const [toast, setToast] = useState18(null);
+    const shown = useRef14(/* @__PURE__ */ new Set());
+    const generation = useRef14(0);
     const workspaces = (useWorkspaces ?? useNoWorkspaces3)((state) => state?.items) ?? [];
-    const refreshRef = useRef12(null);
-    useEffect16(() => {
+    const refreshRef = useRef14(null);
+    useEffect17(() => {
       setError(null);
       let disposed = false;
       let timer;
@@ -8213,7 +9520,7 @@ ${detail.trim()}` : value);
         document.removeEventListener("visibilitychange", schedule);
       };
     }, [sessionId, eventSource]);
-    useEffect16(() => {
+    useEffect17(() => {
       const ids = new Set(cards.map((card) => card.id));
       for (const id of shown.current) if (!ids.has(id)) shown.current.delete(id);
       if (toast) return;
@@ -8236,11 +9543,11 @@ ${detail.trim()}` : value);
       await refreshRef.current?.();
       return res;
     };
-    const dock = running.length > 0 || pending.length > 0 ? h26(
+    const dock = running.length > 0 || pending.length > 0 ? h27(
       "section",
       { className: "pw-conversation", "aria-label": t("workbenchConversation") },
-      h26("style", null, css2 + conversationCss),
-      pending.map((card) => h26(ConversationAction, {
+      h27("style", null, css2 + conversationCss),
+      pending.map((card) => h27(ConversationAction, {
         key: card.id,
         card,
         t,
@@ -8250,13 +9557,13 @@ ${detail.trim()}` : value);
         perform,
         open: () => open(card)
       })),
-      running.length > 0 && h26(ResourceProgress, { cards: running, t })
+      running.length > 0 && h27(ResourceProgress, { cards: running, t })
     ) : null;
-    return h26(
-      import_react26.default.Fragment,
+    return h27(
+      import_react27.default.Fragment,
       null,
       dock,
-      toast && h26(ConversationToast, { key: toast.id, card: toast, t, open: () => open(toast), dismiss: () => setToast(null) })
+      toast && h27(ConversationToast, { key: toast.id, card: toast, t, open: () => open(toast), dismiss: () => setToast(null) })
     );
   }
   function resourceRunning(card) {
@@ -8281,10 +9588,10 @@ ${detail.trim()}` : value);
     else if (resource && card.state === "idle") message = t("pwbResourceIdle", { name });
     else if (card.kind === "open" && card.prdId) message = t("pwbPrdSaved");
     const label = resource ? t("pwbOpenResource", { name }) : t(card.prdId ? "pwbOpenPrd" : "openWorkbenchObject");
-    return h26(import_dsh_client_ui_primitives.Toast, {
+    return h27(import_dsh_client_ui_primitives.Toast, {
       text: message,
       onDone: dismiss,
-      ...failed ? { icon: h26(import_dsh_client_ui_primitives.IconWarningOutlineRegular), holdMs: 6e3 } : (canOpen || card.kind === "receipt" && !card.pending) && { tone: "success" },
+      ...failed ? { icon: h27(import_dsh_client_ui_primitives.IconWarningOutlineRegular), holdMs: 6e3 } : (canOpen || card.kind === "receipt" && !card.pending) && { tone: "success" },
       actions: canOpen ? [{ label, prefix: " \xB7 ", onClick: () => {
         dismiss();
         open();
@@ -8293,23 +9600,23 @@ ${detail.trim()}` : value);
   }
   function ResourceProgress({ cards, t }) {
     const label = (card) => t(card.state === "stopping" ? "pwbStopping" : "pwbGenerating", { name: resourceName(card, t) });
-    const spinner = h26("span", { className: "pw-conversation-spinner", "aria-hidden": true });
-    if (cards.length === 1) return h26(
+    const spinner = h27("span", { className: "pw-conversation-spinner", "aria-hidden": true });
+    if (cards.length === 1) return h27(
       "div",
       { className: "pw-conversation-row pw-conversation-progress", role: "status" },
       spinner,
-      h26("span", null, label(cards[0]))
+      h27("span", null, label(cards[0]))
     );
-    return h26(
+    return h27(
       "details",
       { className: "pw-conversation-group" },
-      h26(
+      h27(
         "summary",
         { className: "pw-conversation-row pw-conversation-progress" },
         spinner,
-        h26("span", { role: "status" }, t("pwbGenerationCount", { n: cards.length }))
+        h27("span", { role: "status" }, t("pwbGenerationCount", { n: cards.length }))
       ),
-      h26("ul", null, cards.map((card) => h26("li", { key: card.id }, label(card))))
+      h27("ul", null, cards.map((card) => h27("li", { key: card.id }, label(card))))
     );
   }
   function ConversationAction({ card, t, sessionId, uiMemory: uiMemory2, error, perform, open }) {
@@ -8317,10 +9624,10 @@ ${detail.trim()}` : value);
     const canConfirm = Object.hasOwn(confirmActions, card.kind);
     const drafts = uiMemory2.drafts ??= {};
     const draftKey = "conversation-prd:" + sessionId;
-    const [expanded, setExpanded] = useState17(false);
-    const [busy, setBusy] = useState17(false);
-    const [markdown, setMarkdown] = useState17(() => isPrd && drafts[draftKey]?.id === card.id ? drafts[draftKey].markdown : card.markdown ?? "");
-    const [reason, setReason] = useState17("");
+    const [expanded, setExpanded] = useState18(false);
+    const [busy, setBusy] = useState18(false);
+    const [markdown, setMarkdown] = useState18(() => isPrd && drafts[draftKey]?.id === card.id ? drafts[draftKey].markdown : card.markdown ?? "");
+    const [reason, setReason] = useState18("");
     const launch = async (action, extra) => {
       if (busy) return;
       setBusy(true);
@@ -8342,48 +9649,48 @@ ${detail.trim()}` : value);
     const confirmation = confirmPrompts[card.kind];
     const direct = card.kind === "open" || card.kind === "openTask" && !card.evidence;
     const label = isPrd ? "pwbPreviewPrd" : card.kind === "open" ? "openWorkbenchObject" : direct ? "openAcceptance" : canConfirm ? "pwbPreviewAction" : card.evidence ? "pwbReviewDetails" : "pwbDetails";
-    const row = h26(
+    const row = h27(
       "div",
       { className: "pw-conversation-row" },
-      h26("span", { className: "pw-conversation-label", title: card.title }, isPrd ? t("pwbPrdReady") : card.title),
-      h26(import_dsh_client_ui_primitives.Button, {
+      h27("span", { className: "pw-conversation-label", title: card.title }, isPrd ? t("pwbPrdReady") : card.title),
+      h27(import_dsh_client_ui_primitives.Button, {
         size: "sm",
         disabled: busy,
         "aria-haspopup": direct ? void 0 : "dialog",
         onClick: card.kind === "open" ? open : direct ? () => launch("openTask") : () => setExpanded(true)
       }, t(label)),
-      !isPrd && h26(import_dsh_client_ui_primitives.Button, {
+      !isPrd && h27(import_dsh_client_ui_primitives.Button, {
         size: "sm",
         disabled: busy,
         "aria-label": t("pwbDismiss"),
         title: t("pwbDismiss"),
-        icon: h26(import_dsh_client_ui_primitives.IconCloseOutlineRegular, { size: 14, "aria-hidden": true }),
+        icon: h27(import_dsh_client_ui_primitives.IconCloseOutlineRegular, { size: 14, "aria-hidden": true }),
         onClick: () => launch("dismiss")
       }),
-      !expanded && error && h26("p", { role: "alert", className: "pw-error" }, error.message)
+      !expanded && error && h27("p", { role: "alert", className: "pw-error" }, error.message)
     );
     if (!expanded) return row;
-    const footer = h26(
-      import_react26.default.Fragment,
+    const footer = h27(
+      import_react27.default.Fragment,
       null,
-      isPrd && error?.code === "PRD_CONFLICT" && card.updating && h26(import_dsh_client_ui_primitives.Button, { disabled: busy, onClick: () => launch("reloadPrd") }, t("checkPrdVersion")),
-      h26(
+      isPrd && error?.code === "PRD_CONFLICT" && card.updating && h27(import_dsh_client_ui_primitives.Button, { disabled: busy, onClick: () => launch("reloadPrd") }, t("checkPrdVersion")),
+      h27(
         import_dsh_client_ui_primitives.Button,
         { disabled: busy, onClick: canConfirm ? () => launch("dismiss") : close },
         t(isPrd ? "pwbDiscardPrd" : canConfirm ? "pwbCancel" : "pwbDismiss")
       ),
-      card.kind === "openTask" && h26(import_dsh_client_ui_primitives.Button, { variant: "primary", disabled: busy, onClick: () => launch("openTask") }, t("openAcceptance")),
-      canConfirm && h26(import_dsh_client_ui_primitives.Button, {
+      card.kind === "openTask" && h27(import_dsh_client_ui_primitives.Button, { variant: "primary", disabled: busy, onClick: () => launch("openTask") }, t("openAcceptance")),
+      canConfirm && h27(import_dsh_client_ui_primitives.Button, {
         variant: "primary",
         disabled: busy || isPrd && (!markdown.trim() || error?.code === "PRD_CONFLICT") || card.kind === "reviewEdit" && !reason.trim(),
         onClick: () => launch("confirm", { ...isPrd && { markdown }, ...card.kind === "reviewEdit" && { reason } })
       }, t(isPrd && card.updating ? "prdOverwrite" : confirmActions[card.kind]))
     );
-    return h26(
-      import_react26.default.Fragment,
+    return h27(
+      import_react27.default.Fragment,
       null,
       row,
-      h26(
+      h27(
         import_dsh_client_ui_primitives.Modal,
         {
           open: expanded,
@@ -8396,40 +9703,40 @@ ${detail.trim()}` : value);
           tone: card.kind === "remove" ? "warning" : void 0,
           description: isPrd ? card.requirements.join(" \xB7 ") : confirmation ? t(confirmation) : card.evidence || canConfirm ? card.message : void 0
         },
-        card.kind === "note" && h26("p", null, card.message),
-        card.evidence && h26(TaskEvidence, { data: card.evidence, t }),
-        card.kind === "reviewEdit" && h26(
-          import_react26.default.Fragment,
+        card.kind === "note" && h27("p", null, card.message),
+        card.evidence && h27(TaskEvidence, { data: card.evidence, t }),
+        card.kind === "reviewEdit" && h27(
+          import_react27.default.Fragment,
           null,
-          h26("p", null, t("confirmReviewEditBody")),
-          h26("ul", null, card.changes.map(({ label: label2, value }) => h26("li", { key: label2 }, label2, " \xB7 ", value))),
-          h26(
+          h27("p", null, t("confirmReviewEditBody")),
+          h27("ul", null, card.changes.map(({ label: label2, value }) => h27("li", { key: label2 }, label2, " \xB7 ", value))),
+          h27(
             "label",
             { className: "pw-field" },
-            h26("span", null, t("reasonTitle")),
-            h26("input", { className: "pw-input", value: reason, onChange: (event) => setReason(event.target.value) })
+            h27("span", null, t("reasonTitle")),
+            h27("input", { className: "pw-input", value: reason, onChange: (event) => setReason(event.target.value) })
           )
         ),
-        isPrd && h26(
-          import_react26.default.Fragment,
+        isPrd && h27(
+          import_react27.default.Fragment,
           null,
-          h26(
+          h27(
             "label",
             { className: "pw-field" },
-            h26("span", null, t("prdMarkdown")),
-            h26("textarea", { className: "pw-textarea", rows: 10, value: markdown, onChange: (event) => {
+            h27("span", null, t("prdMarkdown")),
+            h27("textarea", { className: "pw-textarea", rows: 10, value: markdown, onChange: (event) => {
               setMarkdown(event.target.value);
               drafts[draftKey] = { id: card.id, markdown: event.target.value };
             } })
           ),
-          card.latest !== void 0 && h26(
+          card.latest !== void 0 && h27(
             "details",
             { open: true },
-            h26("summary", null, t("prdLatestSaved")),
-            h26("pre", null, card.latest)
+            h27("summary", null, t("prdLatestSaved")),
+            h27("pre", null, card.latest)
           )
         ),
-        error && h26("p", { role: "alert", className: "pw-error" }, error.message)
+        error && h27("p", { role: "alert", className: "pw-error" }, error.message)
       )
     );
   }
@@ -8437,17 +9744,17 @@ ${detail.trim()}` : value);
     const { verification, currentEvidence } = data;
     const counts = verification && t("checksPassed", { n: verification.passed }) + " \xB7 " + t("checksFailed", { n: verification.failed });
     const outcomeLabels = { passed: "pwbCheckPassed", failed: "pwbCheckFailed", incomplete: "pwbCheckIncomplete" };
-    return h26(
+    return h27(
       "details",
       { open: true },
-      h26("summary", null, t("verify")),
-      h26("p", null, t("acceptanceField"), " \xB7 ", data.acceptance || t("noLimits")),
-      counts && h26("p", null, counts),
-      verification?.status === "unverified" && h26("p", null, t("noChecks")),
-      (verification?.incomplete > 0 || verification?.unconfirmedChanges > 0) && h26("p", null, t("checksIncomplete")),
-      data.currentLimits && h26("p", null, data.currentLimits),
-      data.checks?.length > 0 && h26("ul", null, data.checks.map((check) => h26("li", { key: check.command }, t(outcomeLabels[check.status]), " \xB7 ", h26("code", null, check.command), " \xB7 ", check.outcome))),
-      currentEvidence && h26("pre", null, currentEvidence)
+      h27("summary", null, t("verify")),
+      h27("p", null, t("acceptanceField"), " \xB7 ", data.acceptance || t("noLimits")),
+      counts && h27("p", null, counts),
+      verification?.status === "unverified" && h27("p", null, t("noChecks")),
+      (verification?.incomplete > 0 || verification?.unconfirmedChanges > 0) && h27("p", null, t("checksIncomplete")),
+      data.currentLimits && h27("p", null, data.currentLimits),
+      data.checks?.length > 0 && h27("ul", null, data.checks.map((check) => h27("li", { key: check.command }, t(outcomeLabels[check.status]), " \xB7 ", h27("code", null, check.command), " \xB7 ", check.outcome))),
+      currentEvidence && h27("pre", null, currentEvidence)
     );
   }
   var conversationCss = [
@@ -8472,7 +9779,7 @@ ${detail.trim()}` : value);
   ].join("\n");
 
   // client-src/index.js
-  var h27 = import_react27.default.createElement;
+  var h28 = import_react28.default.createElement;
   var NS = "projectWorkbench";
   var PANEL_ID = "project-workbench";
   var en = {
@@ -8482,6 +9789,9 @@ ${detail.trim()}` : value);
     ...requirementReviewLocale.en,
     ...requirementContentLocale.en,
     ...requirementLayoutLocale.en,
+    ...readingDrawerLocale.en,
+    ...taskDetailLocale.en,
+    ...listLocale.en,
     ...requirementLogLocale.en,
     ...conversationLocale.en,
     ...prdLocale.en,
@@ -8821,6 +10131,9 @@ ${detail.trim()}` : value);
     ...requirementReviewLocale.zh,
     ...requirementContentLocale.zh,
     ...requirementLayoutLocale.zh,
+    ...readingDrawerLocale.zh,
+    ...taskDetailLocale.zh,
+    ...listLocale.zh,
     ...requirementLogLocale.zh,
     ...conversationLocale.zh,
     ...prdLocale.zh,
@@ -9477,12 +10790,12 @@ ${detail.trim()}` : value);
 @media(prefers-reduced-motion:reduce){.pw-page *{transition:none!important}}
 `;
   function WorkbenchIcon({ size = 16 }) {
-    return h27(
+    return h28(
       "svg",
       { width: size, height: size, viewBox: "0 0 20 20", fill: "none", "aria-hidden": true },
-      h27("rect", { x: 2, y: 3, width: 4, height: 11, rx: 1, stroke: "currentColor", strokeWidth: 1.4 }),
-      h27("rect", { x: 8, y: 3, width: 4, height: 14, rx: 1, stroke: "currentColor", strokeWidth: 1.4 }),
-      h27("rect", { x: 14, y: 3, width: 4, height: 8, rx: 1, stroke: "currentColor", strokeWidth: 1.4 })
+      h28("rect", { x: 2, y: 3, width: 4, height: 11, rx: 1, stroke: "currentColor", strokeWidth: 1.4 }),
+      h28("rect", { x: 8, y: 3, width: 4, height: 14, rx: 1, stroke: "currentColor", strokeWidth: 1.4 }),
+      h28("rect", { x: 14, y: 3, width: 4, height: 8, rx: 1, stroke: "currentColor", strokeWidth: 1.4 })
     );
   }
   var shellCss = `
@@ -9512,23 +10825,12 @@ ${detail.trim()}` : value);
 .pw-home-count span{font-size:12px;color:var(--dsw-alias-label-secondary)}
 .pw-list{flex:1;min-height:0;display:flex;flex-direction:column;gap:10px;overflow:auto}
 .pw-list-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:none}
-.pw-list-rows{display:flex;flex-direction:column;gap:8px}
-.pw-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:var(--dsw-alias-bg-layer-1)}
-.pw-row-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;border:none;background:none;color:var(--dsw-alias-label-primary);font:inherit;text-align:left;cursor:pointer;padding:4px 6px;border-radius:6px;min-height:44px}
-.pw-row-main:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.pw-row-main:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
-.pw-row-static{cursor:default}
-.pw-row-static:hover{background:none}
-.pw-row-actions{display:flex;align-items:center;gap:6px;flex:none}
 .pw-order{display:inline-flex;flex-direction:column;gap:2px}
 .pw-orderbtn{border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-secondary);border-radius:4px;width:22px;height:18px;line-height:1;cursor:pointer;font-size:11px;padding:0}
 .pw-orderbtn:disabled{opacity:.4;cursor:not-allowed}
 .pw-orderbtn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
-.pw-dev-progress{display:flex;align-items:center;gap:8px;min-width:0}
-.pw-dev-progress .pw-bar{max-width:120px;flex:none;width:120px}
 .pw-startbtn{flex:none}
 .pw-source-view{margin:0;padding:10px 12px;border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:var(--dsw-alias-bg-base);font-family:var(--dsh-font-family-mono,monospace);font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;max-height:50vh;overflow:auto}
-.pw-blocked-section{margin-bottom:4px}
 .pw-issue .pw-order{flex:none}
 .pw-requirement-fields .pw-field{display:block}
 .pw-requirement-fields .pw-textarea[rows="1"]{min-height:34px;padding-block:6px}
@@ -9737,7 +11039,7 @@ ${detail.trim()}` : value);
       const injected = () => ({
         hooks: { currentSession },
         uiMemory,
-        css: css + shellCss,
+        css: css + shellCss + readingDrawerCss + requirementDetailCss + taskDetailCss + listCss,
         showConversation: () => {
           ctx.layout.selectPanel(null);
         },
