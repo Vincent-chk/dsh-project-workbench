@@ -93,8 +93,8 @@ test('opening an associated PRD keeps the original requirement detail and its na
   const { shell, uiMemory } = renderShell(view, [req])
   const detail = find(shell, node => node.props?.req === req && node.props.onCreateTask)
   assert.ok(detail)
-  const documents = detail.props.prdPanel ?? find(shell, node => node.props?.reqId === req.id && node.props.onRead)
-  assert.ok(documents)
+  const documents = detail.props.renderPrds(() => {})
+  assert.equal(documents.props.reqId, req.id)
   documents.props.onRead('prd-1')
 
   const opened = uiMemory.views['id:w1']
@@ -107,7 +107,8 @@ test('opening an associated PRD keeps the original requirement detail and its na
   assert.deepEqual(find(reading, node => node.props?.req === req && node.props.onCreateTask)?.props.req, req)
   const stack = find(reading, node => node.props?.className === 'pw-subpage-stack')
   assert.equal(stack.props.children[0].props.req, req)
-  const reader = stack.props.children[1]
+  assert.equal(stack.props.children.length, 1, 'PRDs are rendered within the requirement layout')
+  const reader = stack.props.children[0].props.renderPrds(() => {})
   assert.equal(reader.props.activeId, 'prd-1')
   reader.props.onRead(null)
   assert.equal(readingMemory.views['id:w1'].params.reqId, req.id)

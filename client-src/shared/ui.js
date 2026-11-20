@@ -4,8 +4,8 @@ import { workbenchError } from '../workbench-content.js'
 const h = React.createElement
 const { useEffect } = React
 
-export function Disclosure({ label, children, open }) {
-  return h('details', { className: 'pw-disclosure', ...(open === undefined ? {} : { open }) },
+export function Disclosure({ label, children, open, id }) {
+  return h('details', { id, className: 'pw-disclosure', ...(open === undefined ? {} : { open }) },
     h('summary', null, label), children)
 }
 

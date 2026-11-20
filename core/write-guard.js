@@ -3,6 +3,7 @@
 // sessions and to PTC inner dispatches (same prepare stage as native calls).
 // Heuristic command checks cover common model mistakes, not deliberate attacks.
 import { isAbsolute, join, normalize, sep } from 'node:path'
+import { realpathSync } from 'node:fs'
 import { patchPaths } from './extract.js'
 
 export const PROJECT_DENIAL = '.project/ 由工作台管理，请使用 workbench_* 工具，或在工作台界面操作。'
@@ -48,6 +49,16 @@ export function taskReadDenial(name, args, cwd) {
     return outsideRoot(args?.file_path ?? args?.path, cwd) ? TASK_READ_DENIAL : undefined
   }
   if (name === 'bash' || name === 'pwsh') return commandReadsOutside(args?.command, cwd) ? TASK_READ_DENIAL : undefined
+  return undefined
+}
+
+export function reviewToolDenial(name, args, cwd) {
+  if (!['read', 'glob', 'grep'].includes(name)) return '旧评审会话仅可读取项目资料。'
+  const path = args?.file_path ?? args?.path ?? cwd
+  if (typeof path !== 'string' || outsideRoot(path, cwd)) return TASK_READ_DENIAL
+  try {
+    if (outsideRoot(realpathSync(absOf(path, cwd)), realpathSync(cwd))) return TASK_READ_DENIAL
+  } catch { /* the read tool reports missing files */ }
   return undefined
 }
 

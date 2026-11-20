@@ -1,8 +1,8 @@
-import { mkdtemp, rm, readFile } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, writeFile, mkdir } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { savePrd } from '../core/prd.js'
+import { reviewPrds, savePrd } from '../core/prd.js'
 
 export async function makeRoot(t) {
   const root = await mkdtemp(join(tmpdir(), 'pw-store-'))
@@ -10,8 +10,23 @@ export async function makeRoot(t) {
   return root
 }
 
+// Setup for tests of development or acceptance. The formal review run is
+// exercised separately; its saved report is a prerequisite to approval.
+export async function seedReviewPrd(root, reqId) {
+  const [existing] = await reviewPrds(root, reqId)
+  return existing ?? savePrd(root, { id: 'prd-' + randomUUID(), reqIds: [reqId], markdown: '# 评审夹具\n\n执行测试需求的首版范围。' })
+}
+
+export async function seedAIReview(root, reqId) {
+  const { id, title, version } = await seedReviewPrd(root, reqId)
+  const source = JSON.stringify(JSON.stringify({ prds: [{ id, title, version }] }))
+  const reviews = join(root, '.project', 'requirements', reqId, 'reviews')
+  await mkdir(reviews, { recursive: true })
+  await writeFile(join(reviews, '0.md'), `---\nschema: 2\nkind: ai_review\nround: 0\ndecision: reported\nby: ai\nmarker: test-ai-review\nopinionText: "需求评审夹具"\nsource: ${source}\n---\n`)
+}
+
 export function saveReviewPrd(root, reqId) {
-  return savePrd(root, { id: 'prd-' + randomUUID(), reqIds: [reqId], markdown: '# 送审用 PRD\n\n确认本需求的范围。' })
+  return savePrd(root, { reqIds: [reqId], markdown: '# 送审用 PRD\n\n确认本需求的范围。' })
 }
 
 // Content fingerprint matching store.hashText, for tests that confirm completion.

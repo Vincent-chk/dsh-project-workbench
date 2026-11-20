@@ -5,6 +5,18 @@
 export const REQUIREMENT_STATES = ['backlog', 'reviewing', 'ready', 'in_progress', 'pending', 'completed']
 export const ISSUE_STATES = ['todo', 'doing', 'blocked', 'in_review', 'done', 'cancelled']
 export const TERMINAL_ISSUE = new Set(['done', 'cancelled'])
+export const REVIEW_TASK_PURPOSE = 'requirement_review'
+
+export function aiReviewReports(reviews = []) {
+  return reviews.filter(record => record.kind === 'ai_review' && record.by === 'ai' && record.decision === 'reported' &&
+    typeof record.marker === 'string' && !!record.marker.trim() &&
+    typeof record.opinion === 'string' && !!record.opinion.trim())
+}
+
+export function reviewUsesLinkedPrd(report, prds) {
+  const sources = report.source?.prds
+  return Array.isArray(sources) && sources.some(source => source?.version && prds.some(prd => prd.id === source.id))
+}
 
 const REQUIREMENT_EDGES = new Set([
   'backlog>reviewing',
@@ -94,7 +106,7 @@ export const allTasksApproved = issues => issues.length > 0 && issues.every(issu
 
 export function canMoveRequirement({
   from, to, title, issues = [], reason, actor = 'human',
-  q_pain, goal, confirmReviewInvalid = false, running = [],
+  q_pain, goal, hasAIReview = false, confirmReviewInvalid = false, running = [],
   summary, pendingReopen = null, reopenCount = 0, reqDeliveryStartedAt = 0, summaryAt = 0,
 }) {
   if (!REQUIREMENT_STATES.includes(from) || !REQUIREMENT_STATES.includes(to)) {
@@ -111,6 +123,9 @@ export function canMoveRequirement({
   if (edge === 'backlog>reviewing') {
     if (blank(title)) return reject('TITLE_REQUIRED', 'a title is required before review')
     if (!requirementOverview({ q_pain, goal })) return reject('REVIEW_INFO_REQUIRED', 'review needs: overview')
+  }
+  if (edge === 'reviewing>ready' && !hasAIReview) {
+    return reject('REVIEW_REPORT_REQUIRED', 'complete an AI review before approving this requirement')
   }
   if (edge === 'reviewing>backlog' && blank(reason)) {
     return reject('REASON_REQUIRED', 'a return reason is required')

@@ -5,7 +5,7 @@ import test from 'node:test'
 import { apply } from '../index.js'
 import { readInvocation } from '../core/conversation-commands.js'
 import * as store from '../core/store.js'
-import { makeRoot, saveReviewPrd, stubSpawnHost, waitFor } from './util.js'
+import { makeRoot, saveReviewPrd, seedAIReview, stubSpawnHost, waitFor } from './util.js'
 
 async function setup(t) {
   const root = await makeRoot(t)
@@ -149,6 +149,7 @@ test('pwb-update reuses the current session, records progress and decisions, and
   const { data: { id: otherReq } } = await store.createRequirement(p.root, '别的需求', { q_pain: '无关内容' })
   await saveReviewPrd(p.root, id)
   await store.moveRequirement(p.root, id, 'reviewing')
+  await seedAIReview(p.root, id)
   await store.moveRequirement(p.root, id, 'ready')
   await store.moveRequirement(p.root, id, 'in_progress')
   const { data: { id: issueId } } = await store.createIssue(p.root, id, '设置频率', { problemOverview: '可编辑通知频率', acceptance: '用户可以切换' })
@@ -249,6 +250,7 @@ test('task actions record real results and leave final completion to the existin
   await store.updateRequirement(p.root, id, { goal: '完成聊天', scope: '两个风格', acceptance: '两种风格可切换' })
   await saveReviewPrd(p.root, id)
   await store.moveRequirement(p.root, id, 'reviewing')
+  await seedAIReview(p.root, id)
   await store.moveRequirement(p.root, id, 'ready')
   await store.moveRequirement(p.root, id, 'in_progress')
   p.begin('/pwb-task 新建风格切换')

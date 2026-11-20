@@ -5,14 +5,14 @@ import { join } from 'node:path'
 import * as store from '../core/store.js'
 import { installAcceptanceAssist } from '../core/acceptance-assist.js'
 import { consumeChildToolAllow } from '../core/spawn.js'
-import { makeRoot, stubSpawnHost, issueFileHash, waitFor, saveReviewPrd } from './util.js'
+import { makeRoot, seedAIReview, stubSpawnHost, issueFileHash, waitFor } from './util.js'
 
 async function fixture(t, issueFields = {}) {
   const root = await makeRoot(t)
   await store.initProject(root)
   const { data: { id: reqId } } = await store.createRequirement(root, '输入提示')
   await store.updateRequirement(root, reqId, { q_pain: '空白提示', acceptance: '空白时提示填写' })
-  await saveReviewPrd(root, reqId)
+  await seedAIReview(root, reqId)
   for (const state of ['reviewing', 'ready', 'in_progress']) await store.moveRequirement(root, reqId, state)
   const { data: { id: issueId } } = await store.createIssue(root, reqId, '处理空白', { problemOverview: '显示提示', acceptance: '空白时提示填写', ...issueFields })
   await store.updateIssue(root, reqId, issueId, { resultSummary: '已实现', evidence: '人工核对' })

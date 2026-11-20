@@ -143,7 +143,7 @@ export function PrdManagement({ wb, onRead, onEdit }) {
     h(PrdError, { error: actionError, t })))
 }
 
-export function PrdDocuments({ root, reqId, requirements, t, activeId, onRead, onEdit, onNew }) {
+export function PrdDocuments({ root, reqId, requirements, t, activeId, onRead, onEdit, onNew, onSummary }) {
   const { data, error, initial, pending, reload } = usePrdRead(root)
   const [pick, setPick] = useState('')
   const [busy, setBusy] = useState(false)
@@ -152,6 +152,9 @@ export function PrdDocuments({ root, reqId, requirements, t, activeId, onRead, o
   const linked = (data ?? []).filter(item => item.reqIds.includes(reqId))
   const available = (data ?? []).filter(item => !item.reqIds.includes(reqId))
   const candidate = available.find(item => item.id === pick)
+  const summary = error ? t('errUnreadable') : initial ? t('reqLoadingPrds')
+    : linked.length ? t('reqPrdCount').replace('{n}', String(linked.length)) : t('reqNoPrds')
+  useEffect(() => { onSummary?.(summary) }, [onSummary, summary])
   const changeLink = async (item, linked) => {
     if (busy || pending || !item) return
     setBusy(true); setActionError(null); setNotice('')
@@ -167,8 +170,8 @@ export function PrdDocuments({ root, reqId, requirements, t, activeId, onRead, o
     setNotice(t(linked ? 'prdLinkSaved' : 'prdLinkRemoved'))
     notifyPrdChanged(root)
   }
-  return h('section', { id: 'pw-prd-associations-' + reqId, tabIndex: -1, className: 'pw-subpage pw-prd-associations', 'aria-label': t('prds') },
-    h('header', { className: 'pw-subpage-head' }, h('h2', null, t('prds')),
+  return h('section', { id: 'pw-prd-associations-' + reqId, tabIndex: -1, className: 'pw-prd-associations', 'aria-label': t('prds') },
+    h('header', { className: 'pw-subpage-head' },
       h('button', { type: 'button', className: 'pw-button', onClick: () => onNew(reqId) }, t('prdNew'))),
     h(PrdError, { error, t, onRetry: reload }),
     h(PrdError, { error: actionError, t }),
@@ -242,7 +245,6 @@ export const prdCss = `
 .pw-prd-row .pw-row-main{min-width:min(180px,100%)}
 .pw-prd-associations:focus-visible,.pw-prd-scroll:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
 .pw-prd-associations .pw-subpage-head{align-items:center;flex-wrap:wrap;margin-bottom:10px}
-.pw-prd-associations .pw-subpage-head h2{font-size:16px;margin:0}
 .pw-prd-links{list-style:none;padding:0;margin:0 0 14px}
 .pw-prd-links li{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--dsw-alias-border-l3);padding-block:4px}
 .pw-prd-links li .pw-button:last-child{margin-inline-start:auto}

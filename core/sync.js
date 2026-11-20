@@ -5,6 +5,7 @@
 // failed write retries both together. Unrecorded hints are tracked per turn.
 import { readFile, rm } from 'node:fs/promises'
 import * as store from './store.js'
+import { REVIEW_TASK_PURPOSE } from './state.js'
 import { normalizeToolCalls, extractFacts, successfulRecords } from './extract.js'
 import { TERMINAL_ISSUE } from './state.js'
 
@@ -75,11 +76,12 @@ function unrecordedTurnsOf(history, attributed, root, sid, existing = [], supple
 export function installSync(ctx, { linkFile, cursorFile, runFile, issueOf, sessionOf, requestState, serialized, writeJson, observedSession }) {
   async function syncSession(root, session, link, { idleOnly = false, abandonEnded = false } = {}) {
     const sid = session.id
+    const agent = sessionOf(sid)
+    if (idleOnly && agent && agent.status !== 'idle') return { skipped: 'running' }
+    if (link.purpose === REVIEW_TASK_PURPOSE) return { complete: true }
     const cursor = await readJson(cursorFile(root, sid))
     const cursorBase = cursor?.lastSeq ?? link.startSeq - 1
     const from = Math.max(link.startSeq, cursorBase + 1)
-    const agent = sessionOf(sid)
-    if (idleOnly && agent && agent.status !== 'idle') return { skipped: 'running' }
     const snapshot = session.snapshotEvents(from)
     const lastScanned = snapshot.length ? snapshot[snapshot.length - 1].seq : from - 1
     const history = session.snapshotEvents(link.startSeq).filter(e => e.seq <= lastScanned)

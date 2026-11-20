@@ -9,7 +9,7 @@ import { installLinks } from '../core/link.js'
 import { installTools } from '../core/tools.js'
 import * as store from '../core/store.js'
 import { adoptProposal, listProposals } from '../core/proposals.js'
-import { makeRoot, issueFileHash, saveReviewPrd } from './util.js'
+import { makeRoot, seedAIReview, issueFileHash, seedReviewPrd } from './util.js'
 
 function stubCtx() {
   const agents = new Map()
@@ -42,8 +42,9 @@ async function devReq(root, title = '需求') {
   await store.initProject(root)
   const { data } = await store.createRequirement(root, title)
   await store.updateRequirement(root, data.id, { goal: 'g', scope: 's', acceptance: 'a' })
-  await saveReviewPrd(root, data.id)
+  await seedReviewPrd(root, data.id)
   await store.moveRequirement(root, data.id, 'reviewing')
+  await seedAIReview(root, data.id)
   await store.moveRequirement(root, data.id, 'ready')
   await store.moveRequirement(root, data.id, 'in_progress')
   return data.id

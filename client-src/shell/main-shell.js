@@ -18,7 +18,7 @@ import { PrdEditor } from '../forms/prd-form.js'
 import { SyncView } from '../pages/sync.js'
 import { DetailPanel } from '../detail/requirement-detail.js'
 import { IssueDetail } from '../detail/task-detail.js'
-import { DeliveryDetail, RecordDetail } from '../detail/acceptance-detail.js'
+import { RecordDetail } from '../detail/acceptance-detail.js'
 import { requirementFormError } from '../forms/requirement-form.js'
 
 const h = React.createElement
@@ -764,8 +764,8 @@ export function MainShell(props) {
       h('span', { className: 'pw-crumb-sep' }, '/'),
       h('span', { className: 'pw-crumb-current' }, t('recordDetail'))))
 
-  const prdPanel = selected && h(PrdDocuments, {
-    key: projectKey + ':' + selected.id, root, reqId: selected.id, requirements, t, activeId: params?.prdId,
+  const renderPrds = onSummary => h(PrdDocuments, {
+    key: projectKey + ':' + selected.id, root, reqId: selected.id, requirements, t, activeId: params?.prdId, onSummary,
     onRead: prdId => {
       const view = navRef.current
       writeNav({ ...view, params: { ...view.params, prdId } })
@@ -796,21 +796,21 @@ export function MainShell(props) {
       onMoveIssue: to => moveIssue(selected, selectedIssue, to),
       openWikiPage: p => guardLeave(() => writeNav({ ...navRef.current, page: 'wiki', params: { wikiTarget: p }, history: [] })),
     }))
-  } else if (selected && page === 'pending') {
-    content = h('div', { className: 'pw-subpage-stack' }, h(DeliveryDetail, {
-      req: selected, t, onMove: doMove, busy: saving || !!pendingReorder || !!modal,
-    }), prdPanel)
   } else if (selected) {
     content = h('div', { className: 'pw-subpage-stack' },
       h(DetailPanel, {
         key: projectKey + ':' + selected.id, req: selected, t, root, mutate, moveIssue, projectKey, rootRef,
-        onDirty: setDetailDirty, busy: saving || !!pendingReorder, sessionId: sessionRoot === root ? sessionId : undefined, setModal, uiMemory,
+        initialPrdId: params?.prdId, initialDelivery: page === 'pending' && selected.status === 'pending', focusTarget,
+        renderPrds, onMove: doMove,
+        onApprove: () => doMove(selected, 'ready'),
+        onReject: () => doMove(selected, 'backlog'),
+        onDirty: setDetailDirty, busy: saving || !!pendingReorder || !!modal, sessionId: sessionRoot === root ? sessionId : undefined, setModal, uiMemory,
         onDelete: () => setModal({ kind: 'delete', req: selected }),
         onOpenIssue: id => guardLeave(() => writeNav(openDetail(navRef.current, { reqId: selected.id, issueId: id }))),
         onReorderTask: (id, direction) => reorder('issue', selected.id, sortedTasks(selected.issues), id, direction),
         onStartTask: issueId => startTask(selected.id, issueId),
         onCreateTask: () => setModal({ kind: 'createTask', req: selected, onCreated: id => { if (rootRef.current === root) setFocusTarget('pw-task-' + id) } }),
-      }), prdPanel)
+      }))
   } else if (page === 'prds') {
     content = h(PrdManagement, { key: projectKey, wb, onRead: openPrd, onEdit: editPrd })
   } else if (page === 'wiki') {

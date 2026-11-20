@@ -1,13 +1,18 @@
 import React from 'react'
-import { changesReviewedRequirement } from '../../core/state.js'
+import { aiReviewReports, changesReviewedRequirement, requirementOverview } from '../../core/state.js'
 import { rpc } from '../api.js'
 import { reqDraftKey, reqDraftFrom, issueDraftFrom, issueDraftKey, draftOf, sameDraft } from '../project-state.js'
-import { isRequirementSplit } from '../workbench-content.js'
+import { isRequirementSplit, progressRecords, requirementLogEntries, requirementResult, reviewRecords } from '../workbench-content.js'
 import { ISSUE_MOVES, sortedTasks } from '../shell/nav-state.js'
 import { Disclosure, ErrorDetails, ReadText } from '../shared/ui.js'
 import { DraftSuggestions } from './task-content.js'
-import { RequirementHistory, RequirementOverview } from './requirement-content.js'
+import { RequirementDevelopment, RequirementOverview, RequirementReviewDecisions } from './requirement-content.js'
+import { RequirementReview } from './requirement-review.js'
+import { RequirementDelivery } from './acceptance-detail.js'
+import { RequirementLayout } from './requirement-layout.js'
+import { RequirementLog } from './requirement-log.js'
 import { RequirementFields, requirementFormError } from '../forms/requirement-form.js'
+import { dateText } from '../shared/list.js'
 
 const h = React.createElement
 const { useCallback, useEffect, useRef, useState } = React
@@ -111,10 +116,13 @@ function TaskSuggestionReview({ review, req, t, onOpenIssue, hasDrafts, hasLegac
         (hasLegacy || error) && h('button', { type: 'button', className: 'pw-button pw-quiet', disabled: pending, onClick: () => onReview() }, t('splitRetry'))))
 }
 
-// 需求详情：页首编辑，次级入口整理/删除草稿；任务区新建与 AI 拆分；
-// 评审与验收记录在任务栏后默认收起（PRD §7.8）。
-export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenIssue, onCreateTask, projectKey, rootRef, onDirty, busy, sessionId, setModal, uiMemory, onReorderTask, onStartTask }) {
-  const form = useWorkItemDraft(reqDraftKey(projectKey, req.id), req, reqDraftFrom, onDirty, uiMemory)
+export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenIssue, onCreateTask, projectKey, rootRef, onDirty, busy, sessionId, setModal, uiMemory, onReorderTask, onStartTask, onApprove, onReject, onMove, initialPrdId, initialDelivery, focusTarget, renderPrds }) {
+  const layoutKey = reqDraftKey(projectKey, req.id)
+  const form = useWorkItemDraft(layoutKey, req, reqDraftFrom, onDirty, uiMemory)
+  const [arranging, setArranging] = useState(false)
+  const [focus, setFocus] = useState(null)
+  const [prdSummary, setPrdSummary] = useState(null)
+  const [reportSnapshot, setReportSnapshot] = useState({ state: 'loading' })
   const [attempted, setAttempted] = useState(false)
   const [proposals, setProposals] = useState([])
   const remembered = uiMemory.taskReviews[reqDraftKey(projectKey, req.id)] ??= { edits: {} }
@@ -127,6 +135,17 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
   const live = useRef(false)
   const proposalSeq = useRef(0)
   const mode = req.status === 'backlog' ? 'organize' : req.status === 'in_progress' ? 'split' : null
+  useEffect(() => {
+    if (initialPrdId) setFocus({ block: 'prds' })
+    else if (initialDelivery) setFocus({ block: 'delivery' })
+  }, [initialPrdId, initialDelivery])
+  useEffect(() => {
+    if (focusTarget?.startsWith('pw-task-') || focusTarget === 'pw-suggest-' + req.id) {
+      setFocus({ block: 'tasks', elementId: focusTarget })
+    } else if (focusTarget === 'pw-prd-associations-' + req.id) {
+      setFocus({ block: 'prds', elementId: focusTarget })
+    }
+  }, [focusTarget, req.id])
   const loadProposals = useCallback(async () => {
     const seq = ++proposalSeq.current
     if (!mode) return
@@ -221,39 +240,91 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
   const canDelete = req.status === 'backlog' && !tasks.length && !req.devHistory
   const organize = () => actProposal('requirement/organize', { root, id: req.id, sessionId })
   const drafts = mode && h(DraftSuggestions, { proposals: proposals.filter(proposal => !isRequirementSplit(proposal)), act: actProposal, root, t, busy })
-  return h(React.Fragment, null,
-    h('section', { className: editing ? 'pw-subpage' : 'pw-subpage pw-read-card', 'aria-label': t('detail') },
+  const reports = reportSnapshot.reports ?? aiReviewReports(req.reviews)
+  const decisions = reviewRecords(req.reviews)
+  const reviewCount = reports.length + decisions.filter(record => record.kind === 'review').length
+  const reviewSummary = reportSnapshot.state === 'unavailable' ? t('errUnreadable') : reviewCount
+    ? t('reqReviewCount').replace('{n}', String(reviewCount))
+    : t(reportSnapshot.state === 'loading' ? 'reqLoadingReviews' : 'reqNoReviews')
+  const developmentSummary = progressRecords(req.activity, t, 'requirement').find(entry => !entry.event)?.text.split('\n')[0]
+  const lastAcceptance = decisions.find(record => record.kind === 'acceptance')
+  const delivery = requirementResult(req)
+  const deliverySummary = delivery.summary.split(/\r?\n/)[0] || (lastAcceptance
+    ? t(lastAcceptance.decision === 'approved' ? 'deliveryAccepted' : 'deliveryReturned')
+    : t(delivery.previousSummary || delivery.previousCancelImpact ? 'previousResult' : 'reqNoDelivery'))
+  const entries = requirementLogEntries(req, t, reports)
+  const openRecord = (block, group, marker) => setFocus({
+    block, elementId: 'pw-requirement-record-' + group + '-' + marker,
+  })
+  const blocks = {
+    basic: {
+      label: t('reqBasic'), summary: requirementOverview(req).split(/\r?\n/)[0],
+      body: editing ? h('form', { noValidate: true, onSubmit: e => { e.preventDefault(); saveForm() } },
+        h(RequirementFields, { form, t, busy, req }),
+        attempted && h(ErrorDetails, { error: requirementFormError(form.draft), t, showRaw: false }),
+        h('div', { className: 'pw-actions' },
+          h('button', { type: 'submit', className: 'pw-button primary', disabled: busy }, t('save')),
+          h('button', { type: 'button', className: 'pw-button', disabled: busy, onClick: form.finish }, t('cancel'))))
+        : h(React.Fragment, null, h(RequirementOverview, { req, t }), mode === 'organize' && drafts),
+    },
+    prds: {
+      label: t('reqRelatedPrds'), summary: prdSummary ?? t('reqLoadingPrds'),
+      body: renderPrds(setPrdSummary),
+    },
+    review: {
+      label: t('reqReviews'), summary: reviewSummary,
+      body: h(React.Fragment, null,
+        h(RequirementReview, { req, root, t, busy, sessionId, onApprove, onReject, onReportSnapshot: setReportSnapshot }),
+        h(RequirementReviewDecisions, { req, t }),
+        !reviewCount && reportSnapshot.state !== 'unavailable' && h('p', { className: 'pw-note' }, reviewSummary)),
+    },
+    tasks: {
+      label: t('reqTasks'), summary: tasks.length ? t('reqTasksCount').replace('{n}', String(tasks.length)) : t('reqNoTasks'),
+      body: h(IssueSidebar, { req, t, moveIssue, onOpenIssue, onCreateTask, busy, onReorderTask, onStartTask,
+        onSuggest: mode === 'split' && !editing ? () => suggestSplit() : undefined,
+        suggestionReview: mode === 'split' && !req.pendingReopen && !editing && h(TaskSuggestionReview, {
+          review: split?.review, req, t, onOpenIssue, hasDrafts: !!splitDrafts.length,
+          hasLegacy: splitProposals.some(proposal => !proposal.split), pending: splitBusy,
+          error: splitError, readError, reload: loadProposals, onReview: suggestSplit, feedback, changeFeedback, refining, showFeedback,
+        }) },
+        mode === 'split' && !req.pendingReopen && !editing && h(React.Fragment, null,
+          h(DraftSuggestions, { key: split?.proposalIds?.join(',') ?? '', proposals: splitDrafts, act: actSplit, root, t,
+            busy: busy || splitBusy, adoptDisabled: ['ASSIST_STALE', 'DRAFT_STALE'].includes(splitError?.code), rememberEdits: remembered.edits }),
+          drafts)),
+    },
+    development: {
+      label: t('reqDevelopment'), summary: developmentSummary ?? t('reqNoDevelopment'),
+      body: h(RequirementDevelopment, { req, t,
+        onAdd: canEdit ? text => mutate('requirement/addUpdate', { root, id: req.id, text }) : undefined }),
+    },
+    delivery: {
+      label: t('reqDelivery'), summary: deliverySummary,
+      body: h(RequirementDelivery, { req, t, onMove, busy }),
+    },
+    log: {
+      label: t('reqLog'), summary: entries[0]?.summary ?? t('requirementLogEmpty'),
+      body: h(RequirementLog, { entries, t, onOpenIssue,
+        onOpenReport: marker => openRecord('review', 'report', marker),
+        onOpenReview: marker => openRecord('review', 'review', marker),
+        onOpenAcceptance: marker => openRecord('delivery', 'delivery', marker) }),
+    },
+  }
+  return h('section', { className: 'pw-subpage pw-read-card', 'aria-label': t('detail') },
     h('header', { className: 'pw-subpage-head' },
       h('div', { className: 'pw-read-title' }, h('h2', null, req.title),
-        h('span', { className: 'pw-count pw-read-status', 'data-status': req.status }, t('col_' + req.status))),
-      !form.editing && h('div', { className: 'pw-actions' },
-        canEdit && h('button', { className: 'pw-button', onClick: () => { setAttempted(false); form.begin() } }, t('edit')),
-        req.status === 'backlog' && h('details', { className: 'pw-disclosure pw-detail-more' },
+        h('span', { className: 'pw-count pw-read-status', 'data-status': req.status }, t('col_' + req.status)),
+        req.updated && h('span', { className: 'pw-note' }, t('updated'), ' ', dateText(req.updated))),
+      !arranging && h('div', { className: 'pw-actions' },
+        canEdit && !form.editing && h('button', { className: 'pw-button', onClick: () => {
+          setAttempted(false); form.begin(); setFocus({ block: 'basic' })
+        } }, t('edit')),
+        h('details', { className: 'pw-disclosure pw-detail-more' },
           h('summary', null, t('requirementActions')),
           h('div', { className: 'pw-actions' },
-            h('button', { className: 'pw-button', disabled: busy, onClick: organize }, t('aiOrganize')),
-            canDelete && h('button', { className: 'pw-button danger', disabled: busy, onClick: onDelete }, t('delete')))))),
-    editing ? h('form', { noValidate: true, onSubmit: e => { e.preventDefault(); saveForm() } },
-      h(RequirementFields, { form, t, busy, req }),
-      attempted && h(ErrorDetails, { error: requirementFormError(form.draft), t, showRaw: false }),
-      h('div', { className: 'pw-actions' },
-        h('button', { type: 'submit', className: 'pw-button primary', disabled: busy }, t('save')),
-        h('button', { type: 'button', className: 'pw-button', disabled: busy, onClick: form.finish }, t('cancel'))))
-      : h(React.Fragment, null,
-        h(RequirementOverview, { req, t }),
-        mode === 'organize' && drafts)),
-    h(IssueSidebar, { req, t, moveIssue, onOpenIssue, onCreateTask, busy, onReorderTask, onStartTask,
-      onSuggest: mode === 'split' && !editing ? () => suggestSplit() : undefined,
-      suggestionReview: mode === 'split' && !req.pendingReopen && !editing && h(TaskSuggestionReview, {
-        review: split?.review, req, t, onOpenIssue, hasDrafts: !!splitDrafts.length,
-        hasLegacy: splitProposals.some(proposal => !proposal.split), pending: splitBusy,
-        error: splitError, readError, reload: loadProposals, onReview: suggestSplit, feedback, changeFeedback, refining, showFeedback,
-      }) },
-      mode === 'split' && !req.pendingReopen && !editing && h(React.Fragment, null,
-        h(DraftSuggestions, { key: split?.proposalIds?.join(',') ?? '', proposals: splitDrafts, act: actSplit, root, t,
-          busy: busy || splitBusy, adoptDisabled: ['ASSIST_STALE', 'DRAFT_STALE'].includes(splitError?.code), rememberEdits: remembered.edits }),
-        drafts)),
-    h(RequirementHistory, { req, t, onAdd: canEdit && !req.pendingReopen ? text => mutate('requirement/addUpdate', { root, id: req.id, text }) : undefined }))
+            h('button', { className: 'pw-button', onClick: () => setArranging(true) }, t('reqBlockOrder')),
+            req.status === 'backlog' && !editing && h('button', { className: 'pw-button', disabled: busy, onClick: organize }, t('aiOrganize')),
+            canDelete && !editing && h('button', { className: 'pw-button danger', disabled: busy, onClick: onDelete }, t('delete')))))),
+    h(RequirementLayout, { blocks, layoutKey, status: req.status, uiMemory, t, focus, arranging, onFinish: () => setArranging(false) }))
 }
 
 // 任务栏：标题是独立详情入口（≥44px），每行一个状态控件；开发中可排序、
@@ -267,6 +338,7 @@ export function IssueSidebar({ req, t, moveIssue, onOpenIssue, onCreateTask, bus
         h('button', { className: 'pw-button', disabled: busy, onClick: onCreateTask }, t('newTask')),
         onSuggest && h('button', { id: 'pw-suggest-' + req.id, className: 'pw-button', disabled: busy, onClick: onSuggest }, t('aiSplit')))),
     suggestionReview,
+    !tasks.length && h('p', { className: 'pw-note' }, t('reqNoTasks')),
     tasks.map((i, index) => h('div', { key: i.id, className: 'pw-issue' },
       !locked && h('span', { className: 'pw-order' },
         h('button', { className: 'pw-orderbtn', disabled: busy || index === 0, 'aria-label': t('moveUp'), title: t('moveUp'), onClick: () => onReorderTask(i.id, 'up') }, '↑'),

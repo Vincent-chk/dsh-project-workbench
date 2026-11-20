@@ -4,10 +4,11 @@
 // Runtime data lives in .project/.local/ (links/cursors/runs), never in Git.
 import { randomUUID } from 'node:crypto'
 import { join, dirname } from 'node:path'
+import { readFileSync } from 'node:fs'
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import * as store from './store.js'
 import { atomicWrite, WorkbenchError } from './files.js'
-import { startBlockers } from './state.js'
+import { REVIEW_TASK_PURPOSE, startBlockers } from './state.js'
 import { installSync } from './sync.js'
 import { installEvents } from './events.js'
 
@@ -51,6 +52,16 @@ export function installLinks(ctx) {
 
   const sessionOf = sid => ctx.agents.get(sid)
   const cwdOf = agent => agent?.session?.header?.cwd
+  function reviewLink(agent) {
+    const root = cwdOf(agent)
+    const id = agent?.session?.id
+    if (!root || !id) return null
+    try {
+      const link = JSON.parse(readFileSync(linkFile(root, id), 'utf8'))
+      return link.sessionId === id && link.purpose === REVIEW_TASK_PURPOSE ? link : null
+    } catch { return null }
+  }
+
 
   // PRD §9.2: prefer the task's most recent AVAILABLE session; fall back to the
   // most recent link (a cold session can still be resumed).
@@ -189,6 +200,9 @@ export function installLinks(ctx) {
     if (currentLink?.issueId !== issueId) {
       throw new WorkbenchError('LINK_CHANGED', 'session is now linked to another task; locate the task again')
     }
+    if (currentLink.purpose === REVIEW_TASK_PURPOSE) {
+      throw new WorkbenchError('REVIEW_TASK_ONLY', 'legacy review tasks are read-only')
+    }
     const run = await readJson(runFile(root, issueId))
     let reuse = null
     if (run) {
@@ -291,6 +305,7 @@ export function installLinks(ctx) {
   // ---- link management (tech §4.1.1/§4.2/§4.3) ----
   async function getLink(root, sessionId, { catchUp = false } = {}) {
     let link = await readJson(linkFile(root, sessionId))
+    if (link?.purpose === REVIEW_TASK_PURPOSE) return { link: null, run: null, cursor: null }
     if (link) {
       const agent = sessionOf(sessionId)
       if (agent && cwdOf(agent) !== root) throw new WorkbenchError('WORKSPACE_MISMATCH', 'session belongs to another workspace')
@@ -317,6 +332,9 @@ export function installLinks(ctx) {
       let target = null
       if (issueId != null) target = await issueOf(root, issueId) // validates project ownership
       const original = await readJson(linkFile(root, sessionId))
+      if (original?.purpose === REVIEW_TASK_PURPOSE) {
+        throw new WorkbenchError('REVIEW_TASK_ONLY', 'legacy review tasks are read-only')
+      }
       let syncedSeq = null
       if (original?.sessionId === sessionId) {
         // Sync the original task to a STABLE, COMPLETE log end so late-settling
@@ -381,11 +399,12 @@ export function installLinks(ctx) {
           !nonempty(link.sessionId) || !nonempty(link.issueId) || !nonempty(link.reqId)) {
         throw new WorkbenchError('READ_FAILED', 'invalid session link record')
       }
-      links.push(link)
+      if (link.purpose !== REVIEW_TASK_PURPOSE) links.push(link)
     }
     const runs = new Map()
     for (const name of await readDir('runs')) {
       const run = JSON.parse(await readFile(join(local, 'runs', name), 'utf8'))
+      if (run?.review) continue
       if (!run || Array.isArray(run) || typeof run !== 'object' ||
           !nonempty(run.runId) || !nonempty(run.sessionId) || !['starting', 'running'].includes(run.state)) {
         throw new WorkbenchError('READ_FAILED', 'invalid run record')
@@ -478,5 +497,5 @@ export function installLinks(ctx) {
     'run/start': async i => { assertRoot(i.root); return runStart(i.root, i.issueId, i.sessionId) },
   }
 
-  return { routes, locate, runStart, getLink, changeLink, listSessions, syncSession, catchUpIdle, findLinkByIssue, issueOf, linkFile, runFile, cursorFile, serialized }
+  return { routes, locate, runStart, getLink, changeLink, listSessions, syncSession, catchUpIdle, findLinkByIssue, issueOf, linkFile, runFile, cursorFile, serialized, reviewLink }
 }

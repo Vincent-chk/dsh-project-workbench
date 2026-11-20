@@ -77,7 +77,7 @@ export async function readPrd(root, id) {
   return current.view
 }
 
-export async function listPrds(root, reqId, { deleted = false } = {}) {
+export async function listPrds(root, reqId, { deleted = false, includeContent = false } = {}) {
   let files
   try { files = await readdir(await prdDirectory(root), { withFileTypes: true }) } catch (error) {
     if (error.code === 'ENOENT') return []
@@ -94,9 +94,19 @@ export async function listPrds(root, reqId, { deleted = false } = {}) {
     }
     if (doc.deleted !== deleted || (reqId && !doc.reqIds.includes(reqId))) continue
     const { markdown, ...summary } = doc
-    docs.push(summary)
+    docs.push(includeContent ? doc : summary)
   }
   return docs.sort((a, b) => String(b.updated).localeCompare(String(a.updated)) || a.title.localeCompare(b.title))
+}
+
+export async function reviewPrds(root, reqId) {
+  return listPrds(root, reqId, { includeContent: true })
+}
+
+export async function requireReviewPrds(root, reqId) {
+  const docs = await reviewPrds(root, reqId)
+  if (!docs.length) throw new WorkbenchError('REVIEW_PRD_REQUIRED', '请先保存并关联一份 PRD，再进行评审。')
+  return docs
 }
 
 export function validatePrdDraft(reqIds, markdown) {

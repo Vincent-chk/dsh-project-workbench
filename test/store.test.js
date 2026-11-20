@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFile, writeFile, mkdir, readdir, rm, symlink, chmod } from 'node:fs/promises'
 import { basename, join } from 'node:path'
-import { makeRoot, issueFileHash, saveReviewPrd } from './util.js'
+import { makeRoot, seedAIReview, issueFileHash, seedReviewPrd } from './util.js'
 import { homeSummary } from '../core/derive.js'
 import {
   initProject, scanProject, validateProject, createRequirement, updateRequirement, moveRequirement,
@@ -21,8 +21,9 @@ async function draft(root, title = '需求') {
 async function started(root, title = '需求') {
   const id = await draft(root, title)
   await updateRequirement(root, id, { goal: '目标', scope: '范围', acceptance: '完成标准' })
-  await saveReviewPrd(root, id)
+  await seedReviewPrd(root, id)
   await moveRequirement(root, id, 'reviewing')
+  await seedAIReview(root, id)
   await moveRequirement(root, id, 'ready')
   await moveRequirement(root, id, 'in_progress')
   return id
@@ -153,7 +154,7 @@ test('review flow: submit needs an overview; return needs reason; records kept',
   const id = await draft(root)
   await assert.rejects(moveRequirement(root, id, 'reviewing'), e => e.code === 'REVIEW_INFO_REQUIRED')
   await updateRequirement(root, id, { q_pain: '需求概述' })
-  await saveReviewPrd(root, id)
+  await seedReviewPrd(root, id)
   await moveRequirement(root, id, 'reviewing')
   assert.ok((await scanProject(root)).requirements[0].submittedAt)
   await assert.rejects(moveRequirement(root, id, 'backlog'), e => e.code === 'REASON_REQUIRED')
@@ -163,6 +164,7 @@ test('review flow: submit needs an overview; return needs reason; records kept',
   assert.ok(req.reviews.some(r => r.decision === 'returned' && r.opinion.includes('补充背景')))
   // Resubmit and approve.
   await moveRequirement(root, id, 'reviewing')
+  await seedAIReview(root, id)
   await moveRequirement(root, id, 'ready')
   req = (await scanProject(root)).requirements[0]
   assert.equal(req.status, 'ready')
@@ -173,12 +175,13 @@ test('a new review decision does not overwrite an unreadable old record', async 
   const root = await makeRoot(t)
   const id = await draft(root)
   await updateRequirement(root, id, { goal: '目标', scope: '范围', acceptance: '标准' })
-  await saveReviewPrd(root, id)
+  await seedReviewPrd(root, id)
   await moveRequirement(root, id, 'reviewing')
   const reviews = join(root, '.project', 'requirements', id, 'reviews')
   await mkdir(reviews)
   await writeFile(join(reviews, '1.md'), '旧记录缺少元数据')
 
+  await seedAIReview(root, id)
   await moveRequirement(root, id, 'ready')
 
   assert.equal(await readFile(join(reviews, '1.md'), 'utf8'), '旧记录缺少元数据')
@@ -543,7 +546,7 @@ test('only untouched drafts can be deleted; developed requirements cannot', asyn
   // A returned draft has review history → not deletable.
   const returned = await draft(root, '退回过')
   await updateRequirement(root, returned, { goal: 'g', scope: 's', acceptance: 'a' })
-  await saveReviewPrd(root, returned)
+  await seedReviewPrd(root, returned)
   await moveRequirement(root, returned, 'reviewing')
   await moveRequirement(root, returned, 'backlog', { reason: '退回' })
   await assert.rejects(trash(root, 'requirement', returned), e => e.code === 'NOT_A_DRAFT')
@@ -817,8 +820,9 @@ test('review-approve decision write failure recovers with exactly one record', a
   const root = await makeRoot(t)
   const id = await draft(root)
   await updateRequirement(root, id, { goal: 'g', scope: 's', acceptance: 'a' })
-  await saveReviewPrd(root, id)
+  await seedReviewPrd(root, id)
   await moveRequirement(root, id, 'reviewing')
+  await seedAIReview(root, id)
   const reviewsDir = join(root, '.project', 'requirements', id, 'reviews')
   await mkdir(reviewsDir, { recursive: true })
   await chmod(reviewsDir, 0o500)
@@ -996,7 +1000,7 @@ test('two review returns with the same reason record two decisions', async t => 
   const root = await makeRoot(t)
   const id = await draft(root)
   await updateRequirement(root, id, { goal: 'g', scope: 's', acceptance: 'a' })
-  await saveReviewPrd(root, id)
+  await seedReviewPrd(root, id)
   await moveRequirement(root, id, 'reviewing')
   await moveRequirement(root, id, 'backlog', { reason: '相同理由' })
   await moveRequirement(root, id, 'reviewing')

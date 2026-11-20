@@ -67,9 +67,12 @@ test('delivery detail delegates accept, return and recovery to the existing move
   tree = h.render(DeliveryDetail, { ...props, busy: true })
   assert.equal(find(tree, button('acceptRequirement')).props.disabled, true)
   assert.equal(find(tree, button('sendBack')).props.disabled, true)
-  tree = h.render(DeliveryDetail, { ...props, req: { ...pending, status: 'completed' } })
+  const completed = { ...pending, status: 'completed' }
+  tree = h.render(DeliveryDetail, { ...props, req: completed })
   assert.equal(find(tree, button('acceptRequirement')), null)
   assert.equal(find(tree, button('sendBack')), null)
+  find(tree, button('reopen')).props.onClick()
+  assert.deepEqual(moves.at(-1), [completed, 'in_progress'])
   const recovering = { ...pending, status: 'in_progress', pendingReopen: { items: [] } }
   tree = h.render(DeliveryDetail, { ...props, req: recovering })
   assert.equal(find(tree, button('acceptRequirement')), null)
@@ -78,6 +81,34 @@ test('delivery detail delegates accept, return and recovery to the existing move
   assert.deepEqual(moves.at(-1), [recovering, 'completed'])
   tree = h.render(DeliveryDetail, { ...props, req: recovering, busy: true })
   assert.equal(find(tree, button('resumeReopen')).props.disabled, true)
+})
+
+test('a reopened requirement exposes the previous delivery and separately linked decisions', async t => {
+  const h = host(); globalThis.__roundReact = h.api
+  t.after(() => { delete globalThis.__roundReact })
+  const RequirementDelivery = await component('../client-src/detail/acceptance-detail.js', 'RequirementDelivery')
+  const DeliveryResult = await component('../client-src/detail/requirement-content.js', 'DeliveryResult')
+  const RequirementDecisionRecords = await component('../client-src/detail/requirement-content.js', 'RequirementDecisionRecords')
+  const RequirementReviewDecisions = await component('../client-src/detail/requirement-content.js', 'RequirementReviewDecisions')
+  const reviewed = { kind: 'review', decision: 'approved', marker: 'review-decision', opinion: '评审意见' }
+  const returned = { kind: 'acceptance', decision: 'returned', round: 2, opinion: '返工原因', summary: '旧交付摘要' }
+  const reopened = { ...req, deliverySummary: returned.summary, deliverySummaryAt: 100, reviews: [reviewed, returned] }
+  const props = { req: reopened, t: x => x }
+  const delivery = h.render(RequirementDelivery, props)
+  const result = h.render(DeliveryResult, find(delivery, named('DeliveryResult')).props)
+  assert.equal(result.props.label, 'previousResult')
+  assert.equal(find(result, node => node.props?.value === returned.summary).type.name, 'ReadingText')
+
+  const deliveryDecisions = find(delivery, named('RequirementDecisionRecords')).props
+  assert.deepEqual(deliveryDecisions.records, [returned])
+  const [deliveryRecord] = h.render(RequirementDecisionRecords, deliveryDecisions)
+  assert.equal(deliveryRecord.props.id, 'pw-requirement-record-delivery-2')
+  assert.equal(find(deliveryRecord, node => node.props?.value === returned.opinion).type.name, 'ReadingText')
+
+  const decisions = h.render(RequirementReviewDecisions, props).props
+  assert.deepEqual(decisions.records, [reviewed])
+  const [reviewRecord] = h.render(RequirementDecisionRecords, decisions)
+  assert.equal(reviewRecord.props.id, 'pw-requirement-record-review-review-decision')
 })
 
 test('board confirmation rejects an older round and accepts a current result', async t => {

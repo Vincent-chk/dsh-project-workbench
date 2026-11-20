@@ -7,10 +7,10 @@ import { join, basename, relative, isAbsolute, sep } from 'node:path'
 import { randomBytes, createHash } from 'node:crypto'
 import { atomicWrite, WorkbenchError } from './files.js'
 import { parseFrontmatter } from './frontmatter.js'
-import { canMoveRequirement, canMoveIssue, canCreateIssue, changesReviewedRequirement, freshDelivery, effectiveEvidence, taskContentBlockers, taskOverview, TASK_CONTENT_FIELDS, REQUIREMENT_STATES, ISSUE_STATES, TERMINAL_ISSUE } from './state.js'
+import { aiReviewReports, reviewUsesLinkedPrd, REVIEW_TASK_PURPOSE, canMoveRequirement, canMoveIssue, canCreateIssue, changesReviewedRequirement, freshDelivery, effectiveEvidence, taskContentBlockers, taskOverview, TASK_CONTENT_FIELDS, REQUIREMENT_STATES, ISSUE_STATES, TERMINAL_ISSUE } from './state.js'
 import { evidenceFacts, isEvidenceCommand, isEvidenceOutcome, isObservationCommand, isVerificationCommand } from './extract.js'
 import { readSplitEvidence } from './split-evidence.js'
-import { listPrds, withPrdLock } from './prd.js'
+import { requireReviewPrds, withPrdLock } from './prd.js'
 
 export const SUPPORTED_SCHEMA = 2
 const REQ_ID_RE = /^req-\d{8}-[0-9a-f]{6}$/
@@ -346,20 +346,30 @@ async function recordDecision(root, id, doc, file, { kind, decision, opinion, su
   await writeReview(root, id, { kind: pending.kind, decision: pending.decision, opinion: pending.opinion, summary: pending.summary, marker: pending.marker })
 }
 
-async function readReviews(root, reqId) {
+export async function readReviews(root, reqId, { strict = false } = {}) {
   const dir = join(paths(root).reqs, reqId, 'reviews')
   let names = []
-  try { names = await readdir(dir) } catch { return [] }
+  try { names = await readdir(dir) } catch (error) {
+    if (strict && error.code !== 'ENOENT') throw error
+    return []
+  }
   const out = []
   for (const name of names.filter(n => /^\d+\.md$/.test(n)).sort((a, b) => Number(a.split('.')[0]) - Number(b.split('.')[0]))) {
     try {
       const doc = parseFrontmatter(await readText(join(dir, name)))
+      if (!doc.hasFm) continue
+      let source
+      try { source = JSON.parse(doc.get('source') ?? 'null') } catch { /* older reports have no source metadata */ }
       out.push({
         round: doc.get('round'), kind: doc.get('kind'), decision: doc.get('decision'),
         by: doc.get('by'), at: doc.get('at'), marker: doc.get('marker') ?? '',
         opinion: doc.get('opinionText') ?? getSection(doc.body, '意见'), summary: doc.get('summaryText') ?? getSection(doc.body, '交付摘要'),
+        ...(source && typeof source === 'object' ? { source } : {}),
       })
-    } catch { /* a corrupt record degrades to absent; the decision list stays usable */ }
+    } catch (error) {
+      if (strict) throw error
+      // A corrupt record degrades to absent; the decision list stays usable.
+    }
   }
   return out
 }
@@ -505,7 +515,11 @@ export async function scanProject(root) {
         if (issue.status === 'blocked' && !issue.blocked_reason) diagnostics.push(diag(irel, 'BLOCKED_REASON_REQUIRED', 'blocked issue lacks blocked_reason', 'add a one-line reason'))
         if (issue.updated && !Number.isFinite(Date.parse(issue.updated))) diagnostics.push(diag(irel, 'BAD_TIMESTAMP', 'updated is not an ISO timestamp (R-05)', 'use ISO 8601 with offset'))
         if (issue.schema > SUPPORTED_SCHEMA) { issue.readOnly = true; diagnostics.push(diag(irel, 'SCHEMA_TOO_NEW', `schema ${issue.schema} > ${SUPPORTED_SCHEMA}`, 'upgrade; read-only')) }
-        req.issues.push(issue)
+        if (doc.get('purpose') === REVIEW_TASK_PURPOSE) {
+          issueTotal--
+          if (req.reviewTask) diagnostics.push(diag(irel, 'DUPLICATE_REVIEW_TASK', 'requirement has more than one review task', 'inspect the review task records'))
+          else req.reviewTask = { id: issue.id, title: issue.title, hash: issue.hash, purpose: REVIEW_TASK_PURPOSE }
+        } else req.issues.push(issue)
       } catch (e) {
         diagnostics.push(diag(irel, 'READ_FAILED', String(e.message ?? e), 'fix or restore the file'))
       }
@@ -539,6 +553,11 @@ async function loadReqDoc(root, id) {
   const doc = parseFrontmatter(raw)
   assertWritableDoc(doc, REQUIREMENT_STATES)
   return { file, raw, doc }
+}
+
+export async function readRequirement(root, id) {
+  const { file, doc } = await loadReqDoc(root, id)
+  return reqFromDoc(doc, relative(paths(root).dir, file), id)
 }
 
 function requestCreationId(kind, creation) {
@@ -689,24 +708,33 @@ export async function addIssueUpdate(root, reqId, id, text, { syncKey } = {}) {
 }
 
 // ---- review / acceptance decision records (tech §3.5). History is read-only. ----
-// Idempotent: if the latest record already matches this decision AND marker (a
-// previous attempt wrote it before failing), reuse it so a retry never duplicates
+// Idempotent: if a record already has this marker (a previous attempt may have
+// written it before another report was filed), reuse it so a retry never duplicates
 // it. The marker distinguishes separate attempts that share the same wording
 // (e.g. two reopens with the same reason carry different reopen timestamps).
-async function writeReview(root, reqId, { kind, decision, opinion = '', summary = '', marker = '' }) {
+async function writeReview(root, reqId, { kind, decision, by = 'human', opinion = '', summary = '', marker = '', source }) {
   const dir = join(paths(root).reqs, reqId, 'reviews')
   await mkdir(dir, { recursive: true })
-  const existing = await readReviews(root, reqId)
-  const last = existing[existing.length - 1]
-  if (marker && last && last.marker === marker) {
-    return last.round
-  }
+  const existing = await readReviews(root, reqId, { strict: kind === 'ai_review' })
+  const prior = marker && existing.find(record => record.marker === marker)
+  if (prior) return prior.round
   const names = await readdir(dir)
   const round = names.filter(n => /^\d+\.md$/.test(n)).reduce((max, n) => Math.max(max, Number(n.slice(0, -3))), 0) + 1
-  const fm = `---\nschema: ${SUPPORTED_SCHEMA}\nkind: ${kind}\nround: ${round}\ndecision: ${decision}\nby: human\nat: ${nowIso()}\nmarker: "${marker}"\nopinionText: ${JSON.stringify(opinion)}\nsummaryText: ${JSON.stringify(summary)}\n---\n`
-  const body = `\n## 意见\n\n${opinion}\n\n## 交付摘要\n\n${summary}\n`
+  const metadata = source ? `source: ${JSON.stringify(JSON.stringify(source))}\n` : ''
+  const fm = `---\nschema: ${SUPPORTED_SCHEMA}\nkind: ${kind}\nround: ${round}\ndecision: ${decision}\nby: ${by}\nat: ${nowIso()}\nmarker: ${JSON.stringify(marker)}\nopinionText: ${JSON.stringify(opinion)}\nsummaryText: ${JSON.stringify(summary)}\n${metadata}---\n`
+  const body = `\n## 意见\n\n${opinion}\n${kind === 'ai_review' ? '' : `\n## 交付摘要\n\n${summary}\n`}`
   await atomicWrite(join(dir, `${round}.md`), fm + body)
   return round
+}
+
+export async function saveAIReview(root, reqId, { report, requestId, source }) {
+  if (typeof report !== 'string' || !report.trim() || typeof requestId !== 'string' || !requestId.trim()) {
+    throw new WorkbenchError('REVIEW_EMPTY', 'the review did not return a report')
+  }
+  return withRequirementLock(root, reqId, async () => {
+    await loadReqDoc(root, reqId)
+    return writeReview(root, reqId, { kind: 'ai_review', decision: 'reported', by: 'ai', opinion: report.trim(), marker: requestId, source })
+  })
 }
 
 // Decision edges that leave a durable review/acceptance record.
@@ -754,21 +782,25 @@ export async function moveRequirement(root, id, to, { reason, actor = 'human', o
       throw new WorkbenchError('ROUND_CHANGED', 'requirement or its tasks changed since the delivery was reviewed; re-check and confirm again')
     }
     const running = await runningIssueIds(root, issues)
-    const guard = canMoveRequirement({
-      from, to, title: doc.get('title'), issues, reason, actor,
-      q_pain: doc.get('q_pain'), goal: doc.get('goal'),
-      confirmReviewInvalid, running,
-      summary: doc.get('deliverySummary'),
-      pendingReopen: decodePendingReopen(doc.get('pendingReopen')), reopenCount,
-      reqDeliveryStartedAt: Number(doc.get('deliveryStartedAt')) || 0,
-      summaryAt: Number(doc.get('deliverySummaryAt')) || 0,
-    })
-    if (!guard.ok) throw new WorkbenchError(guard.code, guard.reason)
-    // Decision record before the status write, with a persisted attempt marker so
-    // a failed write retries exactly once (see recordDecision).
-    const record = REVIEW_RECORD_EDGES[`${from}>${to}`]
-    if (!record && pending) throw new WorkbenchError('DECISION_PENDING', 'finish the previous decision before making another change')
-    const commit = async () => {
+    const approving = from === 'reviewing' && to === 'ready' && actor === 'human'
+    const submitting = from === 'backlog' && to === 'reviewing'
+    const commit = async directory => {
+      const prds = approving ? await requireReviewPrds(directory, id) : []
+      const guard = canMoveRequirement({
+        from, to, title: doc.get('title'), issues, reason, actor,
+        q_pain: doc.get('q_pain'), goal: doc.get('goal'),
+        hasAIReview: approving && aiReviewReports(await readReviews(root, id, { strict: true })).some(report => reviewUsesLinkedPrd(report, prds)),
+        confirmReviewInvalid, running,
+        summary: doc.get('deliverySummary'),
+        pendingReopen: decodePendingReopen(doc.get('pendingReopen')), reopenCount,
+        reqDeliveryStartedAt: Number(doc.get('deliveryStartedAt')) || 0,
+        summaryAt: Number(doc.get('deliverySummaryAt')) || 0,
+      })
+      if (!guard.ok) throw new WorkbenchError(guard.code, guard.reason)
+      if (submitting) await requireReviewPrds(directory, id)
+      // Record the decision before the status write, using the attempt marker to retry exactly once.
+      const record = REVIEW_RECORD_EDGES[`${from}>${to}`]
+      if (!record && pending) throw new WorkbenchError('DECISION_PENDING', 'finish the previous decision before making another change')
       if (record) await recordDecision(root, id, doc, file, { ...record, opinion: opinion || reason || '', summary: doc.get('deliverySummary') ?? '', originalHash: fileHash })
       doc.setPlain('status', to)
       if (from === 'backlog' && to === 'reviewing') doc.setString('submittedAt', nowIso())
@@ -785,13 +817,8 @@ export async function moveRequirement(root, id, to, { reason, actor = 'human', o
       await atomicWrite(file, doc.toString())
       return { ok: true, data: { id, from, to } }
     }
-    if (from !== 'backlog' || to !== 'reviewing') return commit()
-    return withPrdLock(root, async directory => {
-      if (!(await listPrds(directory, id)).length) {
-        throw new WorkbenchError('REVIEW_PRD_REQUIRED', '请先关联一份 PRD，再提交评审。')
-      }
-      return commit()
-    })
+    // Hold the PRD queue through commit so a concurrent unlink cannot bypass the gate.
+    return submitting || approving ? withPrdLock(root, commit) : commit()
   })
 }
 
@@ -867,6 +894,9 @@ async function loadIssueDoc(root, reqId, id) {
   const raw = await readText(file)
   const doc = parseFrontmatter(raw)
   assertWritableDoc(doc, ISSUE_STATES)
+  if (doc.get('purpose') === REVIEW_TASK_PURPOSE) {
+    throw new WorkbenchError('REVIEW_TASK_ONLY', 'legacy review tasks are read-only')
+  }
   return { file, raw, doc }
 }
 async function reqStatus(root, reqId) {
