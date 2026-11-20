@@ -3,7 +3,7 @@ import test from 'node:test'
 import fs from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { join } from 'node:path'
-import { makeRoot, saveReviewPrd } from './util.js'
+import { makeRoot, seedAIReview, seedReviewPrd } from './util.js'
 
 const originalRename = fs.rename
 let failFile = null
@@ -30,8 +30,9 @@ for (const kind of ['field_draft', 'review']) {
     await ok('project/init')
     const { id: reqId } = await ok('requirement/create', { title: '需求', fields: { q_pain: '验证采用建议的重试' } })
     await ok('requirement/update', { id: reqId, patch: { goal: '目标', scope: '范围', acceptance: '标准' } })
-    await saveReviewPrd(root, reqId)
+    await seedReviewPrd(root, reqId)
     await ok('requirement/review', { id: reqId, action: 'submit' })
+    await seedAIReview(root, reqId)
     let issueId
     if (kind === 'field_draft') {
       await ok('requirement/review', { id: reqId, action: 'approve' })

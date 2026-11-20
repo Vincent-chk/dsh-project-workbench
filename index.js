@@ -12,11 +12,12 @@ import { prepareWikiStaging } from './core/wiki-staging.js'
 import { captureWikiBaseline, publishWikiCandidate } from './core/wiki-publish.js'
 import { wikiGitRoot } from './core/git.js'
 import { installLinks } from './core/link.js'
-import { projectWriteDenial, taskReadDenial } from './core/write-guard.js'
+import { projectWriteDenial, taskReadDenial, reviewToolDenial } from './core/write-guard.js'
 import { installTools } from './core/tools.js'
 import { installDelivery } from './core/delivery.js'
 import { installAssist } from './core/assist.js'
 import { installAcceptanceAssist } from './core/acceptance-assist.js'
+import { installRequirementReview } from './core/requirement-review.js'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile, rm, lstat } from 'node:fs/promises'
@@ -40,6 +41,7 @@ export async function apply(ctx) {
   const links = installLinks(ctx)
   ctx.effect(() => ctx.tools.guard(exec => {
     const root = exec.agent?.session?.header?.cwd
+    if (links.reviewLink(exec.agent)) return reviewToolDenial(exec.name, exec.arguments, root)
     const writeDenial = projectWriteDenial(exec.name, exec.arguments, root)
     if (writeDenial) return writeDenial
     const readDenial = taskReadDenial(exec.name, exec.arguments, root)
@@ -65,8 +67,9 @@ export async function apply(ctx) {
   const delivery = installDelivery(ctx, { readOnlyChildren })
   const assist = installAssist(ctx, { readOnlyChildren })
   const acceptanceAssist = installAcceptanceAssist(ctx, { readOnlyChildren, links })
+  const requirementReview = installRequirementReview(ctx, { readOnlyChildren })
   installTools(ctx, links)
-  const workbenchRoutes = { ...links.routes, ...assist.routes, ...delivery.routes, ...acceptanceAssist.routes }
+  const workbenchRoutes = { ...links.routes, ...assist.routes, ...delivery.routes, ...acceptanceAssist.routes, ...requirementReview.routes }
   // Every terminal-task entry (RPC confirm/move AND proposal adoption) fires the
   // same store trigger, so the automatic delivery summary cannot be bypassed.
   ctx.effect(() => store.onTaskTerminal((root, reqId) => void delivery.maybeSubmit(root, reqId)), 'project-workbench: delivery trigger')

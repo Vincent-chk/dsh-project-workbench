@@ -71,7 +71,7 @@ export function installTools(ctx, links) {
     return res.data.saved.length ? '已写入待采用建议，用户在界面采用后才生效' : '相同建议已在待采用列表'
   }
 
-  const notSubagent = ({ agent }) => agent?.session?.header?.origin !== 'subagent'
+  const notSubagent = ({ agent }) => agent?.session?.header?.origin !== 'subagent' && !links.reviewLink?.(agent)
   const tool = (name, description, properties, required, execute) => ctx.tools.register({
     name, description,
     parameters: { type: 'object', properties, required, additionalProperties: false },

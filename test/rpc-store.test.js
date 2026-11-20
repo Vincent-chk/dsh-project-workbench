@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { access, chmod, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { makeRoot, saveReviewPrd } from './util.js'
+import { makeRoot, saveReviewPrd, seedAIReview } from './util.js'
 import { dispatch } from '../core/rpc.js'
 import { createRequirement, deliveryFingerprint } from '../core/store.js'
 
@@ -15,6 +15,7 @@ async function devReq(root, title = 'x') {
   await call('requirement/update', { root, id: data.id, patch: { goal: 'g', scope: 's', acceptance: 'a' } })
   await saveReviewPrd(root, data.id)
   await call('requirement/review', { root, id: data.id, action: 'submit' })
+  await seedAIReview(root, data.id)
   await call('requirement/review', { root, id: data.id, action: 'approve' })
   await call('requirement/startDev', { root, id: data.id })
   return data.id
@@ -192,6 +193,9 @@ test('RPC full move journey and illegal move returns structured error', async t 
   assert.equal(blocked.hash, draft.hash)
   await saveReviewPrd(root, id)
   assert.equal((await call('requirement/review', { root, id, action: 'submit' })).ok, true)
+  assert.equal((await call('requirement/review', { root, id, action: 'approve' })).code, 'REVIEW_REPORT_REQUIRED')
+  assert.equal((await call('requirement/move', { root, id, to: 'ready' })).code, 'REVIEW_REPORT_REQUIRED')
+  await seedAIReview(root, id)
   assert.equal((await call('requirement/review', { root, id, action: 'approve' })).ok, true)
   assert.equal((await call('requirement/startDev', { root, id })).ok, true)
   const illegal = await call('requirement/move', { root, id, to: 'completed', expectFingerprint: 'invalid' })
@@ -386,6 +390,8 @@ test('CT-17: sync/apply approval reuses the exact move guards (illegal transitio
     kind: 'advance', target: { reqId: req.id }, evidence: ['repo://src/x.js#L1-L9'],
     suggested_patch: { to: 'ready' }, reason: '合法推进',
   }] })
+  assert.equal((await call('sync/apply', { root, proposalId: ok.data.saved[0] })).code, 'REVIEW_REPORT_REQUIRED')
+  await seedAIReview(root, req.id)
   const appliedOk = await call('sync/apply', { root, proposalId: ok.data.saved[0] })
   assert.equal(appliedOk.ok, true)
   assert.equal((await call('requirement/get', { root, id: req.id })).data.status, 'ready')

@@ -11,7 +11,7 @@ import { installAssist } from '../core/assist.js'
 import { dispatch } from '../core/rpc.js'
 import * as store from '../core/store.js'
 import { adoptProposal, listProposals, submitProposals } from '../core/proposals.js'
-import { makeRoot, issueFileHash, stubSpawnHost, childReply, waitFor, saveReviewPrd } from './util.js'
+import { makeRoot, seedAIReview, issueFileHash, stubSpawnHost, childReply, waitFor } from './util.js'
 
 function stubCtx(root) {
   const listeners = {}
@@ -46,7 +46,7 @@ async function devReq(root, title = '需求') {
   await store.initProject(root)
   const { data } = await store.createRequirement(root, title)
   await store.updateRequirement(root, data.id, { goal: 'g', scope: 's', acceptance: 'a' })
-  await saveReviewPrd(root, data.id)
+  await seedAIReview(root, data.id)
   for (const s of ['reviewing', 'ready', 'in_progress']) await store.moveRequirement(root, data.id, s)
   return data.id
 }

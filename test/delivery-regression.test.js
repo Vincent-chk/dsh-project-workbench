@@ -5,13 +5,13 @@ import { join } from 'node:path'
 import { parseFrontmatter } from '../core/frontmatter.js'
 import * as store from '../core/store.js'
 import { taskResult } from '../client-src/workbench-content.js'
-import { makeRoot, issueFileHash, saveReviewPrd } from './util.js'
+import { makeRoot, seedAIReview, issueFileHash } from './util.js'
 
 async function developingRequirement(root) {
   await store.initProject(root)
   const reqId = (await store.createRequirement(root, '需求')).data.id
   await store.updateRequirement(root, reqId, { goal: '目标', scope: '范围', acceptance: '标准' })
-  await saveReviewPrd(root, reqId)
+  await seedAIReview(root, reqId)
   for (const state of ['reviewing', 'ready', 'in_progress']) await store.moveRequirement(root, reqId, state)
   return reqId
 }
@@ -212,6 +212,7 @@ test('re-review uses the later requirement round for result and verification, ev
     ] })
     await store.updateIssue(root, reqId, issueId, { resultSummary: '旧轮结果', knownLimits: '旧轮限制' })
     await store.updateRequirement(root, reqId, { goal: '修改后的目标' }, { confirmReviewInvalid: true, reason: '需求改变' })
+    await seedAIReview(root, reqId)
     for (const state of ['reviewing', 'ready', 'in_progress']) await store.moveRequirement(root, reqId, state)
     req = (await store.scanProject(root)).requirements[0]
     let issue = req.issues[0]

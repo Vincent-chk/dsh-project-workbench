@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises'
 import * as store from './store.js'
 import { normalizeToolCalls, extractFacts, successfulRecords } from './extract.js'
 import { taskTurns } from './sync.js'
+import { REVIEW_TASK_PURPOSE } from './state.js'
 
 async function readJson(p) { try { return JSON.parse(await readFile(p, 'utf8')) } catch { return null } }
 
@@ -15,7 +16,7 @@ export function installEvents(ctx, { linkFile, runFile, issueOf, sessionOf, cwdO
     try {
       const root = cwdOf(agent)
       const link = root ? await readJson(linkFile(root, agent.session.id)) : null
-      if (!link) return
+      if (!link || link.purpose === REVIEW_TASK_PURPOSE) return
       const events = agent.session.snapshotEvents(link.startSeq)
       const turnStart = events.find(e => e.type === 'turn/start' && e.data.turn === turn)
       const since = events.filter(e => e.seq >= (turnStart?.seq ?? link.startSeq))
@@ -47,7 +48,7 @@ export function installEvents(ctx, { linkFile, runFile, issueOf, sessionOf, cwdO
     if (!root) return
     void serialized(session.id, async () => {
       const link = await readJson(linkFile(root, session.id))
-      if (!link) return
+      if (!link || link.purpose === REVIEW_TASK_PURPOSE) return
       const run = await readJson(runFile(root, link.issueId))
       if (run?.sessionId === session.id && (event.type === 'user/message' || (await issueOf(root, link.issueId)).issue.status === 'todo') && session.snapshotEvents(0).some(e => e.type === 'user/message' && e.data?.source?.rpcId === run.runId)) {
         await store.recordRunStart(root, link.reqId, link.issueId)

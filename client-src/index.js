@@ -5,6 +5,10 @@ import { prdEditorLocale } from './forms/prd-form.js'
 import { TaskPane, rightbarLocale } from './rightbar/task-pane.js'
 import { workbenchContentLocale } from './workbench-content.js'
 import { acceptanceAssistLocale } from './detail/acceptance-assist.js'
+import { requirementReviewLocale } from './detail/requirement-review.js'
+import { requirementContentLocale } from './detail/requirement-content.js'
+import { requirementLayoutLocale } from './detail/requirement-layout.js'
+import { requirementLogLocale } from './detail/requirement-log.js'
 import { ConversationDock, conversationLocale, workbenchMentionSource } from './conversation.js'
     const h = React.createElement
     const NS = 'projectWorkbench'
@@ -13,6 +17,10 @@ import { ConversationDock, conversationLocale, workbenchMentionSource } from './
       ...workbenchContentLocale.en,
       ...rightbarLocale.en,
       ...acceptanceAssistLocale.en,
+      ...requirementReviewLocale.en,
+      ...requirementContentLocale.en,
+      ...requirementLayoutLocale.en,
+      ...requirementLogLocale.en,
       ...conversationLocale.en,
       ...prdLocale.en,
       ...prdEditorLocale.en,
@@ -121,6 +129,10 @@ import { ConversationDock, conversationLocale, workbenchMentionSource } from './
       ...workbenchContentLocale.zh,
       ...rightbarLocale.zh,
       ...acceptanceAssistLocale.zh,
+      ...requirementReviewLocale.zh,
+      ...requirementContentLocale.zh,
+      ...requirementLayoutLocale.zh,
+      ...requirementLogLocale.zh,
       ...conversationLocale.zh,
       ...prdLocale.zh,
       ...prdEditorLocale.zh,
@@ -603,6 +615,21 @@ import { ConversationDock, conversationLocale, workbenchMentionSource } from './
 .pw-source-view{margin:0;padding:10px 12px;border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:var(--dsw-alias-bg-base);font-family:var(--dsh-font-family-mono,monospace);font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;max-height:50vh;overflow:auto}
 .pw-blocked-section{margin-bottom:4px}
 .pw-issue .pw-order{flex:none}
+.pw-requirement-fields .pw-field{display:block}
+.pw-requirement-fields .pw-textarea[rows="1"]{min-height:34px;padding-block:6px}
+.pw-requirement-block[hidden]{display:none}
+.pw-requirement-block>summary{line-height:1.5;padding:6px 2px;color:var(--dsw-alias-label-primary)}
+.pw-requirement-block>summary>strong{margin-inline-start:4px}
+.pw-requirement-block>summary>.pw-note{display:inline-block;vertical-align:bottom;max-width:min(72%,34em);margin-inline-start:10px}
+.pw-requirement-block[open]>summary>.pw-note{display:none}
+.pw-requirement-block-body{min-width:0;padding:6px 2px 4px}
+.pw-requirement-block-body>.pw-result+.pw-result{margin-top:6px}
+.pw-requirement-layout-actions{margin-block:0 12px}
+.pw-requirement-sort-row{min-height:36px;display:flex;align-items:center;gap:8px;padding:4px 6px;border-top:1px solid var(--dsw-alias-border-l3)}
+.pw-requirement-sort-row>.pw-actions,.pw-requirement-sort-row>.pw-note{margin-inline-start:auto}
+.pw-requirement-sort-row[data-drop="before"]{box-shadow:inset 0 2px var(--dsw-alias-brand-primary)}
+.pw-requirement-sort-row[data-drop="after"]{box-shadow:inset 0 -2px var(--dsw-alias-brand-primary)}
+.pw-requirement-grip{cursor:grab;user-select:none;touch-action:none;padding:4px 6px;color:var(--dsw-alias-label-secondary)}
 @media(max-width:767px){
   .pw-shell-body{flex-direction:column}
   .pw-menu{width:auto;max-height:38vh;flex-direction:row;align-items:flex-start;gap:8px}

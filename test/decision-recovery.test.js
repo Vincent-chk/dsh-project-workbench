@@ -3,7 +3,7 @@ import test from 'node:test'
 import fs from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { join } from 'node:path'
-import { makeRoot, issueFileHash, saveReviewPrd } from './util.js'
+import { makeRoot, seedAIReview, issueFileHash, seedReviewPrd } from './util.js'
 import * as store from '../core/store.js'
 import { dispatch } from '../core/rpc.js'
 
@@ -23,9 +23,10 @@ async function makeRequirement(t, developing = false) {
   await store.initProject(root)
   const id = (await store.createRequirement(root, '需求')).data.id
   await store.updateRequirement(root, id, { goal: '目标', scope: '范围', acceptance: '标准' })
-  await saveReviewPrd(root, id)
+  await seedReviewPrd(root, id)
   await store.moveRequirement(root, id, 'reviewing')
   if (developing) {
+    await seedAIReview(root, id)
     await store.moveRequirement(root, id, 'ready')
     await store.moveRequirement(root, id, 'in_progress')
   }
@@ -34,6 +35,7 @@ async function makeRequirement(t, developing = false) {
 
 test('a failed approval cannot turn a different decision into approval', async t => {
   const { root, id } = await makeRequirement(t)
+  await seedAIReview(root, id)
   const beforeEdit = (await store.scanProject(root)).requirements[0]
   await store.updateRequirement(root, id, { acceptance: '核对新标准' })
   await assert.rejects(store.moveRequirement(root, id, 'ready', { fileHash: beforeEdit.hash }), { code: 'CONFLICT' })
@@ -45,7 +47,7 @@ test('a failed approval cannot turn a different decision into approval', async t
   await store.moveRequirement(root, id, 'ready', options)
   const req = (await store.scanProject(root)).requirements[0]
   assert.equal(req.status, 'ready')
-  assert.deepEqual(req.reviews.map(r => r.decision), ['approved'])
+  assert.deepEqual(req.reviews.filter(r => r.kind === 'review').map(r => r.decision), ['approved'])
 })
 
 test('failed invalidation preserves reviewed content and retries with original fingerprint', async t => {

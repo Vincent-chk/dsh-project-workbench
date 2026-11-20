@@ -7,16 +7,17 @@ import { join } from 'node:path'
 import { installAssist } from '../core/assist.js'
 import { adoptProposal, listProposals, markDismissed } from '../core/proposals.js'
 import * as store from '../core/store.js'
-import { makeRoot, stubSpawnHost, childReply, waitFor, saveReviewPrd } from './util.js'
+import { makeRoot, seedAIReview, stubSpawnHost, childReply, waitFor, seedReviewPrd } from './util.js'
 
 async function reqIn(root, status, title = '需求') {
   await store.initProject(root)
   const { data } = await store.createRequirement(root, title)
   if (status === 'backlog') return data.id
   await store.updateRequirement(root, data.id, { goal: 'g', scope: 's', acceptance: 'a' })
-  await saveReviewPrd(root, data.id)
+  await seedReviewPrd(root, data.id)
   await store.moveRequirement(root, data.id, 'reviewing')
   if (status === 'reviewing') return data.id
+  await seedAIReview(root, data.id)
   await store.moveRequirement(root, data.id, 'ready')
   if (status === 'ready') return data.id
   await store.moveRequirement(root, data.id, 'in_progress')
@@ -131,7 +132,7 @@ test('split checks the actual project, returns an existing task, and drafts only
   const { children, assist } = setup(t, root)
   const reqId = await reqIn(root, 'backlog', '修复问候并补终端入口')
   await store.updateRequirement(root, reqId, { q_pain: '空名字没有提示，终端无法发起问候', q_out: '账户系统', acceptance: '空名字提示填写\n终端可发起问候' })
-  await saveReviewPrd(root, reqId)
+  await seedAIReview(root, reqId)
   for (const status of ['reviewing', 'ready', 'in_progress']) await store.moveRequirement(root, reqId, status)
   const { data: existing } = await store.createIssue(root, reqId, '修复空名字', { problemOverview: '处理空名字', acceptance: '空名字提示填写' })
   await store.addIssueUpdate(root, reqId, existing.id, '空字符串已支持，全空格仍缺提示。')
@@ -185,7 +186,7 @@ test('split preserves an independent gap even when it cites a partially covering
   const { children, assist } = setup(t, root)
   const reqId = await reqIn(root, 'backlog', '空白和非字符串输入都应安全')
   await store.updateRequirement(root, reqId, { q_pain: '空白名字需要提示，其他类型也不能让函数崩溃', acceptance: '空白名字有提示\n非字符串输入不抛出异常' })
-  await saveReviewPrd(root, reqId)
+  await seedAIReview(root, reqId)
   for (const status of ['reviewing', 'ready', 'in_progress']) await store.moveRequirement(root, reqId, status)
   const { data: existing } = await store.createIssue(root, reqId, '只核对空白名字', { problemOverview: '只核对现有空白行为，不修改代码', acceptance: '空白名字有提示' })
   await writeFile(join(root, 'demo.mjs'), "export function greet(name) {\n  if (!name.trim()) return '请填写名字'\n}\n")
@@ -227,6 +228,7 @@ test('split does not promote old task checks or limits after requirement re-revi
 
   now += 1000
   await store.updateRequirement(root, reqId, { goal: '修改后的目标' }, { confirmReviewInvalid: true, reason: '重新评审目标' })
+  await seedAIReview(root, reqId)
   for (const status of ['reviewing', 'ready', 'in_progress']) await store.moveRequirement(root, reqId, status)
   now += 1000
   await store.appendObjectiveSync(root, reqId, task.id, { sid: 'test', entries: [{ seq: 2,
@@ -301,7 +303,7 @@ test('split excludes each item in a multi-part scope exclusion', async t => {
     scope: '只处理示例问候函数，不增加账户、网络服务或其他页面',
     acceptance: '空名字显示填写提示',
   })
-  await saveReviewPrd(root, reqId)
+  await seedAIReview(root, reqId)
   for (const status of ['reviewing', 'ready', 'in_progress']) await store.moveRequirement(root, reqId, status)
   await writeFile(join(root, 'README.md'), '目前空名字不会给出填写提示。')
   const pending = assist.routes['requirement/split']({ root, id: reqId })

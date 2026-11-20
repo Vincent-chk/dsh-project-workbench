@@ -8,7 +8,7 @@ const submitBase = { issues: accepted, summary: '交付摘要' }
 // Every ordered requirement pair against the PRD §10.3 whitelist.
 const REQ_ALLOWED = {
   'backlog>reviewing': { q_pain: '需求概述' },
-  'reviewing>ready': {},
+  'reviewing>ready': { hasAIReview: true },
   'reviewing>backlog': { reason: '补充' },
   'ready>in_progress': {},
   'ready>backlog': { reason: '改目标', confirmReviewInvalid: true },

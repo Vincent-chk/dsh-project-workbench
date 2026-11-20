@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { submitProposals, saveSplitProposals, listProposals, purgeExpired, markApproved, markDismissed, readBaseline, writeBaseline, adoptProposal } from '../core/proposals.js'
 import { dispatch } from '../core/rpc.js'
 import * as store from '../core/store.js'
-import { saveReviewPrd } from './util.js'
+import { seedAIReview, seedReviewPrd } from './util.js'
 
 async function root(t) {
   const r = await mkdtemp(join(tmpdir(), 'pw-prop-'))
@@ -94,8 +94,9 @@ async function devReq(r) {
   await store.initProject(r)
   const { data } = await store.createRequirement(r, '需求')
   await store.updateRequirement(r, data.id, { goal: 'g', scope: 's', acceptance: 'a' })
-  await saveReviewPrd(r, data.id)
+  await seedReviewPrd(r, data.id)
   await store.moveRequirement(r, data.id, 'reviewing')
+  await seedAIReview(r, data.id)
   await store.moveRequirement(r, data.id, 'ready')
   await store.moveRequirement(r, data.id, 'in_progress')
   return data.id

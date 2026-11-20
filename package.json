@@ -1,6 +1,6 @@
 {
   "name": "dsh-project-workbench",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "A file-backed project requirements, tasks, reviews and acceptance workbench for DeepSeek Harness.",
   "author": "Vincent-chk",
   "license": "MIT",

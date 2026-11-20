@@ -1,3 +1,5 @@
+import { aiReviewReports } from '../core/state.js'
+
 // Presentation only. The full saved text is available for the detail view.
 const textOf = value => typeof value === 'string' ? value.trim() : ''
 
@@ -248,17 +250,22 @@ export function reviewRecords(reviews = []) {
   })
 }
 
+function activityDecision(reviews, used, at, states) {
+  const decision = recordedDecisions[`${states[1]}>${states[2]}`]
+  if (!decision) return
+  const note = states[3].match(/^（(.*)）$/)?.[1]
+  return reviews.find(record => !used.has(record) && record.kind === decision[0] &&
+    record.decision === decision[1] && (!note || record.decision === 'approved' || note === textOf(record.opinion)) &&
+    Math.abs(Date.parse(at) - Date.parse(record.at)) < 60_000)
+}
+
 export function progressRecords(activity = [], t, kind, reviews = []) {
   const usedReviews = new Set()
   return activity.flatMap((line, index) => {
     const { at, date, body, states } = activityParts(line, kind)
     if (!body || /^(?:客观记录同步：会话 |建议已采用：prop-)/.test(body)) return []
     if (states && kind === 'requirement') {
-      const decision = recordedDecisions[`${states[1]}>${states[2]}`]
-      const note = states[3].match(/^（(.*)）$/)?.[1]
-      const matched = decision && reviews.find(record => !usedReviews.has(record) && record.kind === decision[0] &&
-        record.decision === decision[1] && (!note || record.decision === 'approved' || note === textOf(record.opinion)) &&
-        Math.abs(Date.parse(at) - Date.parse(record.at)) < 60_000)
+      const matched = activityDecision(reviews, usedReviews, at, states)
       if (matched) {
         usedReviews.add(matched)
         return []
@@ -269,6 +276,69 @@ export function progressRecords(activity = [], t, kind, reviews = []) {
     else text = text.replace(/^\[AI\]\s*|^人工操作：\s*/, '')
     return text ? [{ date, text, key: index, event: !!states || /^重开完成：/.test(body) }] : []
   })
+}
+
+const requirementMoveLabels = {
+  'backlog>reviewing': 'requirementLogSubmitted',
+  'reviewing>ready': 'reviewApproved',
+  'reviewing>backlog': 'reviewReturned',
+  'ready>in_progress': 'requirementLogDevelopmentStarted',
+  'in_progress>pending': 'requirementLogDeliverySubmitted',
+  'pending>completed': 'deliveryAccepted',
+  'pending>in_progress': 'deliveryReturned',
+  'completed>in_progress': 'requirementLogReopened',
+}
+
+export function requirementLogEntries(req, t, reports) {
+  const entries = []
+  const add = (at, summary, target = null) => {
+    const time = Date.parse(at)
+    const recorded = Number.isFinite(time)
+    entries.push({ key: entries.length, at: recorded ? at : '', time: recorded ? time : Number.MIN_SAFE_INTEGER, summary, target })
+  }
+  const decisions = reviewRecords(req.reviews)
+  const matchedMoves = new Map()
+  for (const line of req.activity ?? []) {
+    const { at, states } = activityParts(line, 'requirement')
+    if (!states) continue
+    const edge = `${states[1]}>${states[2]}`
+    const matched = activityDecision(decisions, matchedMoves, at, states)
+    if (matched) {
+      matchedMoves.set(matched, edge)
+      continue
+    }
+    const label = requirementMoveLabels[edge]
+    const note = recordedDecisions[edge] ? states[3] : ''
+    add(at, label ? t(label) + note : activityEntry(line, t, 'requirement').text)
+  }
+  for (const record of decisions) {
+    const marker = record.marker || record.round
+    const edge = matchedMoves.get(record)
+    const label = record.kind === 'review'
+      ? (record.decision === 'approved' ? 'reviewApproved' : 'reviewReturned')
+      : (record.decision === 'approved' ? 'deliveryAccepted' : 'deliveryReturned')
+    add(record.at, t(requirementMoveLabels[edge] ?? label),
+      marker ? { kind: record.kind, id: String(marker) } : null)
+  }
+  const savedReports = new Set()
+  for (const report of aiReviewReports(reports ?? req.reviews)) {
+    if (savedReports.has(report.marker)) continue
+    savedReports.add(report.marker)
+    add(report.at, t('requirementLogReportSaved').replace('{n}', String(savedReports.size)), { kind: 'report', id: report.marker })
+  }
+  for (const issue of req.issues ?? []) {
+    const title = issue.title || issue.id
+    const target = { kind: 'issue', id: issue.id }
+    for (const line of issue.activity ?? []) {
+      const { at, states } = activityParts(line, 'issue')
+      if (!states) continue
+      const transition = `${t('st_' + states[1])} → ${t('st_' + states[2])}`
+      add(at, t('requirementLogTaskMoved').replace('{move}', () => transition).replace('{title}', () => title), target)
+    }
+    if (issue.created) add(issue.created, t('requirementLogTaskCreated').replace('{title}', () => title), target)
+  }
+  if (req.created) add(req.created, t('requirementLogCreated'))
+  return entries.sort((a, b) => b.time - a.time)
 }
 
 export function taskProgressRecords(activity, t) {
@@ -336,6 +406,8 @@ const errors = {
   ACCESS_DENIED: 'errAccessDenied', CANCELLED: 'errCancelled', PROMPT_REJECTED: 'errPromptRejected',
   ASSIST_BUSY: 'errAwaitDraft', ASSIST_FAILED: 'errAssistFailed', SPAWN_FAILED: 'errAssistFailed',
   REVIEW_INVALIDATION_REQUIRED: 'errReviewChanged', REOPEN_PENDING: 'errReopenPending', REOPEN_CONFLICT: 'errReopenPending',
+  REVIEW_REPORT_REQUIRED: 'aiReviewRequired', REVIEW_NOT_ACTIVE: 'errNotAllowed', REVIEW_TASK_ONLY: 'errNotAllowed',
+  REVIEW_PRD_REQUIRED: 'reviewPrdRequired',
   DECISION_PENDING: 'errReopenPending', REOPEN_SELECTION_REQUIRED: 'errReopenSelection', REOPEN_ITEM_FAILED: 'errReopenItems',
   ABSOLUTE_REF: 'errInvalidRef', INVALID_REF: 'errInvalidRef', FIELD_NOT_EDITABLE: 'errInvalidInput',
   INVALID_ID: 'errInvalidInput', INVALID_ROOT: 'errInvalidInput', INVALID_PROPOSAL: 'errInvalidInput',
