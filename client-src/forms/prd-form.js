@@ -1,6 +1,7 @@
 import React from 'react'
 import { Modal } from '../shared/ui.js'
 import { rpc } from '../api.js'
+import { discoveryReference } from '../discovery.js'
 
 const { createElement: h, useEffect, useState } = React
 const button = (key, text, props = {}) => h('button', { key, type: 'button', className: 'pw-button', ...props }, text)
@@ -51,10 +52,12 @@ function imageData(file) {
   })
 }
 
-export function PrdEditor({ root, id, reqId, t, onSaved, onClose, uiMemory }) {
-  const key = JSON.stringify(['prd-editor', root, id ?? null, reqId ?? null])
+export function PrdEditor({ root, id, reqId, generated, t, onSaved, onClose, uiMemory }) {
+  const key = JSON.stringify(['prd-editor', root, id ?? generated?.id ?? null, reqId ?? null])
   const drafts = uiMemory.drafts
-  const [draft, setDraft] = useState(() => drafts[key] ?? (id ? null : { title: '', body: '', images: [] }))
+  const [draft, setDraft] = useState(() => drafts[key] ?? (generated
+    ? draftFrom({ ...generated, title: generated.markdown.split(/\r?\n/)[0].replace(/^#\s+/, '') })
+    : id ? null : { title: '', body: '', images: [] }))
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
   const [latest, setLatest] = useState(null)
@@ -96,7 +99,9 @@ export function PrdEditor({ root, id, reqId, t, onSaved, onClose, uiMemory }) {
     const original = draft.original && draftFrom({ title: /^#[ \t]+([^\r\n]+)/.exec(draft.original)?.[1], markdown: draft.original })
     const markdown = original && original.title === draft.title && original.body === draft.body ? draft.original : edited
     const images = draft.images.filter(image => markdown.includes(`(assets/${image.name})`))
-    const res = await rpc('prd/save', { root, id, markdown, version: draft.version, images, ...(reqId && !id && { reqIds: [reqId] }) })
+    const res = generated
+      ? await rpc('prd/saveGenerated', { root, id: generated.id, markdown, images })
+      : await rpc('prd/save', { root, id, markdown, version: draft.version, images, ...(reqId && !id && { reqIds: [reqId] }) })
     setBusy(false)
     if (res.ok) {
       delete drafts[key]
@@ -149,6 +154,9 @@ export function PrdEditor({ root, id, reqId, t, onSaved, onClose, uiMemory }) {
   },
   h('style', null, '.pw-prd-edit-content .pw-textarea{min-height:160px}.pw-prd-edit-content pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:210px;overflow:auto}'),
   h('div', { className: 'pw-prd-edit-content' },
+  generated && h('p', { className: 'pw-note' },
+    t('discoveryPrdLinked') + ' · ' + generated.requirements.join(' / '), h('br'),
+    t('discoveryPrdSource') + ' · ' + discoveryReference(t, generated.requirements, generated.sources)),
   draft && h('form', { onSubmit: save },
     h('label', { className: 'pw-field' }, h('span', null, t('prdTitleField')),
       h('input', { className: 'pw-input', disabled: busy, value: draft.title, onChange: event => remember({ title: event.target.value }) })),

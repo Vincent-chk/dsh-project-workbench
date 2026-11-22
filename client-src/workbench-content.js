@@ -424,6 +424,8 @@ const errors = {
   REVIEW_INVALIDATION_REQUIRED: 'errReviewChanged', REOPEN_PENDING: 'errReopenPending', REOPEN_CONFLICT: 'errReopenPending',
   REVIEW_REPORT_REQUIRED: 'aiReviewRequired', REVIEW_NOT_ACTIVE: 'errNotAllowed', REVIEW_TASK_ONLY: 'errNotAllowed',
   REVIEW_PRD_REQUIRED: 'reviewPrdRequired',
+  DISCOVERY_SKILL_REQUIRED: 'discoveryWaitForQuestion', DISCOVERY_ROUND_REQUIRED: 'discoveryNeedDiscussion',
+  DISCOVERY_NO_NEW: 'discoveryNoNewDiscussion',
   DECISION_PENDING: 'errReopenPending', REOPEN_SELECTION_REQUIRED: 'errReopenSelection', REOPEN_ITEM_FAILED: 'errReopenItems',
   ABSOLUTE_REF: 'errInvalidRef', INVALID_REF: 'errInvalidRef', FIELD_NOT_EDITABLE: 'errInvalidInput',
   INVALID_ID: 'errInvalidInput', INVALID_ROOT: 'errInvalidInput', INVALID_PROPOSAL: 'errInvalidInput',

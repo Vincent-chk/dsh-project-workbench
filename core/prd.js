@@ -52,7 +52,17 @@ function viewOf(id, doc, content, modified) {
   const markdown = doc.body.trim()
   validatePrdDraft(reqIds, markdown)
   const title = /^#[ \t]+(.+)$/m.exec(markdown)[1]
-  return { id, title, reqIds, markdown, revision, updated, version: versionOf(content), deleted: !!deletedAt }
+  const rawSources = doc.get('discoverySources')
+  let discoverySources
+  if (rawSources) {
+    try { discoverySources = JSON.parse(rawSources) } catch { /* Keep hand-edited PRD text readable. */ }
+    if (!Array.isArray(discoverySources) || !discoverySources.every(item =>
+      typeof item?.reqId === 'string' && requirementId.test(item.reqId) && Number.isSafeInteger(item.version) && item.version > 0)) {
+      discoverySources = undefined
+    }
+  }
+  return { id, title, reqIds, markdown, revision, updated, version: versionOf(content), deleted: !!deletedAt,
+    ...(Array.isArray(discoverySources) && { discoverySources }) }
 }
 
 async function loadPrd(root, id) {
@@ -140,10 +150,11 @@ function assertBase(current, version) {
   }
 }
 
-async function writePrd(root, id, current, { reqIds, markdown, revision, deletedAt }) {
+async function writePrd(root, id, current, { reqIds, markdown, revision, deletedAt, discoverySources }) {
   const doc = current?.doc ?? parseFrontmatter(`---\nid: ${id}\n---\n`)
   doc.setPlain('requirements', JSON.stringify(reqIds))
   doc.setPlain('revision', revision)
+  if (discoverySources) doc.setString('discoverySources', JSON.stringify(discoverySources))
   const updated = new Date().toISOString()
   doc.setString('updated', updated)
   doc.setString('deletedAt', deletedAt ?? '')
@@ -241,13 +252,15 @@ export async function readPrdImage(root, id, name) {
   return { mime: imageMime[extname(name).slice(1)], base64: bytes.toString('base64') }
 }
 
-export async function savePrd(root, { id = 'prd-' + randomUUID(), reqIds, markdown, version, images = [] }) {
+export async function savePrd(root, { id = 'prd-' + randomUUID(), reqIds, markdown, version, images = [] }, { discoverySources } = {}) {
   assertPrdId(id)
   return withPrdLock(root, async root => {
     await prdDirectory(root, true)
     const current = await currentPrd(root, id)
-    assertBase(current, version)
     const previous = current?.view
+    if (discoverySources && previous && !previous.deleted
+      && JSON.stringify(previous.discoverySources) === JSON.stringify(discoverySources)) return previous
+    assertBase(current, version)
     if (previous?.deleted) throw new WorkbenchError('PRD_NOT_FOUND', '请先恢复已删除的 PRD。')
     const links = reqIds === undefined ? previous?.reqIds ?? [] : reqIds
     validatePrdDraft(links, markdown)
@@ -264,7 +277,7 @@ export async function savePrd(root, { id = 'prd-' + randomUUID(), reqIds, markdo
       await attachImages(root, id, files, inserted)
       if (previous && !textChanged && !linksChanged) return previous
       const revision = previous ? previous.revision + Number(textChanged) : 1
-      view = await writePrd(root, id, current, { reqIds: uniqueLinks, markdown: cleanMarkdown, revision })
+      view = await writePrd(root, id, current, { reqIds: uniqueLinks, markdown: cleanMarkdown, revision, discoverySources })
     } catch (error) {
       await removeImages(root, id, inserted).catch(() => {})
       throw error

@@ -3,9 +3,11 @@ import { readFile, writeFile, mkdir, rm, symlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import test from 'node:test'
 import { apply } from '../index.js'
+import { discoveryQuestionText } from '../core/discovery-qa.js'
+import { discoverySkillMarker, discoverySkillName } from '../core/skill.js'
 import { readInvocation } from '../core/conversation-commands.js'
 import * as store from '../core/store.js'
-import { makeRoot, saveReviewPrd, seedAIReview, stubSpawnHost, waitFor } from './util.js'
+import { childReply, makeRoot, saveReviewPrd, seedAIReview, stubSpawnHost, waitFor } from './util.js'
 
 async function setup(t) {
   const root = await makeRoot(t)
@@ -68,7 +70,7 @@ async function setup(t) {
   )).json()
   const rpc = (method, input) => post('', { method, input })
   const a = await createAgent(root)
-  return { ...a, root, ctx, children, commands, prompts, post, rpc, createAgent, setMode: value => { mode = value }, contexts }
+  return { ...a, root, ctx, agents, children, commands, prompts, post, rpc, createAgent, setMode: value => { mode = value }, contexts }
 }
 
 test('native commands and @ syntax preserve ordinary chat and use one Host prompt', async t => {
@@ -347,25 +349,214 @@ test('architecture layout rejection survives the repair and shows an actionable 
   assert.doesNotMatch(progress, /component-label-overflow|Architecture layout validation failed/)
 })
 
-test('PRD preview, multi-requirement navigation, conflict reread and explicit save', async t => {
+async function startDiscovery(p, reqId) {
+  const res = await p.rpc('discovery/open', { root: p.root, reqId })
+  assert.equal(res.ok, true, JSON.stringify(res))
+  const { sessionId } = res.data
+  const prompt = p.prompts.find(item => item.sessionId === sessionId)
+  assert.match(prompt.content[0].text, /^\/pwb-grill-me\n/)
+  const events = []
+  p.agents.get(sessionId).session.snapshotEvents = () => events
+  const emit = (type, data) => events.push({ seq: events.length + 1, type, data })
+  const content = text => [{ type: 'text', text }]
+  const user = (text, source = { kind: 'user' }) => emit('user/message', { source, content: content(text) })
+  const assistant = text => emit('assistant/message', { message: { content: content(text) } })
+  const start = turn => emit('turn/start', { turn })
+  const end = (turn, kind = 'completed') => emit('turn/end', { turn, reason: { kind } })
+  return { sessionId, events, user, assistant, start, end, input: { root: p.root, reqId, sessionId }, prompt }
+}
+
+function firstQuestion(d, invoke = true) {
+  d.start(1)
+  d.user(d.prompt.content[0].text, { kind: 'user', rpcId: d.prompt.requestId })
+  if (invoke) d.user(discoverySkillMarker, { kind: 'skill-invocation', name: discoverySkillName })
+  d.assistant('需要多少种风格？')
+  d.end(1)
+}
+
+test('discovery question layout preserves choice labels and leaves ambiguous text whole', () => {
+  const stem = '**首版交付物**：首版交付物是哪种？'
+  const named = [stem, '', '- a) 草稿', '- **b)** 考勤数据', '     包括月底统计', '- **c) 直接提交**', '- d) 仅验证流程'].join('\n')
+  assert.deepEqual(discoveryQuestionText(named), { stem, choices: [
+    { label: 'a)', text: '草稿' }, { label: 'b)', text: '考勤数据\n包括月底统计' },
+    { label: 'c)', text: '直接提交' }, { label: 'd)', text: '仅验证流程' },
+  ] })
+  assert.deepEqual(discoveryQuestionText(stem + '\n\n1、仅 XLSX\n2、仅 CSV').choices.map(choice => choice.label), ['1、', '2、'])
+  for (const text of [stem, stem + '\nA. XLSX 或 B. CSV', stem + '\n- a) 单项',
+    stem + '\n- a) XLSX\n- b) CSV\n以上格式都需要与财务核对。',
+    stem + '\n```text\na) 示例 A\nb) 示例 B\n```']) {
+    assert.deepEqual(discoveryQuestionText(text), { stem: text, choices: [] })
+  }
+})
+
+test('discovery panel projects numbered questions and applies confirmed answers before the AI finishes', async t => {
+  const p = await setup(t)
+  await store.initProject(p.root)
+  const { data: { id } } = await store.createRequirement(p.root, '导出订单明细')
+  const d = await startDiscovery(p, id)
+  d.start(1)
+  d.user(d.prompt.content[0].text, { kind: 'user', rpcId: d.prompt.requestId })
+  d.user(discoverySkillMarker, { kind: 'skill-invocation', name: discoverySkillName })
+  d.assistant([
+    '已核对已有的范围。', '❓ **Q1** - **导哪些订单？**', '', '说明和可选范围。', '',
+    '```text', 'Q99: 示例中的标签', '```', '', '➡️ 建议当前筛选。', '---',
+    '### Q2：谁可以导？ ➡️ 推荐运营。', '---', 'Q3：上限是多少？', '---', 'Q4：怎么提示超限？', '---', '要继续问吗？',
+  ].join('\n'))
+  const panel = async () => {
+    const res = await p.rpc('discovery/session', d.input)
+    assert.equal(res.ok, true, JSON.stringify(res))
+    return res.data
+  }
+  assert.deepEqual((await panel()).questions, [])
+  d.end(1)
+  const first = (await panel()).questions
+  assert.deepEqual(first.map(row => row.number), [1, 2, 3, 4])
+  assert.match(first[0].question, /说明和可选范围。\n\n```text\nQ99: 示例/)
+  assert.doesNotMatch(first[0].question, /建议当前筛选/)
+  assert.equal(first[1].question, '谁可以导？')
+  assert.equal(first[3].question, '怎么提示超限？')
+  assert.ok(first.every(row => row.answered === false))
+  assert.deepEqual(Object.keys(first[0]), ['id', 'number', 'round', 'question', 'answered'])
+  d.start(2)
+  d.user('Q1：当前筛选\n包括已退款订单；**A2**：运营主管')
+  d.assistant('Q99：没有完成的提问？')
+  assert.deepEqual((await panel()).questions.map(row => row.answered), [true, true, false, false])
+  d.end(2, 'error')
+  assert.deepEqual((await panel()).questions.map(row => row.answered), [true, true, false, false])
+  d.start(3)
+  d.user('Q3 和 Q4 合在一起考虑，暂时保留。')
+  d.assistant('保留待定。\n\n❓ **Q1** - 要记录操作时间吗？\n---\nQ4：审计记录保留多久？')
+  d.end(3)
+  d.start(4)
+  d.user('第1题：记录操作时间\nQ3：首版一万条')
+  d.assistant('建议写入审计日志。\n\nQ8：首版只提供中文表头吗？')
+  d.end(4)
+  d.start(5)
+  d.user('Q2：')
+  d.user('可以。')
+  d.end(5)
+  d.start(6)
+  d.user('Q4：保留一年，但两个旧轮次均有这道题。')
+  d.assistant('Q9：报表需要覆盖全部月份吗？')
+  d.end(6)
+  d.start(7)
+  d.user('只覆盖上个月。')
+  const rows = (await panel()).questions
+  assert.deepEqual(rows.map(row => row.answered), [true, true, true, false, true, false, false, true])
+  assert.deepEqual(rows.map(row => [row.round, row.number]), [[1, 1], [1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 8], [4, 9]])
+  assert.equal(rows[0].id, first[0].id)
+  assert.notEqual(rows[0].id, rows[4].id)
+})
+
+test('organizing discovery waits for the native turn and preserves legacy wrap-up history', async t => {
+  const p = await setup(t)
+  await store.initProject(p.root)
+  const { data: { id } } = await store.createRequirement(p.root, '导出订单明细')
+  const d = await startDiscovery(p, id)
+  const prepare = extra => p.rpc('discovery/prepare', { ...d.input, ...extra })
+  assert.equal((await prepare()).code, 'DISCOVERY_SKILL_REQUIRED')
+  d.start(1)
+  d.user(d.prompt.content[0].text, { kind: 'user', rpcId: d.prompt.requestId })
+  d.user(discoverySkillMarker, { kind: 'skill-invocation', name: discoverySkillName })
+  d.assistant('Q1：需要多少种风格？')
+  d.end(1)
+  assert.equal((await prepare({ sessionId: 'another-session' })).code, 'WORKSPACE_MISMATCH')
+  p.agents.get(d.sessionId).status = 'running'
+  assert.equal((await prepare()).code, 'SESSION_BUSY')
+  p.agents.get(d.sessionId).status = 'idle'
+  d.start(2)
+  d.user('确认想法，结束头脑风暴。', { kind: 'user', rpcId: 'pwb-discovery-finish-legacy' })
+  d.assistant('建议仍待定。\nQ7：模型误把提问放到了收尾回复？')
+  const panel = async () => (await p.rpc('discovery/session', d.input)).data
+  d.end(2)
+  assert.equal((await panel()).questions.length, 1)
+  assert.equal((await panel()).questions[0].answered, false)
+  assert.equal((await prepare()).code, 'DISCOVERY_ROUND_REQUIRED')
+  d.start(3)
+  d.user('Q1：首版保留两种风格。')
+  d.assistant('建议默认简洁。')
+  d.end(3)
+  assert.equal((await panel()).questions[0].answered, true)
+  assert.equal((await replyToChild(p, prepare(), { ready: true, round: [] })).code, 'DISCOVERY_AI_FAILED')
+  const pending = prepare()
+  await waitFor(() => p.children.length === 2)
+  assert.equal((await prepare()).code, 'DISCOVERY_BUSY')
+  const child = p.children.at(-1)
+  const transcript = JSON.parse(child.prompt.split('\n').at(-1))
+  const round = ['Q1：需要多少种风格？', 'Q1：首版保留两种风格。', '建议默认简洁。']
+    .map(text => transcript.find(message => message.text === text).seq)
+  child.resolve(childReply({ ready: true, round, markdown: '## 已确认结论\n保留两种风格。' }))
+  assert.equal((await pending).ok, true)
+  assert.equal(p.prompts.length, 1)
+})
+
+async function replyToChild(p, pending, doc) {
+  const index = p.children.length
+  await waitFor(() => p.children.length > index)
+  const child = p.children[index]
+  child.resolve(childReply(typeof doc === 'function' ? doc(child.prompt) : doc))
+  return pending
+}
+
+async function prepareRound(p, d, turn, question, answer, suggestion) {
+  d.start(turn)
+  d.user(answer)
+  d.assistant(suggestion)
+  d.end(turn)
+  const excerpts = [question, answer, suggestion]
+  const res = await replyToChild(p, p.rpc('discovery/prepare', d.input), prompt => {
+    const transcript = JSON.parse(prompt.split('\n').at(-1))
+    const round = excerpts.map(text => transcript.find(message => message.text === text)?.seq)
+    assert.ok(round.every(Number.isSafeInteger))
+    return { ready: true, round, markdown: '## 已确认结论\n' + answer + '\n\n## 深化建议\n' + suggestion }
+  })
+  assert.equal(res.ok, true, JSON.stringify(res))
+  assert.deepEqual(res.data.round, excerpts.map(quote => d.events.find(event =>
+    (event.data.content ?? event.data.message?.content)?.[0]?.text === quote).seq))
+  return res.data
+}
+
+async function saveDiscovery(p, reqId) {
+  const d = await startDiscovery(p, reqId)
+  firstQuestion(d)
+  const preview = await prepareRound(p, d, 2, '需要多少种风格？', '需要两种', '建议使用简洁和详细两种表达风格。')
+  const saved = await p.rpc('discovery/save', { ...d.input, ...preview })
+  assert.equal(saved.ok, true, JSON.stringify(saved))
+  return d
+}
+
+test('PRD preview, multi-requirement eligibility and explicit save preserve updates', async t => {
   const p = await setup(t)
   await store.initProject(p.root)
   const id = (await store.createRequirement(p.root, '聊天', { q_pain: '两种风格' })).data.id
   const second = (await store.createRequirement(p.root, '设置', { q_pain: '选择默认风格' })).data.id
   p.begin('/pwb-prd 从聊天和设置写首版 PRD')
   const instructions = p.contexts.get('project-workbench:conversation').text({ agent: p.agent })
-  assert.match(instructions, /用户明确表达的决定才能写成已定范围/)
-  assert.match(instructions, /依据不足的标准一律标注为建议、待用户确认/)
-  assert.match(instructions, /无法证实的描述标注待确认，不要虚构现有工具的问题/)
-  assert.match(instructions, /标注为建议或待确认/)
-  const draft = await p.tool('prdPreview', { reqIds: [id, second], markdown: '# 聊天首版\n\n## 待定事项\n模型是否离线' })
+  assert.match(instructions, /新建 PRD.*prdCreate/)
+  assert.match(instructions, /不得另行生成 PRD/)
+  assert.match(instructions, /prdPreview 预览更新/)
+  await assert.rejects(p.tool('prdCreate', { reqIds: [id, second] }), { code: 'DISCOVERY_REQUIRED' })
+  await assert.rejects(p.tool('prdPreview', { reqIds: [id], markdown: '# 绕过门槛' }), { code: 'DISCOVERY_REQUIRED' })
+  p.end()
+  p.begin('@workbench: 帮我生成聊天 PRD')
+  await assert.rejects(p.tool('prdCreate', { reqId: id }), { code: 'DISCOVERY_REQUIRED' })
+  assert.equal((await p.rpc('prd/generate', { root: p.root, reqIds: [id] })).code, 'DISCOVERY_REQUIRED')
+  assert.equal(p.children.length, 0)
+
+  await saveDiscovery(p, id)
+  await assert.rejects(p.tool('prdCreate', { reqIds: [id, second] }), { code: 'DISCOVERY_REQUIRED' })
+  assert.equal(p.children.length, 1)
+  await saveDiscovery(p, second)
+  const draft = await replyToChild(p, p.tool('prdCreate', { reqIds: [id, second] }), { markdown: '# 聊天首版\n\n## 待定事项\n模型是否离线' })
   assert.deepEqual((await p.rpc('prd/list', { root: p.root, reqId: id })).data, [])
   const preview = (await p.view())[0]
+  assert.deepEqual(preview.sources, [{ reqId: id, version: 1 }, { reqId: second, version: 1 }])
   await p.direct(p.begin('@workbench 查看项目进展'))
   assert.equal((await p.view())[0].id, preview.id)
   assert.equal((await p.act((await p.view())[0], 'confirm', { markdown: '# 聊天首版\n\n离线可用性待定' })).ok, true)
   assert.deepEqual((await p.rpc('prd/list', { root: p.root, reqId: second })).data[0].reqIds, [id, second])
   const original = (await p.rpc('prd/read', { root: p.root, id: draft.prdId })).data
+  assert.deepEqual(original.discoverySources, preview.sources)
   p.begin('/pwb-prd 更新已有 PRD')
   await p.tool('prdPreview', { reqIds: [id, second], prdId: draft.prdId, version: original.version, markdown: '# 新草稿\n\n同一个 AI' })
   const [card] = await p.view()
@@ -379,9 +570,94 @@ test('PRD preview, multi-requirement navigation, conflict reread and explicit sa
   assert.equal((await p.act(card, 'confirm', { markdown: '# 新草稿\n\n保留人工补充的阅读说明' })).ok, true)
   const latest = (await p.rpc('prd/read', { root: p.root, id: draft.prdId })).data
   assert.equal(latest.revision, 2)
+  assert.deepEqual(latest.discoverySources, preview.sources)
   assert.match(latest.markdown, /保留人工补充的阅读说明/)
   const requirements = (await store.scanProject(p.root)).requirements
   assert.ok(requirements.every(req => req.status === 'backlog'))
+})
+
+test('discovery reopens the same session, saves independent editions and checks project and phase', async t => {
+  const p = await setup(t)
+  await store.initProject(p.root)
+  const { id } = (await store.createRequirement(p.root, '导出订单', { q_pain: '月底需要对账' })).data
+  const { id: otherId } = (await store.createRequirement(p.root, '人工 PRD', { q_pain: '支持手工关联' })).data
+  const d = await startDiscovery(p, id)
+  const ops = [p.rpc('discovery/open', d.input), p.rpc('discovery/open', d.input)]
+  assert.deepEqual((await Promise.all(ops)).map(res => res.data.sessionId), [d.sessionId, d.sessionId])
+  assert.equal(p.prompts.length, 1)
+  assert.equal((await p.rpc('discovery/prepare', d.input)).code, 'DISCOVERY_SKILL_REQUIRED')
+  assert.equal((await p.rpc('discovery/prepare', { ...d.input, reqId: otherId })).code, 'WORKSPACE_MISMATCH')
+  firstQuestion(d)
+  assert.equal((await p.rpc('discovery/prepare', d.input)).code, 'DISCOVERY_ROUND_REQUIRED')
+  const first = await prepareRound(p, d, 2, '需要多少种风格？', '需要两种', '建议使用简洁和详细两种表达风格。')
+  assert.equal((await p.rpc('prd/generate', { root: p.root, reqIds: [id] })).code, 'DISCOVERY_SAVE_REQUIRED')
+  const failed = join(p.root, '.project', 'requirements', id, 'discovery')
+  await writeFile(failed, 'invalid directory')
+  assert.equal((await p.rpc('discovery/save', { ...d.input, ...first })).code, 'INVALID_PATH')
+  await rm(failed)
+  const saves = await Promise.all([1, 2].map(() => p.rpc('discovery/save', { ...d.input, ...first })))
+  assert.deepEqual(saves.map(res => res.data.version), [1, 1])
+  assert.equal((await p.rpc('discovery/prepare', d.input)).code, 'DISCOVERY_NO_NEW')
+  d.start(3)
+  d.user('想再讨论默认风格')
+  d.assistant('默认使用哪种风格？')
+  d.end(3)
+  const second = await prepareRound(p, d, 4, '默认使用哪种风格？', '默认简洁', '默认简洁；详细模式由用户选择。')
+  assert.equal((await p.rpc('discovery/save', { ...d.input, ...second })).data.version, 2)
+  assert.deepEqual((await p.rpc('discovery/list', d.input)).data.records.map(it => it.version), [2, 1])
+  assert.equal((await p.rpc('discovery/source', { ...d.input, version: 1 })).data.sessionId, d.sessionId)
+  const history = p.agents.get(d.sessionId).session
+  p.agents.delete(d.sessionId)
+  p.ctx.sessionQuery = { observeSession: async () => ({ header: history.header, events: history.snapshotEvents() }) }
+  assert.equal((await p.rpc('discovery/open', d.input)).data.sessionId, d.sessionId)
+  assert.equal((await p.rpc('discovery/session', d.input)).data.requirement.id, id)
+  assert.equal(p.prompts.length, 1)
+  await saveReviewPrd(p.root, id)
+  await store.moveRequirement(p.root, id, 'reviewing')
+  assert.equal((await p.rpc('discovery/open', d.input)).code, 'DISCOVERY_POOL_ONLY')
+  assert.equal((await p.rpc('discovery/save', { ...d.input, ...second, previewId: 'uncommitted' })).code, 'DISCOVERY_POOL_ONLY')
+  assert.equal((await p.rpc('discovery/save', { ...d.input, ...second })).data.version, 2)
+  const target = { root: p.root, reqIds: [id], version: 1, sessionId: p.sessionId }
+  const draft = await replyToChild(p, p.rpc('prd/generate', target), { markdown: '# 参考旧版' })
+  assert.deepEqual(draft.data.sources, [{ reqId: id, version: 1 }])
+  const otherRoot = await makeRoot(t)
+  assert.equal((await p.rpc('prd/saveGenerated', { root: otherRoot, id: draft.data.id, markdown: '# 错误工作区' })).code, 'DISCOVERY_PREVIEW_EXPIRED')
+  const saved = await p.rpc('prd/saveGenerated', { root: p.root, id: draft.data.id, markdown: '# 修改后的 PRD' })
+  assert.equal(saved.data.markdown, '# 修改后的 PRD')
+
+  await saveReviewPrd(p.root, otherId)
+  await store.moveRequirement(p.root, otherId, 'reviewing')
+  assert.equal((await p.rpc('prd/generate', { root: p.root, reqIds: [otherId] })).code, 'DISCOVERY_POOL_ONLY')
+})
+
+test('ordinary chat cannot qualify and a retried Grill Me turn needs valid message evidence', async t => {
+  const p = await setup(t)
+  await store.initProject(p.root)
+  const { id } = (await store.createRequirement(p.root, '导出', { q_pain: '按筛选结果导出' })).data
+  const d = await startDiscovery(p, id)
+  firstQuestion(d, false)
+  d.start(2)
+  d.user('只导出筛选结果')
+  d.assistant('建议保留当前筛选条件')
+  d.end(2)
+  assert.equal((await p.rpc('discovery/prepare', d.input)).code, 'DISCOVERY_SKILL_REQUIRED')
+  assert.equal(p.children.length, 0)
+  d.start(3)
+  d.user('/' + discoverySkillName)
+  d.user(discoverySkillMarker, { kind: 'skill-invocation', name: discoverySkillName })
+  d.assistant('导出字段有哪些？')
+  d.end(3)
+  d.start(4)
+  d.user('订单号和金额')
+  d.assistant('建议首版只保留订单号和金额。')
+  d.end(4)
+  const prepared = await replyToChild(p, p.rpc('discovery/prepare', d.input), {
+    ready: true,
+    round: [1, 3, 2],
+    markdown: '## 已确认结论\n不应保存',
+  })
+  assert.equal(prepared.code, 'DISCOVERY_AI_FAILED')
+  assert.deepEqual((await p.rpc('discovery/list', d.input)).data.records, [])
 })
 
 test('PRD rejects a redirected project data directory', async t => {
@@ -389,9 +665,10 @@ test('PRD rejects a redirected project data directory', async t => {
   const other = await makeRoot(t)
   await store.initProject(p.root)
   const id = (await store.createRequirement(p.root, '聊天', { q_pain: '两种风格' })).data.id
+  await saveDiscovery(p, id)
   await mkdir(join(other, 'prd'))
   await symlink(join(other, 'prd'), join(p.root, '.project', 'prds'))
   p.begin('/pwb-prd')
-  await p.tool('prdPreview', { reqIds: [id], markdown: '# 聊天首版' })
+  await replyToChild(p, p.tool('prdCreate', { reqIds: [id] }), { markdown: '# 聊天首版' })
   assert.equal((await p.act((await p.view())[0], 'confirm', { markdown: '# 聊天首版' })).code, 'INVALID_PATH')
 })

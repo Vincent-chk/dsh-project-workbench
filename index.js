@@ -1,7 +1,7 @@
 import { handleRequest } from './core/rpc.js'
 import { installConversation } from './core/conversation.js'
 import { archRenderErrorKeys, workbenchContentLocale } from './client-src/workbench-content.js'
-import { loadOpenWikiSkill } from './core/skill.js'
+import { loadDiscoverySkill, loadOpenWikiSkill } from './core/skill.js'
 import { spawnProbe, spawnWikiProbe, startWikiGeneration, startSyncRun, parseSyncOutput, startArchitectureRun, parseArchOutput, startArchitectureRepair, consumeChildToolAllow } from './core/spawn.js'
 import * as store from './core/store.js'
 import { wikiJobCompleted, wikiStatus } from './core/wiki.js'
@@ -17,6 +17,7 @@ import { installTools } from './core/tools.js'
 import { installDelivery } from './core/delivery.js'
 import { installAssist } from './core/assist.js'
 import { installAcceptanceAssist } from './core/acceptance-assist.js'
+import { installDiscovery } from './core/discovery.js'
 import { installRequirementReview } from './core/requirement-review.js'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -53,6 +54,8 @@ export async function apply(ctx) {
   }), 'project-workbench: project write and linked-task read guard')
   const openWikiSkill = await loadOpenWikiSkill()
   ctx.effect(() => ctx.skills.register(openWikiSkill), 'project-workbench: OpenWiki skill')
+  const discoverySkill = await loadDiscoverySkill()
+  ctx.effect(() => ctx.skills.register(discoverySkill), 'project-workbench: Grill Me skill')
   ctx.effect(() => ctx.mcpManager.register('openwiki', {
     transport: 'stdio',
     command: 'npx',
@@ -69,7 +72,10 @@ export async function apply(ctx) {
   const acceptanceAssist = installAcceptanceAssist(ctx, { readOnlyChildren, links })
   const requirementReview = installRequirementReview(ctx, { readOnlyChildren })
   installTools(ctx, links)
-  const workbenchRoutes = { ...links.routes, ...assist.routes, ...delivery.routes, ...acceptanceAssist.routes, ...requirementReview.routes }
+  const discovery = installDiscovery(ctx, { readOnlyChildren })
+  const workbenchRoutes = {
+    ...links.routes, ...assist.routes, ...delivery.routes, ...acceptanceAssist.routes, ...requirementReview.routes, ...discovery.routes,
+  }
   // Every terminal-task entry (RPC confirm/move AND proposal adoption) fires the
   // same store trigger, so the automatic delivery summary cannot be bypassed.
   ctx.effect(() => store.onTaskTerminal((root, reqId) => void delivery.maybeSubmit(root, reqId)), 'project-workbench: delivery trigger')
@@ -388,7 +394,7 @@ export async function apply(ctx) {
     status: async input => (await status(input)).json(),
   })
   Object.assign(workbenchRoutes, installConversation(ctx, {
-    links, routes: workbenchRoutes,
+    links, discovery, routes: workbenchRoutes,
     resources: { wiki: resource(startWiki, statusWiki), arch: resource(startArchitecture, statusArchitecture) },
   }))
 

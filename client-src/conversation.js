@@ -1,6 +1,7 @@
 import React from 'react'
 import { Button, IconCloseOutlineRegular, IconWarningOutlineRegular, Modal, Toast } from '@deepseek-ai/dsh-client-ui-primitives'
 import { rpc } from './api.js'
+import { discoveryReference } from './discovery.js'
 import { projectIdOf } from './project-state.js'
 import { normalizeViewState, openDetail, statusPage } from './shell/nav-state.js'
 import { generationStartMessage } from './pages/resources.js'
@@ -278,7 +279,7 @@ function ConversationAction({ card, t, sessionId, uiMemory, error, perform, open
       open: expanded, onClose: close, title: card.title, closeLabel: t('pwbDismiss'), footer,
       className: 'pw-conversation-dialog' + (isPrd ? ' pw-prd-editor' : ''),
       contentClassName: 'pw-conversation-dialog-content', tone: card.kind === 'remove' ? 'warning' : undefined,
-      description: isPrd ? card.requirements.join(' · ') : confirmation ? t(confirmation) : card.evidence || canConfirm ? card.message : undefined,
+      description: isPrd ? (card.sources ? t('discoveryPrdSource') + ' · ' + discoveryReference(t, card.requirements, card.sources) : card.requirements.join(' · ')) : confirmation ? t(confirmation) : card.evidence || canConfirm ? card.message : undefined,
     },
     card.kind === 'note' && h('p', null, card.message),
     card.evidence && h(TaskEvidence, { data: card.evidence, t }),

@@ -1,6 +1,7 @@
 import React from 'react'
 import { aiReviewReports, changesReviewedRequirement, requirementOverview } from '../../core/state.js'
 import { rpc } from '../api.js'
+import { DiscoveryRecords, useDiscoveryRecords } from '../discovery.js'
 import { reqDraftKey, reqDraftFrom, issueDraftFrom, issueDraftKey, draftOf, sameDraft } from '../project-state.js'
 import { isRequirementSplit, progressRecords, requirementLogEntries, requirementResult, reviewRecords } from '../workbench-content.js'
 import { ISSUE_MOVES, sortedTasks } from '../shell/nav-state.js'
@@ -117,7 +118,8 @@ function TaskSuggestionReview({ review, req, t, onOpenIssue, hasDrafts, hasLegac
         (hasLegacy || error) && h('button', { type: 'button', className: 'pw-button pw-quiet', disabled: pending, onClick: () => onReview() }, t('splitRetry'))))
 }
 
-export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenIssue, onCreateTask, projectKey, rootRef, onDirty, busy, sessionId, setModal, uiMemory, onReorderTask, onStartTask, onApprove, onReject, onMove, initialPrdId, initialDelivery, focusTarget, renderPrds, restorePrds, onClosePrds, modalActive }) {
+export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenIssue, onCreateTask, projectKey, rootRef, onDirty, busy, sessionId, setModal, uiMemory, onReorderTask, onStartTask, onApprove, onReject, onMove, initialPrdId, initialDelivery, focusTarget, renderPrds, restorePrds, onClosePrds, modalActive, openDiscovery }) {
+  const discovery = useDiscoveryRecords(root, req.id)
   const layoutKey = reqDraftKey(projectKey, req.id)
   const form = useWorkItemDraft(layoutKey, req, reqDraftFrom, onDirty, uiMemory)
   const [arranging, setArranging] = useState(false)
@@ -140,6 +142,10 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
   const closeDrawer = () => {
     if (drawer?.id === 'prds') onClosePrds?.()
     setDrawer(null)
+  }
+  const generatePrd = version => {
+    if (drawer?.id === 'discovery') closeDrawer()
+    setModal({ kind: 'discoveryPrd', reqId: req.id, version })
   }
   const openPrdManagement = () => {
     closeDrawer()
@@ -322,6 +328,11 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
           h('button', { type: 'button', className: 'pw-button', disabled: busy, onClick: form.finish }, t('cancel'))))
         : h(React.Fragment, null, h(RequirementOverview, { req, t }), mode === 'organize' && drafts),
     },
+    discovery: {
+      label: t('discoveryRecords'),
+      summary: discovery.result?.data?.records?.length ? t('reqReviewCount').replace('{n}', String(discovery.result.data.records.length)) : undefined,
+      body: h(DiscoveryRecords, { ...discovery, t, busy, openSource: version => openDiscovery(req.id, version), generatePrd }),
+    },
     prds: {
       label: t('reqRelatedPrds'), summary: prdSummary ?? t('reqLoadingPrds'),
       body: renderPrds(setPrdSummary, { manage: true }),
@@ -366,6 +377,7 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
   }
   const readOnlyBodies = {
     basic: h(RequirementOverview, { req, t }),
+    discovery: blocks.discovery.body,
     prds: h(React.Fragment, null,
       h('div', { className: 'pw-req-drawer-actions' },
         h('button', { type: 'button', className: 'pw-button pw-quiet', onClick: openPrdManagement }, t('reqManagePrds'))),
@@ -384,9 +396,10 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
     tasks: h(IssueSidebar, { req, t, onOpenIssue, busy, readOnly: true }),
     log: blocks.log.body,
   }
-  const rail = order.filter(id => id !== mainBlock || ['review', 'delivery'].includes(id)).map(id => {
+  const rail = order.flatMap(id => id === 'prds' ? ['discovery', id] : [id])
+    .filter(id => id !== mainBlock || ['review', 'delivery'].includes(id)).map(id => {
     const block = blocks[id]
-    const summary = ['prds', 'review', 'tasks'].includes(id) ? block.summary : undefined
+    const summary = ['discovery', 'prds', 'review', 'tasks'].includes(id) ? block.summary : undefined
     return h(ReadingLink, {
       key: id, id: 'pw-req-read-' + id, label: block.label, summary,
       onClick: event => showDrawer(id, event.currentTarget),
@@ -433,6 +446,10 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
         h('span', { className: 'pw-count pw-read-status', 'data-status': req.status }, t('col_' + req.status)),
         req.updated && h('span', { className: 'pw-note' }, t('updated'), ' ', dateText(req.updated))),
       !arranging && !managePrds && h('div', { className: 'pw-actions pw-req-head-actions' },
+        !editing && req.status === 'backlog' && h(React.Fragment, null,
+          h('button', { type: 'button', className: 'pw-button', disabled: busy, onClick: () => openDiscovery(req.id) },
+            t(discovery.result?.data?.sessionId ? 'discoveryContinue' : 'discoveryStart')),
+          h('button', { type: 'button', className: 'pw-button', disabled: busy, onClick: () => generatePrd() }, t('discoveryPrd'))),
         regular && transitionButton,
         canEdit && !form.editing && h('button', { type: 'button', className: 'pw-button', onClick: () => {
           closeDrawer()

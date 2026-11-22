@@ -1,6 +1,6 @@
 {
   "name": "dsh-project-workbench",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "A file-backed project requirements, tasks, reviews and acceptance workbench for DeepSeek Harness.",
   "author": "Vincent-chk",
   "license": "MIT",
@@ -45,7 +45,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --test",
-    "check": "node --check index.js && node --check client.js && node --check core/files.js && node --check core/rpc.js && node --check core/conversation-commands.js && node --check core/conversation.js && node --check core/prd.js && node --check core/skill.js && node --check core/spawn.js && node --check core/frontmatter.js && node --check core/state.js && node --check core/derive.js && node --check core/store.js && node --check core/git.js && node --check core/wiki.js && node --check core/wiki-staging.js && node --check core/wiki-publish.js && node --check core/extract.js && node --check core/write-guard.js && node --check core/link.js && node --check core/sync.js && node --check core/events.js && node --check core/tools.js && node --check core/delivery.js && node --check core/assist.js && node --check core/prototype.js && node --check core/live-probe.js && node --check bin/check.js && node scripts/build.mjs --check"
+    "check": "node --check index.js && node --check client.js && node --check core/files.js && node --check core/rpc.js && node --check core/conversation-commands.js && node --check core/conversation.js && node --check core/discovery.js && node --check core/prd.js && node --check core/skill.js && node --check core/spawn.js && node --check core/frontmatter.js && node --check core/state.js && node --check core/derive.js && node --check core/store.js && node --check core/git.js && node --check core/wiki.js && node --check core/wiki-staging.js && node --check core/wiki-publish.js && node --check core/extract.js && node --check core/write-guard.js && node --check core/link.js && node --check core/sync.js && node --check core/events.js && node --check core/tools.js && node --check core/delivery.js && node --check core/assist.js && node --check core/prototype.js && node --check core/live-probe.js && node --check bin/check.js && node scripts/build.mjs --check"
   },
   "dsh": {
     "bundle": {

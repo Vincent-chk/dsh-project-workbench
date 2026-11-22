@@ -13,21 +13,21 @@ import * as store from './store.js'
 
 const stop = /^(?:取消(?:这次操作)?|算了|到此为止|先聊别的|换个话题|不用了)[。！.!]?$/u
 const noWrite = /(?:先(?:别|不要|不用)(?:记录|记|保存|写入|修改|同步)|只读|先讨论|先聊聊|别保存|别记|不要保存|不写入|不要修改|\bread.only\b|\b(?:don't|do not)\s+(?:save|write|record)\b)|^(?:为什么|为何|如何|怎么|怎样|why\b|how\b)/iu
-const followOnly = new Set(['read', 'addRequirement', 'editRequirement', 'addTask', 'taskRecord', 'recordUpdate', 'prdPreview', 'remember', 'finish'])
+const followOnly = new Set(['read', 'addRequirement', 'editRequirement', 'addTask', 'taskRecord', 'recordUpdate', 'prdCreate', 'prdPreview', 'remember', 'finish'])
 const groups = {
   help: ['read', 'status', 'resourceStatus'],
   status: ['read', 'status', 'resourceStatus'],
   requirement: ['read', 'addRequirement', 'editRequirement', 'removeRequirement', 'restoreRequirement', 'remember', 'finish'],
   task: ['read', 'split', 'addTask', 'taskStart', 'taskRecord', 'taskSubmit', 'taskReview', 'taskConfirm', 'remember', 'finish'],
   update: ['read', 'recordUpdate', 'remember', 'finish'],
-  prd: ['read', 'prdPreview', 'remember', 'finish'],
+  prd: ['read', 'prdCreate', 'prdPreview', 'remember', 'finish'],
   'wiki-update': ['generate', 'resourceStatus'],
   'architecture-update': ['generate', 'resourceStatus'],
 }
 const actions = [...new Set(Object.values(groups).flat())]
 const mentionActions = actions.filter(action => action !== 'recordUpdate')
 const generating = new Set(['starting', 'running', 'stopping'])
-const writes = new Set(['addRequirement', 'editRequirement', 'removeRequirement', 'restoreRequirement', 'split', 'addTask', 'taskStart', 'taskRecord', 'taskSubmit', 'recordUpdate', 'generate'])
+const writes = new Set(['addRequirement', 'editRequirement', 'removeRequirement', 'restoreRequirement', 'split', 'addTask', 'taskStart', 'taskRecord', 'taskSubmit', 'recordUpdate', 'prdCreate', 'generate'])
 const reqFields = ['title', 'overview', 'goal', 'scope', 'acceptance', 'audience']
 const reqFieldKeys = { title: 'title', overview: 'q_pain', goal: 'goal', scope: 'scope', acceptance: 'acceptance', audience: 'q_who' }
 const taskFields = ['title', 'overview', 'acceptance', 'steps']
@@ -107,7 +107,7 @@ function assertProjectWritable(project) {
   if (project.project.schema > store.SUPPORTED_SCHEMA) throw new WorkbenchError('SCHEMA_TOO_NEW', '请升级工作台后再编辑该项目。')
 }
 
-export function installConversation(ctx, { links, routes, resources }) {
+export function installConversation(ctx, { links, discovery, routes, resources }) {
   const sessions = new WeakMap()
   function stateOf(session) {
     if (!sessions.has(session)) sessions.set(session, { active: null, waiting: null, target: null, card: null, prd: null, resources: new Map() })
@@ -264,7 +264,8 @@ export function installConversation(ctx, { links, routes, resources }) {
       return { requirement: publicReq(req), task: issue && publicTask(req, issue), prds: await listPrds(root, req.id) }
     }
     const { link } = await links.getLink(root, agent.session.id)
-    const req = requirements.find(item => item.id === link?.reqId)
+    const bound = !link && await discovery.forSession(root, agent.session.id)
+    const req = requirements.find(item => item.id === (link?.reqId ?? bound?.id))
     const issue = req?.issues.find(item => item.id === link?.issueId)
     return { currentRequirement: req && publicReq(req), currentTask: issue && publicTask(req, issue),
       requirements: requirements.slice(0, 100).map(({ id, title, status }) => ({ id, title, status: states[status] ?? status })),
@@ -332,22 +333,30 @@ export function installConversation(ctx, { links, routes, resources }) {
       state.waiting = { kind: turn.kind, target: state.target, readOnly: turn.readOnly, time: Date.now() }
       return { ...data, title: req.title, message: state.card.message }
     }
-    if (action === 'prdPreview') {
-      const current = args.prdId ? await readPrd(root, args.prdId) : null
-      if (current && current.version !== args.version) throw new WorkbenchError('PRD_CONFLICT', '请先读取现有 PRD，再基于该版本生成预览。')
-      const reqIds = current?.reqIds ?? (args.reqIds?.length
-        ? [...new Set(args.reqIds)] : [(await selected(agent, state, args, project)).req.id])
-      validatePrdDraft(reqIds, args.markdown)
-      if (!current && (reqIds.some(id => !project.requirements.some(req => req.id === id))
-        || (turn.followUp && turn.target && !reqIds.includes(turn.target.reqId)))) {
-        throw new WorkbenchError('REQ_REQUIRED', '请选择本次 PRD 所属的当前项目需求。')
+    if (action === 'prdCreate') {
+      const bound = !args.reqIds?.length && !args.reqId && await discovery.forSession(root, sessionId)
+      const reqIds = args.reqIds?.length ? [...new Set(args.reqIds)] : [bound?.id ?? (await selected(agent, state, args, project)).req.id]
+      if (turn.followUp && turn.target && !reqIds.includes(turn.target.reqId)) {
+        throw new WorkbenchError('TARGET_CHANGED', '本轮只跟进刚才的需求。')
       }
-      const prdId = current?.id ?? 'prd-' + randomUUID()
+      const draft = await discovery.preparePrd({ root, reqIds, sessionId, request: args.text })
+      signal?.throwIfAborted()
+      state.target = { reqId: reqIds[0] }
+      show(state, { kind: 'prd', root, title: draft.markdown.split(/\r?\n/)[0].replace(/^#\s+/, ''),
+        markdown: draft.markdown, prdId: draft.id, reqIds, requirements: draft.requirements, sources: draft.sources })
+      return { message: '已准备可编辑的 PRD 草稿，请用户在会话中预览及保存。', reqIds, prdId: draft.id }
+    }
+    if (action === 'prdPreview') {
+      if (!args.prdId) throw new WorkbenchError('DISCOVERY_REQUIRED', '新建 PRD 请使用 prdCreate。每条需求须先保存一轮 Grill Me 深挖记录。')
+      const current = await readPrd(root, args.prdId)
+      if (current.version !== args.version) throw new WorkbenchError('PRD_CONFLICT', '请先读取现有 PRD，再基于该版本生成预览。')
+      const { reqIds } = current
+      validatePrdDraft(reqIds, args.markdown)
       if (reqIds.length) state.target = { reqId: reqIds[0] }
       show(state, { kind: 'prd', root, title: args.markdown.trim().split(/\r?\n/)[0].replace(/^#\s+/, ''),
-        markdown: args.markdown, updating: !!current, version: current?.version, prdId, reqIds,
+        markdown: args.markdown, updating: true, version: current.version, prdId: current.id, reqIds,
         requirements: project.requirements.filter(req => reqIds.includes(req.id)).map(req => req.title) })
-      return { message: '已准备可编辑的 PRD 草稿，请用户在会话中预览及保存。', reqIds, prdId }
+      return { message: '已准备可编辑的 PRD 草稿，请用户在会话中预览及保存。', reqIds, prdId: current.id }
     }
     if (action === 'restoreRequirement') {
       await safePath(root, ['.project', '.local', 'trash'], true)
@@ -604,7 +613,7 @@ export function installConversation(ctx, { links, routes, resources }) {
         '用 read 查需求与任务。query 按需求标题搜索，reqId 或 issueId 可读取具体对象。匹配多个时请用户选。先看真实状态，再解释哪些操作可用。',
         '新建需求须有用户已表达的标题和概述。用 addRequirement 的 fields.title 与 fields.overview。补充用 editRequirement，并在字段中保留原文已有信息。只保存明确表达的决定。',
         '验收用 taskReview 核对真实标准和证据。允许 taskConfirm 打开人工确认入口。任务结果只记录真实已完成及已核实的事实。改代码、测试或执行任务使用工作台现有开始入口。',
-        '写 PRD 用 read 的 reqIds 读取已选需求，再调用 prdPreview，提供 reqIds 和有一级标题的 Markdown。包括用户、问题、首版范围、完成标准和待定项。只有需求或本会话中用户明确表达的决定才能写成已定范围；不得把推测或常见做法写成用户决定。完成标准须逐条有用户明确确认的依据，依据不足的标准一律标注为建议、待用户确认，即使相关功能已经确定也不能推定其具体标准。问题和用户痛点须有用户原话或需求记录作为依据，无法证实的描述标注待确认，不要虚构现有工具的问题。可以提出合理建议，但须明确标注为建议或待确认，并将缺少依据、会影响范围的事项列为待定，不要自行决定。更新已有文档时先确定用户要更新的文档。如需查找整个项目的文档（包括未关联需求的 PRD），用 read 且 query 为 *。有多个候选时请用户选择。用 prdId 读取当前正文和 version，再用同一 prdId 和 version 预览覆盖更新。保存由用户在界面确认。',
+        '新建 PRD 先用 read 核对需求，归属不明确时请用户选择，然后调用 prdCreate 提供 reqIds。可在 text 提供用户的附加说明。只用该工具返回的结果告知用户草稿状态。遇到缺少一轮已保存的深挖或还未整理时，向用户转述提示，不得另行生成 PRD。更新已有 PRD 时先确认具体文档，可用 read 且 query 为 * 查找列表，再用 prdId 读取当前正文及 version。用同一 prdId 和 version 调用 prdPreview 预览更新。更新时，只有需求或用户明确表达的决定才能写成已定范围。依据不足的完成标准和无法证实的问题要标注待确认，不虚构现有工具的问题。保存须由用户在界面确认。',
         '只讨论、询问可行性或只读时使用读取操作。generate 必须是用户明确要求生成 Wiki 或架构图。type 用 wiki 或 arch。查询进度用 resourceStatus。',
         '若要追问用户并继续本次工作，请在回复前调用 remember。知道对象时传入 reqId 或 issueId。用户答复时沿用原对象。换题时调用 finish。只向用户报告已成功的写入，失败时解释原因。',
         active.followUp ? '本轮是对上次追问的回答。只处理与上次同一件事的内容，无法确定时先问清。' : '',
@@ -673,9 +682,9 @@ export function installConversation(ctx, { links, routes, resources }) {
           if (action !== 'confirm') throw new WorkbenchError('ACTION_NOT_AVAILABLE', '该操作已不可用。')
           let result
           if (card.kind === 'prd') {
-            const doc = await savePrd(card.root, {
-              id: card.prdId, markdown, version: card.version, ...(card.updating ? {} : { reqIds: card.reqIds }),
-            })
+            const doc = card.updating
+              ? await savePrd(card.root, { id: card.prdId, markdown, version: card.version })
+              : await discovery.confirmPrd({ root: card.root, id: card.prdId, markdown })
             result = { message: '已保存 PRD。', prdId: doc.id }
             if (state.prd === card) state.prd = null
             show(state, { kind: 'open', root: card.root, title: doc.title, reqId: doc.reqIds[0], prdId: doc.id, message: result.message })

@@ -166,7 +166,8 @@ export function RequirementLayout({ blocks, layoutKey, status, uiMemory, t, focu
     h('button', { type: 'button', className: 'pw-button primary', onClick: () => finish(true) }, t('reqFinishOrder')),
     h('button', { type: 'button', className: 'pw-button', onClick: () => finish(false) }, t('cancel')),
     h('button', { type: 'button', className: 'pw-button pw-quiet', onClick: () => setDraft(requirementBlockOrder()) }, t('reqRestoreOrder'))),
-  displayedOrder.map((id, index) => {
+  (arranging || !blocks.discovery ? displayedOrder : displayedOrder.flatMap(id => id === 'prds' ? ['discovery', id] : [id]))
+  .map((id, index) => {
     const { label, summary, body } = blocks[id]
     const movable = movableRequirementBlocks.includes(id)
     const moveLabel = action => t('reqMoveBlock').replace('{action}', t(action)).replace('{section}', label)

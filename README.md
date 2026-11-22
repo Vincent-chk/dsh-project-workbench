@@ -5,13 +5,14 @@
 ![项目工作台：项目导航与六列需求看板](docs/preview.svg)
 
 > [!NOTE]
-> 本指南适用于项目工作台 `0.1.5`。插件要求 DeepSeek Harness `0.2.2-rc.3` 或更新版本，建议使用 Desktop `0.2.2-rc.5` 或更新版本。
+> 本指南适用于项目工作台 `0.1.6`。插件要求 DeepSeek Harness `0.2.2-rc.3` 或更新版本，建议使用 Desktop `0.2.2-rc.5` 或更新版本。
 >
 > 目前已适配 macOS，Windows 设备的兼容性正在逐步完善中。
 
 ## 它能帮你做什么
 
 - 📋 **记录和评审需求**。在需求详情关联 PRD、发起 AI 辅助评审并查看报告，由你决定是否进入开发。
+- 💬 **深挖需求并起草 PRD**。在会话中回答 Grill Me 的问题，核对并保存整理稿，再让 AI 生成一份可编辑的 PRD 初稿。
 - 🕒 **从日志追溯动态**。在需求详情查看需求流转和下属任务的变化，点开对应的报告、决定或任务。
 - 🗂️ **管理任务**：把需求拆成任务，在看板上查看进度、阻塞和风险。
 - 🤖 **让 AI 处理任务**：你可以从会话或工作台发起任务处理。
@@ -23,7 +24,7 @@
 
 ### 在桌面版中添加（推荐）
 
-1. 下载并解压 `dsh-project-workbench-0.1.5.zip`。[下载 0.1.5 安装包](https://github.com/Vincent-chk/dsh-project-workbench/releases/download/v0.1.5/dsh-project-workbench-0.1.5.zip)
+1. 下载并解压 `dsh-project-workbench-0.1.6.zip`。[下载 0.1.6 安装包](https://github.com/Vincent-chk/dsh-project-workbench/releases/download/v0.1.6/dsh-project-workbench-0.1.6.zip)
 2. 在 DeepSeek Harness 左侧打开 **插件 → 添加插件**，选择解压后直接包含 `package.json` 的 `dsh-project-workbench` 文件夹。
 3. 安装完成后，在 **插件 → 已安装** 中打开 **项目工作台** 的启用开关。
 4. 在 DSH 左侧点击 **项目工作台**。如果左侧入口暂未出现，重启 DSH 后再打开。
@@ -35,7 +36,7 @@
 如果你已用 DSH CLI 管理插件，可按配置安装固定版本。下面以 `desktop` 配置为例。
 
 ```sh
-dsh plugin --profile desktop add 'github:Vincent-chk/dsh-project-workbench#v0.1.5'
+dsh plugin --profile desktop add 'github:Vincent-chk/dsh-project-workbench#v0.1.6'
 ```
 
 ## 第一次打开项目工作台
@@ -43,6 +44,14 @@ dsh plugin --profile desktop add 'github:Vincent-chk/dsh-project-workbench#v0.1.
 1. 在左侧打开 **项目工作台**，选择你要管理的工作区。首次使用该工作区时，点击 **启用项目管理**。
 2. 进入 **需求池 → 新建需求**，填写标题和需求概述并保存。
 3. 在 **需求池** 点击需求标题即可打开需求详情。也可以从 **看板** 点击同一张需求卡片进入。
+
+## 需求深挖与 AI 起草 PRD
+
+1. 在需求池打开需求详情，点击「开始深挖」。在原生会话中回答 Grill Me 的提问，等 AI 给出深化建议。
+2. 在会话右侧查看 Grill Me 问题与已回复标记。点击底部「结束头脑风暴，整理需求」，核对预览并保存为一个版本。后续可从「继续深挖」回到原会话。
+3. 在需求详情点击「AI 辅助 PRD 生成」，或展开「深挖需求记录」后选择指定版本。核对草稿再保存。
+
+AI 新建 PRD 前，每个关联需求都需要一版已确认保存的深挖记录。需求流转后仍可读取记录和起草 PRD。手工创建和 AI 更新已有 PRD 使用原有流程。
 
 ## 需求详情与资料
 
@@ -93,7 +102,7 @@ flowchart LR
 | `/pwb-requirement` | 查找、记录、完善、移除或恢复需求草稿 |
 | `/pwb-task` | 建议拆分、新建、开始、记录结果、提交或核对验收 |
 | `/pwb-update` | 把当前会话的新进展和已确认决定记到关联任务的进展记录，也可指定需求或任务 |
-| `/pwb-prd` | 从已有需求生成 PRD 草稿，或更新一份已有 PRD |
+| `/pwb-prd` | 从已保存的深挖记录生成新 PRD 草稿，或更新一份已有 PRD |
 | `/pwb-wiki-update` | 按现有 Git 条件生成或更新 Wiki，可带「查看进度」 |
 | `/pwb-architecture-update` | 用本地源码更新架构图，可带「查看进度」 |
 | `/pwb-status` | 查看项目进展、阻塞和待确认事项 |

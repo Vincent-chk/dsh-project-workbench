@@ -1,7 +1,9 @@
 import React from 'react'
+import { Modal as DiscoveryModal } from '@deepseek-ai/dsh-client-ui-primitives'
 import { MainShell } from './shell/main-shell.js'
 import { prdLocale } from './pages/prds.js'
 import { prdEditorLocale } from './forms/prd-form.js'
+import { discoveryLocale } from './discovery.js'
 import { TaskPane, rightbarLocale } from './rightbar/task-pane.js'
 import { workbenchContentLocale } from './workbench-content.js'
 import { acceptanceAssistLocale } from './detail/acceptance-assist.js'
@@ -20,6 +22,7 @@ import { ConversationDock, conversationLocale, workbenchMentionSource } from './
     const en = {
       ...workbenchContentLocale.en,
       ...rightbarLocale.en,
+      ...discoveryLocale.en,
       ...acceptanceAssistLocale.en,
       ...requirementReviewLocale.en,
       ...requirementContentLocale.en,
@@ -135,6 +138,7 @@ import { ConversationDock, conversationLocale, workbenchMentionSource } from './
     const zh = {
       ...workbenchContentLocale.zh,
       ...rightbarLocale.zh,
+      ...discoveryLocale.zh,
       ...acceptanceAssistLocale.zh,
       ...requirementReviewLocale.zh,
       ...requirementContentLocale.zh,
@@ -312,6 +316,37 @@ import { ConversationDock, conversationLocale, workbenchMentionSource } from './
 .pw-disclosure summary:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
 .pw-result{border:1px solid var(--dsw-alias-border-l3);border-radius:8px;padding:10px;margin:6px 0;min-width:0}
 .pw-task-pane{overflow:auto;display:block;padding:10px 12px 16px}
+.pw-discovery-pane{display:flex;flex-direction:column;block-size:100%;gap:12px;min-height:0;min-width:0}
+.pw-discovery-header{display:flex;flex:none;align-items:center;justify-content:space-between;gap:4px 12px;flex-wrap:wrap}
+.pw-discovery-header h3{margin:0;font-size:16px;overflow-wrap:anywhere}
+.pw-discovery-qa{flex:1;min-height:0;min-width:0;overflow:auto;overscroll-behavior:contain;border:1px solid var(--dsw-alias-border-l3);border-radius:10px;background:var(--dsw-alias-bg-layer-1);padding:8px}
+.pw-discovery-qa h4{margin:2px 8px 8px;font-size:13px}
+.pw-discovery-qa>.pw-note{margin:8px}
+.pw-discovery-item{--pw-discovery-columns:1em 2.6em minmax(0,1fr) 12px}
+.pw-discovery-item+.pw-discovery-item{border-top:1px solid var(--dsw-alias-border-l3);margin-top:4px;padding-top:4px}
+.pw-discovery-row,.pw-discovery-options:not([hidden]){display:grid;grid-template-columns:var(--pw-discovery-columns);align-items:start;gap:8px;padding:8px;line-height:1.5}
+.pw-discovery-row{width:100%;border:0;border-radius:5px;background:none;color:inherit;font:inherit;line-height:1.5;text-align:start}
+button.pw-discovery-row{cursor:pointer}
+button.pw-discovery-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.pw-discovery-chevron{width:6px;height:6px;margin:7px auto 0;border-inline-end:1px solid currentColor;border-block-end:1px solid currentColor;transform:rotate(-45deg);color:var(--dsw-alias-label-secondary)}
+.pw-discovery-row[aria-expanded="true"] .pw-discovery-chevron{transform:rotate(45deg)}
+.pw-discovery-qa:focus-visible,button.pw-discovery-row:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
+.pw-discovery-status{text-align:center;color:var(--dsw-alias-state-success-primary);font-weight:700}
+.pw-discovery-label{overflow-wrap:anywhere;color:var(--dsw-alias-label-secondary);font-weight:600}
+.pw-discovery-label small{display:block;font-size:.78em;font-weight:400}
+.pw-discovery-line{min-width:0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;overflow-wrap:anywhere;white-space:pre-line}
+.pw-discovery-row[aria-expanded="true"] .pw-discovery-line{display:block}
+.pw-discovery-options:not([hidden]){padding-block-start:0}
+.pw-discovery-choices{grid-column:3;display:grid;gap:6px;margin:0;padding:0;list-style:none;min-width:0}
+.pw-discovery-choices li{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px;overflow-wrap:anywhere;white-space:pre-line}
+.pw-discovery-option-label{min-width:1.5em;color:var(--dsw-alias-label-secondary);font-weight:600}
+.pw-discovery-footer{flex:none;min-width:0;overflow-wrap:anywhere}
+.pw-discovery-footer>.pw-button{max-width:100%}
+.pw-discovery-footer>.pw-note{margin:6px 0 0}
+.pw-discovery-dialog.pw-discovery-dialog{width:min(620px,100%);max-height:100%;overflow-wrap:anywhere}
+.pw-discovery-dialog-content{min-height:0;overflow:auto}
+.pw-discovery-dialog .pw-field{display:block}
+.pw-discovery-dialog .pw-textarea{box-sizing:border-box;max-height:46dvh}
 .pw-result ul{padding-inline-start:20px}
 .pw-card:hover{border-color:var(--dsw-alias-border-l1);transform:translateY(-1px)}
 .pw-card:active{cursor:grabbing}
@@ -750,7 +785,10 @@ export default {
             id: '@local/project-workbench/right', kind: PANEL_ID, title: () => t('panel'),
             guide: [{ id: PANEL_ID, order: 20, title: () => t('panel'), description: () => t('fallbackDescription'), icon: WorkbenchIcon }],
           }), 'project-workbench: right tab type')
-          right.slots.inject('sidebar.right.pane.tab', () => right.slots.register({ name: 'sidebar.right.pane.tab', key: '@local/project-workbench/right', locale: NS, inject: () => injected() }, TaskPane))
+          right.slots.inject('sidebar.right.pane.tab', () => right.slots.register({
+            name: 'sidebar.right.pane.tab', key: '@local/project-workbench/right', locale: NS,
+            inject: () => ({ ...injected(), DiscoveryModal }),
+          }, TaskPane))
         })
       },
     }

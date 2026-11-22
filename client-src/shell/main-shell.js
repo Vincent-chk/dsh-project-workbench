@@ -1,6 +1,7 @@
 import React from 'react'
 import { changesReviewedRequirement, startBlockers } from '../../core/state.js'
 import { rpc } from '../api.js'
+import { DiscoveryPrdDialog } from '../discovery.js'
 import { projectIdOf, reqDraftKey, issueDraftKey, reqDraftFrom, issueDraftFrom, taskContentPatch, taskFormError, freshRead, classifyProject, deliveryFingerprint } from '../project-state.js'
 import { workbenchError } from '../workbench-content.js'
 import { ErrorDetails, LeaveModal } from '../shared/ui.js'
@@ -524,6 +525,13 @@ export function MainShell(props) {
     if (res.ok) await enterSession(res.data.sessionId)
     else setError(res)
   })
+  const openDiscovery = (reqId, version) => guardLeave(async () => {
+    const requested = root
+    const res = await rpc(version === undefined ? 'discovery/open' : 'discovery/source', { root: requested, reqId, version })
+    if (rootRef.current !== requested) return
+    if (res.ok) await enterSession(res.data.sessionId)
+    else setError(res)
+  })
   // 开始/继续处理：补齐检查 → 定位 → run/start（一次请求）→ 进入会话与右栏。
   const startTask = (reqId, issueId) => guardLeave(async () => {
     const requested = root
@@ -845,7 +853,7 @@ export function MainShell(props) {
     })
   } else if (selected) {
     content = h(DetailPanel, {
-      key: projectKey + ':' + selected.id, req: selected, t, root, mutate, moveIssue, projectKey, rootRef,
+      key: projectKey + ':' + selected.id, req: selected, t, root, mutate, moveIssue, projectKey, rootRef, openDiscovery,
       initialPrdId: params?.prdId, restorePrds: params?.restorePrds, onClosePrds: closeAssociatedPrds, modalActive: !!modal,
       initialDelivery: page === 'pending' && selected.status === 'pending', focusTarget, renderPrds, onMove: doMove,
       onApprove: () => doMove(selected, 'ready'),
@@ -897,15 +905,22 @@ export function MainShell(props) {
       h('button', { className: 'pw-button', style: { marginLeft: 'auto' }, onClick: doUndo }, t('undo')),
       h('button', { className: 'pw-button', onClick: () => setUndo(null), 'aria-label': t('dismiss') }, '✕')),
     content,
+    modal?.kind === 'discoveryPrd' && h(DiscoveryPrdDialog, {
+      key: [root, modal.reqId, modal.version].join(':'), root, reqId: modal.reqId, version: modal.version,
+      sessionId: sessionRoot === root ? sessionId : undefined, t,
+      onClose: () => setModal(current => current === modal ? null : current),
+      onOpen: () => { setModal(null); openDiscovery(modal.reqId) },
+      onReady: generated => setModal(current => current === modal ? { kind: 'prdEditor', reqId: modal.reqId, generated } : current),
+    }),
     modal?.kind === 'prdEditor' && h(PrdEditor, {
-      key: [root, modal.id, modal.reqId].join(':'), root, id: modal.id, reqId: modal.reqId, t, uiMemory,
+      key: [root, modal.id, modal.reqId, modal.generated?.id].join(':'), root, id: modal.id, reqId: modal.reqId, generated: modal.generated, t, uiMemory,
       onClose: () => setModal(current => current === modal ? null : current),
       onSaved: () => {
         notifyPrdChanged(root)
         setModal(current => current === modal ? null : current)
       },
     }),
-    modal && !['leave', 'prdEditor'].includes(modal.kind) && h(ReasonModal, {
+    modal && !['leave', 'prdEditor', 'discoveryPrd'].includes(modal.kind) && h(ReasonModal, {
       key: modal.kind, modal, t, setModal, mutate, root, trashWithUndo, requirements, locatePrdLink,
       newDraft, clearNewDraft,
       changeNewDraft: (name, value) => setNewDraft(draft => ({ ...draft, [name]: value })),

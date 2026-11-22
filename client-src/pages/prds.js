@@ -1,5 +1,6 @@
 import React from 'react'
 import { rpc } from '../api.js'
+import { discoveryReference } from '../discovery.js'
 import { Modal } from '../shared/ui.js'
 import { ListPage, listTitle } from '../shared/list.js'
 import { renderMarkdown } from './resources.js'
@@ -297,6 +298,8 @@ export function PrdReader({
       h('h1', { className: 'pw-md-h' }, prd.title),
       h('p', { className: 'pw-count' }, 'v' + prd.revision, ' · ', t('updated'), ' ', prdDate(prd.updated)),
       prd.reqIds.length > 0 && h('p', { className: 'pw-note' }, t('prdRelatedRequirements'), ' · ', prd.reqIds.map(reqId => reqTitle(requirements, reqId)).join(t('fieldSeparator'))),
+      prd.discoverySources?.length > 0 && h('p', { className: 'pw-note' }, t('discoveryPrdSource'), ' · ',
+        discoveryReference(t, prd.discoverySources.map(({ reqId }) => reqTitle(requirements, reqId)), prd.discoverySources)),
       content))))
 }
 

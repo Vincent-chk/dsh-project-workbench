@@ -1,6 +1,7 @@
 import React from 'react'
 import { startBlockers, taskOverview } from '../../core/state.js'
 import { rpc } from '../api.js'
+import { DiscoverySession } from '../discovery.js'
 import { createCardActions, issueDraftFrom, issueDraftKey, newTaskInput, projectIdOf, taskFormError } from '../project-state.js'
 import { isRequirementSplit, taskResult, workbenchError } from '../workbench-content.js'
 import { Disclosure, ErrorDetails, LeaveModal, Modal } from '../shared/ui.js'
@@ -77,7 +78,7 @@ export const rightbarLocale = {
   },
 }
 
-export function TaskPane({ t, useCurrentSession, useSessions, useSessionStatus, useWorkspaces, useTabInfo, openMain, showConversation, uiMemory, css }) {
+export function TaskPane({ t, useCurrentSession, useSessions, useSessionStatus, useWorkspaces, useTabInfo, openMain, showConversation, uiMemory, css, DiscoveryModal }) {
   const sessionId = useCurrentSession(value => value)
   const session = useSessions(state => sessionId === undefined ? undefined : state?.byId?.[sessionId])
   const sessionStatus = (useSessionStatus ?? useNoSessionStatus)(state => sessionId === undefined ? undefined : state?.get(sessionId))
@@ -101,9 +102,13 @@ export function TaskPane({ t, useCurrentSession, useSessions, useSessionStatus, 
   }
   return h('aside', { className: 'pw-page pw-task-pane', 'aria-label': t('issueDetail') },
     h('style', null, css),
-    root ? h(LinkedTask, {
-      key: root + '|' + sessionId, root, sessionId, sessionStatus, visible, projectKey, t, uiMemory,
-      openMain, showConversation, openRequirement: (reqId, status) => openObject(reqId, null, status), openWikiPage: (reqId, path) => openObject(reqId, path),
+    root ? h(DiscoverySession, {
+      key: root + '|' + sessionId, root, sessionId, sessionStatus, visible, t, uiMemory, DiscoveryModal,
+      openRequirement: (reqId, status) => openObject(reqId, null, status),
+      renderTask: () => h(LinkedTask, {
+        root, sessionId, sessionStatus, visible, projectKey, t, uiMemory,
+        openMain, showConversation, openRequirement: (reqId, status) => openObject(reqId, null, status), openWikiPage: (reqId, path) => openObject(reqId, path),
+      }),
     }) : h('p', null, t('noWorkspace')))
 }
 
