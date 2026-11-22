@@ -8,22 +8,22 @@ const { useCallback, useEffect, useRef, useState } = React
 
 export const requirementReviewLocale = {
   en: {
-    aiReview: 'AI review', aiReviewRecords: 'AI review reports', aiReviewAgain: 'Review again',
-    aiReviewRound: 'Review {n}', aiReviewRunning: 'Review in progress', rejectRequirement: 'Reject requirement',
+    aiReview: 'Start AI review', aiReviewUseSuggestion: 'Use AI suggestion', aiReviewMaterials: 'Review materials', aiReviewSavedMaterials: 'Snapshot used for review', aiReviewRecords: 'AI review reports', aiReviewAgain: 'Review again',
+    aiReviewRound: 'Review {n}', aiReviewRunning: 'Review in progress', rejectRequirement: 'Return for edits',
     aiReviewFailed: 'The review did not finish. Try again.',
     aiReviewSaveFailed: 'The review finished. The report could not be saved.',
     aiReviewRetrySave: 'Retry saving', aiReviewStale: 'The last review used an earlier version of the materials.',
-    aiReviewRequired: 'Complete an AI review based on a linked PRD before approving.',
+    aiReviewRequired: 'Complete an AI review of the current materials before approving.',
     aiReviewAt: 'Reviewed at', aiReviewRequirementVersion: 'Requirement version', aiReviewPrdVersion: 'PRD version',
     aiReviewNoPrd: 'No PRD was linked at the time of review.', aiReviewNoSource: 'This report has no version details.',
   },
   zh: {
-    aiReview: 'AI 辅助评审', aiReviewRecords: 'AI 评审记录', aiReviewAgain: '再次评审',
-    aiReviewRound: '第 {n} 次评审', aiReviewRunning: '正在评审', rejectRequirement: '驳回需求',
+    aiReview: '开始 AI 评审', aiReviewUseSuggestion: '带入 AI 意见', aiReviewMaterials: '本轮评审材料', aiReviewSavedMaterials: '查看本轮材料快照', aiReviewRecords: 'AI 评审记录', aiReviewAgain: '再次评审',
+    aiReviewRound: '第 {n} 次评审', aiReviewRunning: '正在评审', rejectRequirement: '退回修改',
     aiReviewFailed: '评审未完成，可以重试。',
     aiReviewSaveFailed: '评审已完成，报告保存失败。',
     aiReviewRetrySave: '重试保存', aiReviewStale: '资料已更新，上次评审基于较早版本。',
-    aiReviewRequired: '请先完成一次基于关联 PRD 的 AI 辅助评审。',
+    aiReviewRequired: '请先完成对当前材料的 AI 评审。',
     aiReviewAt: '评审时间', aiReviewRequirementVersion: '需求版本', aiReviewPrdVersion: 'PRD 版本',
     aiReviewNoPrd: '评审时未关联 PRD。', aiReviewNoSource: '这份报告未记录资料版本。',
   },
@@ -36,8 +36,12 @@ function ReviewSource({ source, t }) {
   return h(React.Fragment, null,
     h('p', { className: 'pw-note' }, t('aiReviewRequirementVersion'), ' ', versionText(source.requirementVersion)),
     prds.length
-      ? prds.map(prd => h('p', { className: 'pw-note', key: prd.id }, t('aiReviewPrdVersion'), ' ', prd.title, ' · ', versionText(prd.version)))
-      : h('p', { className: 'pw-note' }, t('aiReviewNoPrd')))
+      ? prds.map(prd => h('p', { className: 'pw-note', key: prd.id }, t('aiReviewPrdVersion'), ' ', prd.title, ' · ', prd.revision ? t('prepVersion').replace('{n}', prd.revision) : versionText(prd.version)))
+      : h('p', { className: 'pw-note' }, t('aiReviewNoPrd')),
+    source.prototype && h('p', { className: 'pw-note' }, t('prepPrototype'), ' · ', t('prepVersion').replace('{n}', source.prototype.version)),
+    source.materials && h(Disclosure, { label: t('aiReviewSavedMaterials') },
+      (source.materials.documents ?? []).map(doc => h(ReadText, { key: doc.id, label: doc.title, value: doc.excerpt })),
+      source.materials.prototype && h(ReadText, { label: t('prepPrototype'), value: JSON.stringify(source.materials.prototype, null, 2) })))
 }
 
 export function RequirementReviewHistory({ reports, t }) {
@@ -50,7 +54,7 @@ export function RequirementReviewHistory({ reports, t }) {
     h(ReadText, { value: record.opinion })))
 }
 
-export function RequirementReview({ req, root, t, busy, sessionId, onApprove, onReject, onReportSnapshot, recentOnly = false, snapshotOnly = false }) {
+export function RequirementReview({ req, root, t, busy, onApprove, onReject, onReportSnapshot, recentOnly = false, snapshotOnly = false }) {
   const [details, setDetails] = useState(null)
   const [failure, setFailure] = useState(null)
   const [readError, setReadError] = useState(null)
@@ -99,7 +103,7 @@ export function RequirementReview({ req, root, t, busy, sessionId, onApprove, on
 
   const dataUnavailable = details?.reportsUnavailable || details?.prdsUnavailable
   const canStart = !busy && !readError && !running && (saveFailed || (details?.hasPrd && !dataUnavailable))
-  const canApprove = !busy && !readError && !dataUnavailable && details?.hasReview
+  const canApprove = !busy && !readError && !dataUnavailable && !running && details?.hasReview
   const start = async () => {
     if (request.current || !canStart) return
     request.current = true
@@ -108,7 +112,7 @@ export function RequirementReview({ req, root, t, busy, sessionId, onApprove, on
     setFailure(null)
     try {
       const res = await rpc('requirement/review/start', {
-        root, id: req.id, sessionId, after: latest?.marker ?? null,
+        root, id: req.id, after: latest?.marker ?? null,
         ...(saveFailed && { retrySave: true, runId: details.runId }),
       })
       if (!mounted.current) return
@@ -126,8 +130,9 @@ export function RequirementReview({ req, root, t, busy, sessionId, onApprove, on
   if (snapshotOnly) return null
   if (!reviewing && !reports.length && !running && !saveFailed && !readError && !dataUnavailable) return null
   const startLabel = saveFailed ? 'aiReviewRetrySave' : latest ? 'aiReviewAgain' : 'aiReview'
-  const advice = latest?.opinion.split('\n').find(line => /^[\s#*>-]*建议\**[：:]/u.test(line))
-  const preview = advice ? advice.replace(/^[\s#*>-]+/u, '').replaceAll('**', '') : latest?.opinion
+  const lines = latest?.opinion.split('\n') ?? []
+  const suggestedReason = lines.map(line => line.replace(/^[\s#*>-]+/u, '').replaceAll('**', '').trim())
+    .find(line => line && !/^建议[：:]/u.test(line)) ?? lines[0]
   const helpId = 'pw-approve-review-help-' + req.id
   const needsReport = reviewing && details?.hasPrd && !details.hasReview && !dataUnavailable
   const title = t(recentOnly ? 'reqReviewCurrent' : 'aiReviewRecords')
@@ -136,17 +141,20 @@ export function RequirementReview({ req, root, t, busy, sessionId, onApprove, on
     h('div', { className: 'pw-actions' },
       (reviewing || saveFailed) && h('button', { className: 'pw-button', disabled: !canStart || submitting, onClick: start }, t(startLabel)),
       reviewing && onApprove && h('button', { className: 'pw-button primary', disabled: !canApprove,
-        'aria-describedby': needsReport ? helpId : undefined, onClick: onApprove }, t('approveReview')),
-      reviewing && onReject && h('button', { className: 'pw-button danger', disabled: busy, onClick: onReject }, t('rejectRequirement'))),
+        'aria-describedby': needsReport ? helpId : undefined, onClick: () => onApprove(latest?.marker) }, t('approveReview')),
+      reviewing && onReject && h('button', { className: 'pw-button danger', disabled: busy, onClick: () => onReject(details?.hasReview ? suggestedReason : '') }, t('rejectRequirement'))),
     needsReport && h('p', { className: 'pw-note', id: helpId }, t('aiReviewRequired')),
     (running || submitting) && h('p', { className: 'pw-note', role: 'status' }, t('aiReviewRunning')),
-    reviewing && details?.state === 'failed' && h('p', { className: 'pw-note', role: 'status' }, t('aiReviewFailed')),
+    reviewing && details?.state === 'failed' && h('p', { className: 'pw-note', role: 'status' }, details?.error ?? t('aiReviewFailed'),
+      details?.errorCode && ' (' + [details.errorCode, details.httpStatus].filter(Boolean).join(' · ') + ')'),
     saveFailed && h('p', { className: 'pw-note', role: 'status' }, t('aiReviewSaveFailed')),
     details?.stale && h('p', { className: 'pw-note', role: 'status' }, t('aiReviewStale')),
     h(ErrorDetails, { error: failure ?? readError, t, showRaw: false }),
     dataUnavailable && h('p', { className: 'pw-note', role: 'status' }, t('errUnreadable')),
     (readError || dataUnavailable) && !saveFailed &&
       h('button', { className: 'pw-button pw-quiet', onClick: load }, t('retryRead')),
-    reviewing && latest && h(ReadText, { value: preview, preview: true }),
+    reviewing && details?.materials && h(Disclosure, { label: t('aiReviewMaterials'), open: true },
+      h(ReviewSource, { source: details.materials, t })),
+    reviewing && latest && h(ReadText, { value: latest.opinion }),
     !recentOnly && h(RequirementReviewHistory, { reports, t }))
 }

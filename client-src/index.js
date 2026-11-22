@@ -4,6 +4,7 @@ import { MainShell } from './shell/main-shell.js'
 import { prdLocale } from './pages/prds.js'
 import { prdEditorLocale } from './forms/prd-form.js'
 import { discoveryLocale } from './discovery.js'
+import { preparationLocale } from './preparation.js'
 import { TaskPane, rightbarLocale } from './rightbar/task-pane.js'
 import { workbenchContentLocale } from './workbench-content.js'
 import { acceptanceAssistLocale } from './detail/acceptance-assist.js'
@@ -746,7 +747,7 @@ button.pw-discovery-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
 export default {
       inject: ['slots', 'locale', 'layout', 'connection', 'uiSession'],
       apply(ctx) {
-        ctx.effect(() => ctx.locale.register(NS, { en: { ...en, ...shellLocale.en }, zh: { ...zh, ...shellLocale.zh } }), 'project-workbench: locale')
+        ctx.effect(() => ctx.locale.register(NS, { en: { ...en, ...shellLocale.en, ...preparationLocale.en }, zh: { ...zh, ...shellLocale.zh, ...preparationLocale.zh } }), 'project-workbench: locale')
         const t = ctx.locale.bind(NS)
         const currentSession = {
           getSnapshot: () => ctx.uiSession.adapter.current.getSnapshot().key,

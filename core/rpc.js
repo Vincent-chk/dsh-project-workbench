@@ -34,13 +34,13 @@ const routes = {
     if (i.to === 'completed' && (typeof i.expectFingerprint !== 'string' || !i.expectFingerprint.trim())) {
       throw new WorkbenchError('FINGERPRINT_REQUIRED', 'review the requirement and its tasks before acceptance')
     }
-    return (await store.moveRequirement(i.root, i.id, i.to, { reason: i.reason, opinion: i.opinion, fileHash: i.fileHash, confirmReviewInvalid: i.confirmReviewInvalid, expectFingerprint: i.expectFingerprint, actor: 'human' })).data
+    return (await store.moveRequirement(i.root, i.id, i.to, { reason: i.reason, opinion: i.opinion, fileHash: i.fileHash, confirmReviewInvalid: i.confirmReviewInvalid, expectFingerprint: i.expectFingerprint, reviewMarker: i.reviewMarker, actor: 'human' })).data
   },
   'requirement/review': async i => {
     assertRoot(i.root)
     const to = { submit: 'reviewing', approve: 'ready', return: 'backlog' }[i.action]
     if (!to) throw new WorkbenchError('INVALID_ACTION', 'action must be submit|approve|return')
-    return (await store.moveRequirement(i.root, i.id, to, { reason: i.reason, opinion: i.opinion, actor: 'human' })).data
+    return (await store.moveRequirement(i.root, i.id, to, { reason: i.reason, opinion: i.opinion, reviewMarker: i.reviewMarker, actor: 'human' })).data
   },
   'requirement/startDev': async i => { assertRoot(i.root); return (await store.moveRequirement(i.root, i.id, 'in_progress', { actor: 'human' })).data },
   'requirement/submit': async i => {

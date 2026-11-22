@@ -4,13 +4,14 @@
 // on old files (no migration); terminal content is read-only until reopened.
 import { lstat, mkdir, readFile, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
 import { join, basename, relative, isAbsolute, sep } from 'node:path'
-import { randomBytes, createHash } from 'node:crypto'
+import { randomBytes, randomUUID, createHash } from 'node:crypto'
 import { atomicWrite, WorkbenchError } from './files.js'
 import { parseFrontmatter } from './frontmatter.js'
-import { aiReviewReports, reviewUsesLinkedPrd, REVIEW_TASK_PURPOSE, canMoveRequirement, canMoveIssue, canCreateIssue, changesReviewedRequirement, freshDelivery, effectiveEvidence, taskContentBlockers, taskOverview, TASK_CONTENT_FIELDS, REQUIREMENT_STATES, ISSUE_STATES, TERMINAL_ISSUE } from './state.js'
+import { aiReviewReports, REVIEW_TASK_PURPOSE, PREPARATION_TASKS, canMoveRequirement, canMoveIssue, canCreateIssue, changesReviewedRequirement, freshDelivery, effectiveEvidence, taskContentBlockers, taskOverview, TASK_CONTENT_FIELDS, REQUIREMENT_STATES, ISSUE_STATES, TERMINAL_ISSUE } from './state.js'
 import { evidenceFacts, isEvidenceCommand, isEvidenceOutcome, isObservationCommand, isVerificationCommand } from './extract.js'
 import { readSplitEvidence } from './split-evidence.js'
-import { requireReviewPrds, withPrdLock } from './prd.js'
+import { requireReviewPrds, reviewPrds, withPrdLock } from './prd.js'
+import { matchesReview, reviewMaterial, reviewSubmission } from './review-material.js'
 
 export const SUPPORTED_SCHEMA = 2
 const REQ_ID_RE = /^req-\d{8}-[0-9a-f]{6}$/
@@ -333,17 +334,17 @@ function assertDeliveryDataComplete(index, id) {
 // failed write reuses the same marker (idempotent), while a new attempt — even with
 // identical wording in the same second — gets a fresh marker. The caller clears
 // pendingDecision in the status write that completes the transition.
-async function recordDecision(root, id, doc, file, { kind, decision, opinion, summary, originalHash, patch }) {
+async function recordDecision(root, id, doc, file, { kind, decision, opinion, summary, originalHash, patch, source }) {
   let pending = decodePendingDecision(doc.get('pendingDecision'))
   if (!pending) {
-    pending = { marker: `${Date.now()}-${randomBytes(3).toString('hex')}`, kind, decision, opinion, summary, originalHash, patch }
+    pending = { marker: `${Date.now()}-${randomBytes(3).toString('hex')}`, kind, decision, opinion, summary, originalHash, patch, source }
     doc.setString('pendingDecision', JSON.stringify(pending))
     await atomicWrite(file, doc.toString())
   } else if (pending.kind !== kind || pending.decision !== decision || pending.opinion !== opinion ||
       pending.summary !== summary || JSON.stringify(pending.patch) !== JSON.stringify(patch)) {
     throw new WorkbenchError('DECISION_PENDING', 'finish the previous decision before making another change')
   }
-  await writeReview(root, id, { kind: pending.kind, decision: pending.decision, opinion: pending.opinion, summary: pending.summary, marker: pending.marker })
+  await writeReview(root, id, { kind: pending.kind, decision: pending.decision, opinion: pending.opinion, summary: pending.summary, marker: pending.marker, source: pending.source })
 }
 
 export async function readReviews(root, reqId, { strict = false } = {}) {
@@ -384,6 +385,7 @@ function reqFromDoc(doc, path, slug) {
     goal: doc.get('goal') ?? '', scope: doc.get('scope') ?? '', acceptance: doc.get('acceptance') ?? '',
     background: getSection(doc.body, '背景'), decisionNotes: getSection(doc.body, '决策记录'),
     deliverySummary: doc.get('deliverySummary') ?? '', cancelImpact: doc.get('cancelImpact') ?? '',
+    reviewSubmissionId: doc.get('reviewSubmissionId') ?? '',
     submittedAt: doc.get('submittedAt') ?? '', reviewedAt: doc.get('reviewedAt') ?? '',
     deliveryStartedAt: Number(doc.get('deliveryStartedAt')) || 0,
     deliverySummaryAt: Number(doc.get('deliverySummaryAt')) || 0,
@@ -469,6 +471,7 @@ export async function scanProject(root) {
       req = reqFromDoc(doc, reqPath, slug)
       req.hash = hashText(raw)
       req.issues = []
+      req.preparationTasks = {}
       req.reviews = await readReviews(root, req.id ?? slug)
       req.devHistory = req.reviews.length > 0 || req.activity.some(a => a.includes('→'))
       if (!req.id || !REQ_ID_RE.test(req.id)) diagnostics.push(diag(rel, 'MISSING_FIELD', 'missing/invalid id', 'add a stable req-YYYYMMDD-xxxxxx id'))
@@ -519,6 +522,9 @@ export async function scanProject(root) {
           issueTotal--
           if (req.reviewTask) diagnostics.push(diag(irel, 'DUPLICATE_REVIEW_TASK', 'requirement has more than one review task', 'inspect the review task records'))
           else req.reviewTask = { id: issue.id, title: issue.title, hash: issue.hash, purpose: REVIEW_TASK_PURPOSE }
+        } else if (Object.hasOwn(PREPARATION_TASKS, doc.get('purpose'))) {
+          issueTotal--
+          req.preparationTasks[doc.get('purpose')] = { id: issue.id, title: issue.title }
         } else req.issues.push(issue)
       } catch (e) {
         diagnostics.push(diag(irel, 'READ_FAILED', String(e.message ?? e), 'fix or restore the file'))
@@ -732,7 +738,11 @@ export async function saveAIReview(root, reqId, { report, requestId, source }) {
     throw new WorkbenchError('REVIEW_EMPTY', 'the review did not return a report')
   }
   return withRequirementLock(root, reqId, async () => {
-    await loadReqDoc(root, reqId)
+    const { doc, file } = await loadReqDoc(root, reqId)
+    if (source?.submissionId && (doc.get('status') !== 'reviewing'
+      || reviewSubmission(reqFromDoc(doc, file, reqId)) !== source.submissionId)) {
+      throw new WorkbenchError('ROUND_CHANGED', '需求已经离开当前评审轮次。')
+    }
     return writeReview(root, reqId, { kind: 'ai_review', decision: 'reported', by: 'ai', opinion: report.trim(), marker: requestId, source })
   })
 }
@@ -746,7 +756,7 @@ const REVIEW_RECORD_EDGES = {
   'pending>completed': { kind: 'acceptance', decision: 'approved' },
 }
 
-export async function moveRequirement(root, id, to, { reason, actor = 'human', opinion = '', fileHash, confirmReviewInvalid = false, reopenCount = 0, proposalId, expectFingerprint } = {}) {
+export async function moveRequirement(root, id, to, { reason, actor = 'human', opinion = '', fileHash, confirmReviewInvalid = false, reopenCount = 0, proposalId, expectFingerprint, reviewMarker } = {}) {
   return withRequirementLock(root, id, async () => {
     const { file, raw, doc } = await loadReqDoc(root, id)
     const from = doc.get('status')
@@ -785,11 +795,28 @@ export async function moveRequirement(root, id, to, { reason, actor = 'human', o
     const approving = from === 'reviewing' && to === 'ready' && actor === 'human'
     const submitting = from === 'backlog' && to === 'reviewing'
     const commit = async directory => {
-      const prds = approving ? await requireReviewPrds(directory, id) : []
+      const returning = from === 'reviewing' && to === 'backlog'
+      const reports = approving || returning ? aiReviewReports(await readReviews(root, id, { strict: approving })) : []
+      const latest = reports.at(-1)
+      const currentReq = reqFromDoc(doc, file, id)
+      const submissionId = reviewSubmission(currentReq)
+      const pendingApproval = pending?.kind === 'review' && pending.decision === 'approved'
+      let report = latest?.source?.submissionId === submissionId ? latest : null
+      if (approving) {
+        const prds = await requireReviewPrds(directory, id)
+        const { source } = await reviewMaterial(directory, currentReq, prds)
+        if (!matchesReview(report, source) || (reviewMarker !== undefined && reviewMarker !== report.marker)) report = null
+        // A new, valid approval can supersede an incomplete write for another report.
+        if (report && pendingApproval && pending.source?.reportMarker !== report.marker) doc.setString('pendingDecision', '')
+      } else if (returning && pendingApproval) {
+        const pendingReport = reports.find(entry => entry.marker === pending.source?.reportMarker)
+        const current = await reviewMaterial(directory, currentReq, await reviewPrds(directory, id)).catch(() => null)
+        if (!current || !matchesReview(pendingReport, current.source)) doc.setString('pendingDecision', '')
+      }
       const guard = canMoveRequirement({
         from, to, title: doc.get('title'), issues, reason, actor,
         q_pain: doc.get('q_pain'), goal: doc.get('goal'),
-        hasAIReview: approving && aiReviewReports(await readReviews(root, id, { strict: true })).some(report => reviewUsesLinkedPrd(report, prds)),
+        hasAIReview: approving && !!report,
         confirmReviewInvalid, running,
         summary: doc.get('deliverySummary'),
         pendingReopen: decodePendingReopen(doc.get('pendingReopen')), reopenCount,
@@ -801,9 +828,14 @@ export async function moveRequirement(root, id, to, { reason, actor = 'human', o
       // Record the decision before the status write, using the attempt marker to retry exactly once.
       const record = REVIEW_RECORD_EDGES[`${from}>${to}`]
       if (!record && pending) throw new WorkbenchError('DECISION_PENDING', 'finish the previous decision before making another change')
-      if (record) await recordDecision(root, id, doc, file, { ...record, opinion: opinion || reason || '', summary: doc.get('deliverySummary') ?? '', originalHash: fileHash })
+      if (record) await recordDecision(root, id, doc, file, { ...record, opinion: opinion || reason || '', summary: doc.get('deliverySummary') ?? '', originalHash: fileHash,
+        ...((approving || returning) && { source: { submissionId, reportMarker: report?.marker ?? null } }),
+      })
       doc.setPlain('status', to)
-      if (from === 'backlog' && to === 'reviewing') doc.setString('submittedAt', nowIso())
+      if (submitting) {
+        doc.setString('submittedAt', nowIso())
+        doc.setString('reviewSubmissionId', randomUUID())
+      }
       if (from === 'reviewing' && to === 'ready') doc.setString('reviewedAt', nowIso())
       if (from === 'ready' && to === 'in_progress') {
         const priorStart = Number(doc.get('deliveryStartedAt')) || 0
@@ -818,7 +850,7 @@ export async function moveRequirement(root, id, to, { reason, actor = 'human', o
       return { ok: true, data: { id, from, to } }
     }
     // Hold the PRD queue through commit so a concurrent unlink cannot bypass the gate.
-    return submitting || approving ? withPrdLock(root, commit) : commit()
+    return submitting || approving || (from === 'reviewing' && to === 'backlog' && !!pending) ? withPrdLock(root, commit) : commit()
   })
 }
 
@@ -897,6 +929,9 @@ async function loadIssueDoc(root, reqId, id) {
   if (doc.get('purpose') === REVIEW_TASK_PURPOSE) {
     throw new WorkbenchError('REVIEW_TASK_ONLY', 'legacy review tasks are read-only')
   }
+  if (Object.hasOwn(PREPARATION_TASKS, doc.get('purpose'))) {
+    throw new WorkbenchError('PREPARATION_TASK_ONLY', '请从需求详情继续这项准备工作。')
+  }
   return { file, raw, doc }
 }
 async function reqStatus(root, reqId) {
@@ -929,6 +964,26 @@ function initialTaskFields(fields = {}) {
     if (key === 'refs' ? Array.isArray(value) && value.length : typeof value === 'string' && value.trim()) initial[key] = value
   }
   return initial
+}
+
+// Called while holding the requirement lock, before creating the task's session.
+export async function ensurePreparationTask(root, reqId, purpose) {
+  if (!Object.hasOwn(PREPARATION_TASKS, purpose)) throw new WorkbenchError('INVALID_INPUT', '无效的需求准备任务。')
+  const { doc: requirement } = await loadReqDoc(root, reqId)
+  if (requirement.get('status') !== 'backlog') throw new WorkbenchError('DISCOVERY_POOL_ONLY', '请在需求池继续准备这条需求。')
+  const dir = join(paths(root).reqs, reqId, 'issues')
+  await mkdir(dir).catch(error => { if (error.code !== 'EEXIST') throw error })
+  if (!(await lstat(dir)).isDirectory()) throw new WorkbenchError('INVALID_PATH', '任务目录不可用。')
+  for (const name of await readdir(dir)) {
+    if (!ISS_ID_RE.test(name.slice(0, -3)) || !name.endsWith('.md')) continue
+    const doc = parseFrontmatter(await readText(join(dir, name)))
+    if (doc.get('purpose') === purpose) return name.slice(0, -3)
+  }
+  const id = newId('iss')
+  const doc = parseFrontmatter(issueFileText(id, PREPARATION_TASKS[purpose], 0, null))
+  doc.setPlain('purpose', purpose)
+  await atomicWrite(issuePath(root, reqId, id), doc.toString())
+  return id
 }
 
 export const newIssueId = () => newId('iss')

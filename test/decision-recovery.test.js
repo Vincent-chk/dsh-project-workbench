@@ -1,3 +1,5 @@
+import { reviewPrds, savePrd } from '../core/prd.js'
+import { reviewMaterial } from '../core/review-material.js'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import fs from 'node:fs/promises'
@@ -39,6 +41,7 @@ test('a failed approval cannot turn a different decision into approval', async t
   const beforeEdit = (await store.scanProject(root)).requirements[0]
   await store.updateRequirement(root, id, { acceptance: '核对新标准' })
   await assert.rejects(store.moveRequirement(root, id, 'ready', { fileHash: beforeEdit.hash }), { code: 'CONFLICT' })
+  await seedAIReview(root, id)
   const current = (await store.scanProject(root)).requirements[0]
   const options = { opinion: '同意', fileHash: current.hash }
   fault = { target: path => path.endsWith('/reviews/1.md'), remaining: 1 }
@@ -48,6 +51,21 @@ test('a failed approval cannot turn a different decision into approval', async t
   const req = (await store.scanProject(root)).requirements[0]
   assert.equal(req.status, 'ready')
   assert.deepEqual(req.reviews.filter(r => r.kind === 'review').map(r => r.decision), ['approved'])
+})
+
+test('a retried approval records the new review marker when the PRD changed after a failed decision write', async t => {
+  const { root, id } = await makeRequirement(t)
+  await seedAIReview(root, id)
+  fault = { target: path => path.endsWith('/reviews/1.md'), remaining: 1 }
+  await assert.rejects(store.moveRequirement(root, id, 'ready', { reviewMarker: 'test-ai-review' }), { code: 'EIO' })
+  const [prd] = await reviewPrds(root, id)
+  const edited = await savePrd(root, { ...prd, markdown: '# 更新后的 PRD' })
+  const { source } = await reviewMaterial(root, await store.readRequirement(root, id), [edited])
+  await store.saveAIReview(root, id, { report: '建议推进', requestId: 'updated-report', source })
+  await store.moveRequirement(root, id, 'ready', { reviewMarker: 'updated-report' })
+  const { reviews } = (await store.scanProject(root)).requirements[0]
+  assert.equal(reviews.filter(record => record.kind === 'review').length, 1)
+  assert.equal(reviews.at(-1).source.reportMarker, 'updated-report')
 })
 
 test('failed invalidation preserves reviewed content and retries with original fingerprint', async t => {

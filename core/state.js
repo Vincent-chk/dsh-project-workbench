@@ -6,6 +6,11 @@ export const REQUIREMENT_STATES = ['backlog', 'reviewing', 'ready', 'in_progress
 export const ISSUE_STATES = ['todo', 'doing', 'blocked', 'in_review', 'done', 'cancelled']
 export const TERMINAL_ISSUE = new Set(['done', 'cancelled'])
 export const REVIEW_TASK_PURPOSE = 'requirement_review'
+export const PREPARATION_TASKS = Object.freeze({
+  discovery: '需求深挖',
+  prd: 'PRD 撰写',
+  prototype: '流程图与原型',
+})
 
 export function aiReviewReports(reviews = []) {
   return reviews.filter(record => record.kind === 'ai_review' && record.by === 'ai' && record.decision === 'reported' &&
@@ -13,10 +18,6 @@ export function aiReviewReports(reviews = []) {
     typeof record.opinion === 'string' && !!record.opinion.trim())
 }
 
-export function reviewUsesLinkedPrd(report, prds) {
-  const sources = report.source?.prds
-  return Array.isArray(sources) && sources.some(source => source?.version && prds.some(prd => prd.id === source.id))
-}
 
 const REQUIREMENT_EDGES = new Set([
   'backlog>reviewing',

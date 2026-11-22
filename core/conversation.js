@@ -339,6 +339,13 @@ export function installConversation(ctx, { links, discovery, routes, resources }
       if (turn.followUp && turn.target && !reqIds.includes(turn.target.reqId)) {
         throw new WorkbenchError('TARGET_CHANGED', '本轮只跟进刚才的需求。')
       }
+      const target = project.requirements.find(req => req.id === reqIds[0])
+      if (target?.status === 'backlog') {
+        await discovery.validatePrdPreparation(root, target.id, { reqIds })
+        state.target = { reqId: target.id }
+        show(state, { kind: 'openPreparation', root, title: target.title, reqId: target.id, reqIds, request: args.text })
+        return { message: '请点击「进入 PRD 撰写」开始这条需求的专用会话。', reqIds }
+      }
       const draft = await discovery.preparePrd({ root, reqIds, sessionId, request: args.text })
       signal?.throwIfAborted()
       state.target = { reqId: reqIds[0] }
@@ -351,6 +358,13 @@ export function installConversation(ctx, { links, discovery, routes, resources }
       const current = await readPrd(root, args.prdId)
       if (current.version !== args.version) throw new WorkbenchError('PRD_CONFLICT', '请先读取现有 PRD，再基于该版本生成预览。')
       const { reqIds } = current
+      const target = project.requirements.find(req => req.id === (args.reqId ?? reqIds[0]))
+      if (target?.status === 'backlog' && reqIds.includes(target.id)) {
+        await discovery.validatePrdPreparation(root, target.id, { prdId: current.id })
+        state.target = { reqId: target.id }
+        show(state, { kind: 'openPreparation', root, title: current.title, reqId: target.id, prdId: current.id, request: args.text })
+        return { message: '请点击「进入 PRD 撰写」继续修改已选 PRD。', reqIds }
+      }
       validatePrdDraft(reqIds, args.markdown)
       if (reqIds.length) state.target = { reqId: reqIds[0] }
       show(state, { kind: 'prd', root, title: args.markdown.trim().split(/\r?\n/)[0].replace(/^#\s+/, ''),
@@ -613,7 +627,7 @@ export function installConversation(ctx, { links, discovery, routes, resources }
         '用 read 查需求与任务。query 按需求标题搜索，reqId 或 issueId 可读取具体对象。匹配多个时请用户选。先看真实状态，再解释哪些操作可用。',
         '新建需求须有用户已表达的标题和概述。用 addRequirement 的 fields.title 与 fields.overview。补充用 editRequirement，并在字段中保留原文已有信息。只保存明确表达的决定。',
         '验收用 taskReview 核对真实标准和证据。允许 taskConfirm 打开人工确认入口。任务结果只记录真实已完成及已核实的事实。改代码、测试或执行任务使用工作台现有开始入口。',
-        '新建 PRD 先用 read 核对需求，归属不明确时请用户选择，然后调用 prdCreate 提供 reqIds。可在 text 提供用户的附加说明。只用该工具返回的结果告知用户草稿状态。遇到缺少一轮已保存的深挖或还未整理时，向用户转述提示，不得另行生成 PRD。更新已有 PRD 时先确认具体文档，可用 read 且 query 为 * 查找列表，再用 prdId 读取当前正文及 version。用同一 prdId 和 version 调用 prdPreview 预览更新。更新时，只有需求或用户明确表达的决定才能写成已定范围。依据不足的完成标准和无法证实的问题要标注待确认，不虚构现有工具的问题。保存须由用户在界面确认。',
+        '新建 PRD 先用 read 核对需求，归属不明确时请用户选择，然后调用 prdCreate 提供 reqIds。可在 text 提供用户的附加说明。按工具结果提示用户进入 PRD 撰写任务或查看草稿。遇到缺少一轮已保存的深挖或还未整理时，向用户转述提示，不得另行生成 PRD。更新已有 PRD 时先确认具体文档，可用 read 且 query 为 * 查找列表，再用 prdId 读取当前正文及 version。用同一 prdId 和 version 调用 prdPreview，并在 text 提供用户明确说过的修改要求。更新时，只有需求或用户明确表达的决定才能写成已定范围。依据不足的完成标准和无法证实的问题要标注待确认，不虚构现有工具的问题。保存须由用户在界面确认。',
         '只讨论、询问可行性或只读时使用读取操作。generate 必须是用户明确要求生成 Wiki 或架构图。type 用 wiki 或 arch。查询进度用 resourceStatus。',
         '若要追问用户并继续本次工作，请在回复前调用 remember。知道对象时传入 reqId 或 issueId。用户答复时沿用原对象。换题时调用 finish。只向用户报告已成功的写入，失败时解释原因。',
         active.followUp ? '本轮是对上次追问的回答。只处理与上次同一件事的内容，无法确定时先问清。' : '',
@@ -720,6 +734,15 @@ export function installConversation(ctx, { links, discovery, routes, resources }
             pending: result.uncertain || result.alreadyStarting,
           })
           return result
+        } finally { card.acting = false }
+      }
+      if (action === 'openPreparation' && card.kind === 'openPreparation') {
+        if (rootOf(agent) !== card.root) throw new WorkbenchError('WORKSPACE_MISMATCH', '当前会话的项目已变化。')
+        card.acting = true
+        try {
+          assertProjectWritable(await projectOf(agent))
+          return await discovery.openPreparation({ root: card.root, reqId: card.reqId, kind: 'prd',
+            reqIds: card.reqIds, prdId: card.prdId, request: card.request })
         } finally { card.acting = false }
       }
       if (action === 'openTask' && card.kind === 'openTask') {

@@ -252,13 +252,14 @@ function ConversationAction({ card, t, sessionId, uiMemory, error, perform, open
     setExpanded(false)
   }
   const confirmation = confirmPrompts[card.kind]
-  const direct = card.kind === 'open' || (card.kind === 'openTask' && !card.evidence)
+  const preparation = card.kind === 'openPreparation'
+  const direct = preparation || card.kind === 'open' || (card.kind === 'openTask' && !card.evidence)
   const label = isPrd ? 'pwbPreviewPrd' : card.kind === 'open' ? 'openWorkbenchObject'
-    : direct ? 'openAcceptance' : canConfirm ? 'pwbPreviewAction' : card.evidence ? 'pwbReviewDetails' : 'pwbDetails'
+    : preparation ? 'pwbOpenPreparation' : direct ? 'openAcceptance' : canConfirm ? 'pwbPreviewAction' : card.evidence ? 'pwbReviewDetails' : 'pwbDetails'
   const row = h('div', { className: 'pw-conversation-row' },
     h('span', { className: 'pw-conversation-label', title: card.title }, isPrd ? t('pwbPrdReady') : card.title),
     h(Button, { size: 'sm', disabled: busy, 'aria-haspopup': direct ? undefined : 'dialog',
-      onClick: card.kind === 'open' ? open : direct ? () => launch('openTask') : () => setExpanded(true) }, t(label)),
+      onClick: card.kind === 'open' ? open : direct ? () => launch(preparation ? 'openPreparation' : 'openTask') : () => setExpanded(true) }, t(label)),
     !isPrd && h(Button, { size: 'sm', disabled: busy, 'aria-label': t('pwbDismiss'), title: t('pwbDismiss'),
       icon: h(IconCloseOutlineRegular, { size: 14, 'aria-hidden': true }), onClick: () => launch('dismiss') }),
     !expanded && error && h('p', { role: 'alert', className: 'pw-error' }, error.message))

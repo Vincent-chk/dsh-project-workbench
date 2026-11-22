@@ -525,55 +525,67 @@ async function saveDiscovery(p, reqId) {
   return d
 }
 
-test('PRD preview, multi-requirement eligibility and explicit save preserve updates', async t => {
+function preparationReply(p, sessionId, markdown) {
+  const requestId = p.prompts.findLast(prompt => prompt.sessionId === sessionId).requestId
+  const session = p.agents.get(sessionId).session
+  const events = session.snapshotEvents().slice()
+  const add = (type, data) => events.push({ seq: events.length + 1, type, data })
+  add('turn/start', { turn: requestId })
+  add('user/message', { source: { kind: 'user', rpcId: requestId } })
+  add('assistant/message', { message: { content: [{ type: 'text', text: '~~~workbench-prd\n' + markdown + '\n~~~' }] } })
+  add('turn/end', { turn: requestId, reason: { kind: 'completed' } })
+  session.snapshotEvents = () => events
+}
+
+test('PRD command hands off to its preparation session and preserves multi-requirement links and version conflicts', async t => {
   const p = await setup(t)
   await store.initProject(p.root)
   const id = (await store.createRequirement(p.root, '聊天', { q_pain: '两种风格' })).data.id
   const second = (await store.createRequirement(p.root, '设置', { q_pain: '选择默认风格' })).data.id
   p.begin('/pwb-prd 从聊天和设置写首版 PRD')
-  const instructions = p.contexts.get('project-workbench:conversation').text({ agent: p.agent })
-  assert.match(instructions, /新建 PRD.*prdCreate/)
-  assert.match(instructions, /不得另行生成 PRD/)
-  assert.match(instructions, /prdPreview 预览更新/)
   await assert.rejects(p.tool('prdCreate', { reqIds: [id, second] }), { code: 'DISCOVERY_REQUIRED' })
   await assert.rejects(p.tool('prdPreview', { reqIds: [id], markdown: '# 绕过门槛' }), { code: 'DISCOVERY_REQUIRED' })
-  p.end()
-  p.begin('@workbench: 帮我生成聊天 PRD')
-  await assert.rejects(p.tool('prdCreate', { reqId: id }), { code: 'DISCOVERY_REQUIRED' })
-  assert.equal((await p.rpc('prd/generate', { root: p.root, reqIds: [id] })).code, 'DISCOVERY_REQUIRED')
-  assert.equal(p.children.length, 0)
-
   await saveDiscovery(p, id)
   await assert.rejects(p.tool('prdCreate', { reqIds: [id, second] }), { code: 'DISCOVERY_REQUIRED' })
-  assert.equal(p.children.length, 1)
   await saveDiscovery(p, second)
-  const draft = await replyToChild(p, p.tool('prdCreate', { reqIds: [id, second] }), { markdown: '# 聊天首版\n\n## 待定事项\n模型是否离线' })
+
+  const sessionsBefore = p.agents.size
+  await p.tool('prdCreate', { reqIds: [id, second], text: '检查模型是否离线可用' })
+  assert.equal(p.agents.size, sessionsBefore)
+  const [launch] = await p.view()
+  const opened = await p.act(launch, 'openPreparation')
+  assert.equal(opened.ok, true, JSON.stringify(opened))
+  const { sessionId } = opened.data
+  assert.notEqual(sessionId, p.sessionId)
+  assert.match(p.prompts.at(-1).content[0].text, /检查模型是否离线可用/)
+  preparationReply(p, sessionId, '# 聊天首版\n\n模型是否离线')
+  const preview = async () => (await p.rpc('preparation/session', { root: p.root, sessionId, preview: true })).data.draft
+  const save = (draft, markdown) => p.rpc('preparation/save', { root: p.root, sessionId, draftId: draft.id, markdown })
   assert.deepEqual((await p.rpc('prd/list', { root: p.root, reqId: id })).data, [])
-  const preview = (await p.view())[0]
-  assert.deepEqual(preview.sources, [{ reqId: id, version: 1 }, { reqId: second, version: 1 }])
-  await p.direct(p.begin('@workbench 查看项目进展'))
-  assert.equal((await p.view())[0].id, preview.id)
-  assert.equal((await p.act((await p.view())[0], 'confirm', { markdown: '# 聊天首版\n\n离线可用性待定' })).ok, true)
+  const created = await save(await preview(), '# 聊天首版\n\n离线可用性待定')
+  assert.equal(created.ok, true, JSON.stringify(created))
+  const prdId = created.data.id
   assert.deepEqual((await p.rpc('prd/list', { root: p.root, reqId: second })).data[0].reqIds, [id, second])
-  const original = (await p.rpc('prd/read', { root: p.root, id: draft.prdId })).data
-  assert.deepEqual(original.discoverySources, preview.sources)
+  const read = async () => (await p.rpc('prd/read', { root: p.root, id: prdId })).data
+  const original = await read()
+  assert.deepEqual(original.discoverySources, [{ reqId: id, version: 1 }, { reqId: second, version: 1 }])
+
   p.begin('/pwb-prd 更新已有 PRD')
-  await p.tool('prdPreview', { reqIds: [id, second], prdId: draft.prdId, version: original.version, markdown: '# 新草稿\n\n同一个 AI' })
-  const [card] = await p.view()
-  assert.equal(card.updating, true)
-  assert.equal(card.latest, undefined)
-  const filename = join(p.root, '.project', 'prds', draft.prdId + '.md')
+  await p.tool('prdPreview', { prdId, version: original.version, text: '调整离线说明' })
+  assert.equal((await p.act((await p.view())[0], 'openPreparation')).data.sessionId, sessionId)
+  preparationReply(p, sessionId, '# 新草稿\n\n更新离线说明')
+  const filename = join(p.root, '.project', 'prds', prdId + '.md')
   await writeFile(filename, (await readFile(filename, 'utf8')).replace('离线可用性待定', '手工补充的阅读说明'))
-  assert.equal((await p.act(card, 'confirm', { markdown: card.markdown })).code, 'PRD_CONFLICT')
+  assert.equal((await save(await preview())).code, 'PRD_CONFLICT')
   assert.match(await readFile(filename, 'utf8'), /手工补充/)
-  assert.match((await p.act(card, 'reloadPrd')).data.card.latest, /手工补充/)
-  assert.equal((await p.act(card, 'confirm', { markdown: '# 新草稿\n\n保留人工补充的阅读说明' })).ok, true)
-  const latest = (await p.rpc('prd/read', { root: p.root, id: draft.prdId })).data
+  await p.tool('prdPreview', { prdId, version: (await read()).version, text: '保留手工输入' })
+  assert.equal((await p.act((await p.view())[0], 'openPreparation')).data.sessionId, sessionId)
+  preparationReply(p, sessionId, '# 新草稿\n\n保留人工补充的阅读说明')
+  assert.equal((await save(await preview())).ok, true)
+  const latest = await read()
   assert.equal(latest.revision, 2)
-  assert.deepEqual(latest.discoverySources, preview.sources)
+  assert.deepEqual(latest.discoverySources, original.discoverySources)
   assert.match(latest.markdown, /保留人工补充的阅读说明/)
-  const requirements = (await store.scanProject(p.root)).requirements
-  assert.ok(requirements.every(req => req.status === 'backlog'))
 })
 
 test('discovery reopens the same session, saves independent editions and checks project and phase', async t => {
@@ -669,6 +681,10 @@ test('PRD rejects a redirected project data directory', async t => {
   await mkdir(join(other, 'prd'))
   await symlink(join(other, 'prd'), join(p.root, '.project', 'prds'))
   p.begin('/pwb-prd')
-  await replyToChild(p, p.tool('prdCreate', { reqIds: [id] }), { markdown: '# 聊天首版' })
-  assert.equal((await p.act((await p.view())[0], 'confirm', { markdown: '# 聊天首版' })).code, 'INVALID_PATH')
+  await p.tool('prdCreate', { reqIds: [id] })
+  const opened = await p.act((await p.view())[0], 'openPreparation')
+  const { sessionId } = opened.data
+  preparationReply(p, sessionId, '# 聊天首版')
+  const { data: { draft } } = await p.rpc('preparation/session', { root: p.root, sessionId, preview: true })
+  assert.equal((await p.rpc('preparation/save', { root: p.root, sessionId, draftId: draft.id })).code, 'INVALID_PATH')
 })

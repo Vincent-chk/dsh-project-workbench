@@ -87,6 +87,8 @@ export function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, r
       h('button', { className: 'pw-button', disabled: busy, onClick: cancel }, t('cancel')),
       h('button', { className: 'pw-button primary', disabled: busy || !value.trim(), onClick: submit }, t('ok')),
     ] }, modal.body && h('p', null, modal.body),
+    modal.suggestion && h('button', { type: 'button', className: 'pw-button pw-quiet', disabled: busy,
+      onClick: () => setValue(modal.suggestion) }, t('aiReviewUseSuggestion')),
     h('input', { className: 'pw-input', autoFocus: true, readOnly: busy, 'aria-label': t('reasonTitle'), placeholder: t('reasonPlaceholder'), value,
       onChange: e => setValue(e.target.value), onKeyDown: e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit() } }),
     errorView)

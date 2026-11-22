@@ -1,3 +1,4 @@
+import { PreparationActions } from '../preparation.js'
 import React from 'react'
 import { aiReviewReports, changesReviewedRequirement, requirementOverview } from '../../core/state.js'
 import { rpc } from '../api.js'
@@ -118,7 +119,7 @@ function TaskSuggestionReview({ review, req, t, onOpenIssue, hasDrafts, hasLegac
         (hasLegacy || error) && h('button', { type: 'button', className: 'pw-button pw-quiet', disabled: pending, onClick: () => onReview() }, t('splitRetry'))))
 }
 
-export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenIssue, onCreateTask, projectKey, rootRef, onDirty, busy, sessionId, setModal, uiMemory, onReorderTask, onStartTask, onApprove, onReject, onMove, initialPrdId, initialDelivery, focusTarget, renderPrds, restorePrds, onClosePrds, modalActive, openDiscovery }) {
+export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenIssue, onCreateTask, projectKey, rootRef, onDirty, busy, sessionId, setModal, uiMemory, onReorderTask, onStartTask, onApprove, onReject, onMove, initialPrdId, initialDelivery, focusTarget, renderPrds, restorePrds, onClosePrds, modalActive, openDiscovery, openPreparation }) {
   const discovery = useDiscoveryRecords(root, req.id)
   const layoutKey = reqDraftKey(projectKey, req.id)
   const form = useWorkItemDraft(layoutKey, req, reqDraftFrom, onDirty, uiMemory)
@@ -145,7 +146,7 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
   }
   const generatePrd = version => {
     if (drawer?.id === 'discovery') closeDrawer()
-    setModal({ kind: 'discoveryPrd', reqId: req.id, version })
+    openPreparation?.(req.id, 'prd', { discoveryVersion: version })
   }
   const openPrdManagement = () => {
     closeDrawer()
@@ -446,10 +447,6 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
         h('span', { className: 'pw-count pw-read-status', 'data-status': req.status }, t('col_' + req.status)),
         req.updated && h('span', { className: 'pw-note' }, t('updated'), ' ', dateText(req.updated))),
       !arranging && !managePrds && h('div', { className: 'pw-actions pw-req-head-actions' },
-        !editing && req.status === 'backlog' && h(React.Fragment, null,
-          h('button', { type: 'button', className: 'pw-button', disabled: busy, onClick: () => openDiscovery(req.id) },
-            t(discovery.result?.data?.sessionId ? 'discoveryContinue' : 'discoveryStart')),
-          h('button', { type: 'button', className: 'pw-button', disabled: busy, onClick: () => generatePrd() }, t('discoveryPrd'))),
         regular && transitionButton,
         canEdit && !form.editing && h('button', { type: 'button', className: 'pw-button', onClick: () => {
           closeDrawer()
@@ -467,6 +464,10 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
               onClick: () => setAddProgress(!addProgress), 'aria-expanded': addProgress }, t('recordProgress')),
             req.status === 'backlog' && !editing && h('button', { className: 'pw-button', disabled: busy, onClick: organize }, t('aiOrganize')),
             canDelete && !editing && h('button', { className: 'pw-button danger', disabled: busy, onClick: onDelete }, t('delete')))))),
+    !editing && !arranging && !managePrds && openPreparation && h(PreparationActions, {
+      req, root, t, busy, hasDiscoverySession: !!discovery.result?.data?.sessionId,
+      open: (kind, input) => openPreparation(req.id, kind, input),
+    }),
     detailContent)
   return h(ReadingLayout, { t, rail: regular && rail, drawer: activeDrawer, onClose: closeDrawer, modalActive,
     scrollMemory: uiMemory.detailScroll ??= {}, scrollKey: layoutKey }, content)

@@ -1,6 +1,7 @@
 // Stage-1 DSH 接入原型（PROTOTYPE — 正式接入后移除演示入口，保留可复用接入函数）。
 // The link/run/sync machinery now lives in core/link.js (stage 2); this module keeps
 // the demo data, demo entry routes/tools and the real apply_patch mount used by V-4.
+import { reviewMaterial } from './review-material.js'
 import { join } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -47,7 +48,7 @@ export async function ensureDemoData(root) {
     await store.moveRequirement(root, reqId, 'reviewing')
     await store.saveAIReview(root, reqId, {
       requestId: 'prototype-review',
-      source: { prds: [{ id: material.id, title: material.title, version: material.version }] },
+      source: (await reviewMaterial(root, await store.readRequirement(root, reqId), [material])).source,
       report: '原型演示夹具。核对空输入提示及有效输入的问候结果。',
     })
     await store.moveRequirement(root, reqId, 'ready')

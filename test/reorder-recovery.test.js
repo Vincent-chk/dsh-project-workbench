@@ -10,8 +10,8 @@ async function fixture(t, label) {
   await initProject(root)
   const reqId = (await createRequirement(root, label)).data.id
   await updateRequirement(root, reqId, { q_pain: '概述' })
-  await seedAIReview(root, reqId)
-  for (const to of ['reviewing', 'ready', 'in_progress']) await moveRequirement(root, reqId, to)
+  await seedAIReview(root, reqId, { submit: true })
+  for (const to of ['ready', 'in_progress']) await moveRequirement(root, reqId, to)
   for (const title of ['甲', '乙', '丙', '丁']) await createIssue(root, reqId, title, { problemOverview: '要做的事' })
   return { root, reqId }
 }

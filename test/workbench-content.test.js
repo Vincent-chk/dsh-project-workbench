@@ -165,8 +165,8 @@ test('current verification reports failed and unresolved checks even after a suc
   await store.initProject(root)
   const { id: reqId } = (await store.createRequirement(root, '空名字提示')).data
   await store.updateRequirement(root, reqId, { goal: '提示填写名字', scope: '空名字', acceptance: '看到请填写名字' })
-  await seedAIReview(root, reqId)
-  for (const status of ['reviewing', 'ready', 'in_progress']) await store.moveRequirement(root, reqId, status)
+  await seedAIReview(root, reqId, { submit: true })
+  for (const status of ['ready', 'in_progress']) await store.moveRequirement(root, reqId, status)
   const { id } = (await store.createIssue(root, reqId, '修复空名字提示')).data
   const read = async () => (await store.scanProject(root)).requirements[0].issues[0]
   const since = (await read()).deliveryStartedAt

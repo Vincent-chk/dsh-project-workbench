@@ -35,8 +35,8 @@ async function devReq(root, title = '需求') {
   await store.initProject(root)
   const { data } = await store.createRequirement(root, title)
   await store.updateRequirement(root, data.id, { goal: 'g', scope: 's', acceptance: 'a' })
-  await seedAIReview(root, data.id)
-  for (const s of ['reviewing', 'ready', 'in_progress']) await store.moveRequirement(root, data.id, s)
+  await seedAIReview(root, data.id, { submit: true })
+  for (const s of ['ready', 'in_progress']) await store.moveRequirement(root, data.id, s)
   return data.id
 }
 async function fullIssue(root, reqId, title = '任务') {

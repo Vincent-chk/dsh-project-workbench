@@ -70,7 +70,7 @@ export async function apply(ctx) {
   const delivery = installDelivery(ctx, { readOnlyChildren })
   const assist = installAssist(ctx, { readOnlyChildren })
   const acceptanceAssist = installAcceptanceAssist(ctx, { readOnlyChildren, links })
-  const requirementReview = installRequirementReview(ctx, { readOnlyChildren })
+  const requirementReview = installRequirementReview(ctx)
   installTools(ctx, links)
   const discovery = installDiscovery(ctx, { readOnlyChildren })
   const workbenchRoutes = {

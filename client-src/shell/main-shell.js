@@ -1,7 +1,6 @@
 import React from 'react'
 import { changesReviewedRequirement, startBlockers } from '../../core/state.js'
 import { rpc } from '../api.js'
-import { DiscoveryPrdDialog } from '../discovery.js'
 import { projectIdOf, reqDraftKey, issueDraftKey, reqDraftFrom, issueDraftFrom, taskContentPatch, taskFormError, freshRead, classifyProject, deliveryFingerprint } from '../project-state.js'
 import { workbenchError } from '../workbench-content.js'
 import { ErrorDetails, LeaveModal } from '../shared/ui.js'
@@ -532,6 +531,14 @@ export function MainShell(props) {
     if (res.ok) await enterSession(res.data.sessionId)
     else setError(res)
   })
+  const openPreparation = (reqId, kind, input) => guardLeave(async () => {
+    const requested = root
+    const res = await rpc('preparation/open', { root: requested, reqId, kind, ...input })
+    if (rootRef.current !== requested) return
+    if (!res.ok) { setError(res); return }
+    await enterSession(res.data.sessionId)
+    if (rootRef.current === requested) void refresh()
+  })
   // 开始/继续处理：补齐检查 → 定位 → run/start（一次请求）→ 进入会话与右栏。
   const startTask = (reqId, issueId) => guardLeave(async () => {
     const requested = root
@@ -559,14 +566,21 @@ export function MainShell(props) {
     refresh()
   })
 
-  const doMove = useCallback((req, to) => {
+  const doMove = useCallback((req, to, options = {}) => {
     if (saving || modal || to === req.status) return
     if (req.pendingReopen) { setModal({ kind: 'reopenRequirement', req }); return }
     const kind = MOVES[req.status]?.[to]
     if (!kind) { setModal({ kind: 'moveError', error: { code: 'ILLEGAL_TRANSITION' } }); return }
     const submit = (reason, inlineError, extra) => mutate('requirement/move', { root, id: req.id, to, reason, fileHash: req.hash, ...extra }, { inlineError })
-    if (kind === 'move') return submit()
-    if (kind === 'reason') { setModal({ kind, title: t('returnReview'), onOk: reason => submit(reason, true) }); return }
+    if (req.status === 'reviewing' && to === 'ready' && !options.reviewMarker) {
+      writeNav(openDetail(navRef.current, { reqId: req.id, issueId: null }, statusPage(req.status)))
+      return
+    }
+    if (kind === 'move') return submit(undefined, false, { reviewMarker: options.reviewMarker })
+    if (kind === 'reason') {
+      setModal({ kind, title: t('returnReview'), suggestion: options.suggestion, onOk: reason => submit(reason, true) })
+      return
+    }
     if (kind === 'confirmComplete') {
       // 验收通过绑定用户核对时的需求与任务内容；期间任何变化都会以
       // ROUND_CHANGED 拒绝，刷新后必须在新内容上重新确认。
@@ -853,11 +867,11 @@ export function MainShell(props) {
     })
   } else if (selected) {
     content = h(DetailPanel, {
-      key: projectKey + ':' + selected.id, req: selected, t, root, mutate, moveIssue, projectKey, rootRef, openDiscovery,
+      key: projectKey + ':' + selected.id, req: selected, t, root, mutate, moveIssue, projectKey, rootRef, openDiscovery, openPreparation,
       initialPrdId: params?.prdId, restorePrds: params?.restorePrds, onClosePrds: closeAssociatedPrds, modalActive: !!modal,
       initialDelivery: page === 'pending' && selected.status === 'pending', focusTarget, renderPrds, onMove: doMove,
-      onApprove: () => doMove(selected, 'ready'),
-      onReject: () => doMove(selected, 'backlog'),
+      onApprove: reviewMarker => doMove(selected, 'ready', { reviewMarker }),
+      onReject: suggestion => doMove(selected, 'backlog', { suggestion }),
       onDirty: setDetailDirty, busy: saving || !!pendingReorder || !!modal, sessionId: sessionRoot === root ? sessionId : undefined, setModal, uiMemory,
       onDelete: () => setModal({ kind: 'delete', req: selected }),
       onOpenIssue: (id, focusAcceptance) => guardLeave(() => {
@@ -905,13 +919,6 @@ export function MainShell(props) {
       h('button', { className: 'pw-button', style: { marginLeft: 'auto' }, onClick: doUndo }, t('undo')),
       h('button', { className: 'pw-button', onClick: () => setUndo(null), 'aria-label': t('dismiss') }, '✕')),
     content,
-    modal?.kind === 'discoveryPrd' && h(DiscoveryPrdDialog, {
-      key: [root, modal.reqId, modal.version].join(':'), root, reqId: modal.reqId, version: modal.version,
-      sessionId: sessionRoot === root ? sessionId : undefined, t,
-      onClose: () => setModal(current => current === modal ? null : current),
-      onOpen: () => { setModal(null); openDiscovery(modal.reqId) },
-      onReady: generated => setModal(current => current === modal ? { kind: 'prdEditor', reqId: modal.reqId, generated } : current),
-    }),
     modal?.kind === 'prdEditor' && h(PrdEditor, {
       key: [root, modal.id, modal.reqId, modal.generated?.id].join(':'), root, id: modal.id, reqId: modal.reqId, generated: modal.generated, t, uiMemory,
       onClose: () => setModal(current => current === modal ? null : current),
@@ -920,7 +927,7 @@ export function MainShell(props) {
         setModal(current => current === modal ? null : current)
       },
     }),
-    modal && !['leave', 'prdEditor', 'discoveryPrd'].includes(modal.kind) && h(ReasonModal, {
+    modal && !['leave', 'prdEditor'].includes(modal.kind) && h(ReasonModal, {
       key: modal.kind, modal, t, setModal, mutate, root, trashWithUndo, requirements, locatePrdLink,
       newDraft, clearNewDraft,
       changeNewDraft: (name, value) => setNewDraft(draft => ({ ...draft, [name]: value })),

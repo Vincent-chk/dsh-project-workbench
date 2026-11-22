@@ -15,14 +15,15 @@ const reply = (text, stopReason = 'completed') => ({ stopReason, output: [{ type
 async function setup(t) {
   const root = await makeRoot(t)
   const { ctx, agents, children } = stubSpawnHost(root)
-  const activations = []
-  const prompts = []
-  const spawn = ctx.subagents.startActivation
-  ctx.subagents.startActivation = opts => { activations.push(opts); return spawn(opts) }
-  ctx.sessionController.prompt = async request => { prompts.push(request); return { accepted: true } }
-  const readOnlyChildren = new Set()
+  const requests = []
+  ctx.agentDefaultModel = { currentSelection: () => ({ provider: 'fake-model', model: 'fixture' }) }
+  ctx.llm = { async *stream(options) {
+    const response = await new Promise(resolve => requests.push({ options, prompt: options.messages[0].content[0].text, resolve }))
+    yield { type: 'text-delta', index: 0, text: response.output[0].text }
+    yield { type: 'finish', reason: { kind: response.stopReason === 'completed' ? 'stop' : response.stopReason } }
+  } }
   const links = installLinks(ctx)
-  const { routes } = installRequirementReview(ctx, { readOnlyChildren })
+  const { routes } = installRequirementReview(ctx)
   const signal = new AbortController().signal
   const call = (method, input = {}) => dispatch(method, { root, ...input }, signal, { ...links.routes, ...routes })
   const ok = async (method, input) => {
@@ -48,11 +49,11 @@ async function setup(t) {
     })
     return result
   }
-  return { root, call, ok, create, status, waitState, activations, prompts, agents, children, links, readOnlyChildren }
+  return { root, call, ok, create, status, waitState, agents, requests, children, links, ctx }
 }
 
 test('inline reviews deduplicate across workspace aliases, archive snapshots without a chat, and gate human approval', async t => {
-  const { root, call, ok, create, status, waitState, activations, prompts, agents, children, readOnlyChildren } = await setup(t)
+  const { root, call, ok, create, status, waitState, agents, requests, children } = await setup(t)
   const id = await create('空输入提示', false)
   const other = await create('另一个需求', false)
   const prd = await savePrd(root, { id: 'prd-' + randomUUID(), reqIds: [id, other], markdown: '# 问候说明\n\n空输入提示。' })
@@ -68,18 +69,18 @@ test('inline reviews deduplicate across workspace aliases, archive snapshots wit
   const [first, duplicate] = await Promise.all([root, alias].map(path => ok('requirement/review/start', { root: path, id, after: null })))
   assert.equal(first.state, 'running')
   assert.equal(duplicate.runId, first.runId)
-  await waitFor(() => children.length === 1)
-  assert.equal(activations[0].delivery, 'caller')
-  assert.equal(activations[0].parent.session.header.cwd, activations[0].cwd)
-  assert.equal(readOnlyChildren.has(children[0].childId), true)
-  const prompt = children[0].prompt
+  await waitFor(() => requests.length === 1)
+  assert.deepEqual(requests[0].options.tools, [])
+  assert.equal(requests[0].options.sessionId, undefined)
+  assert.equal(requests[0].options.provider, 'fake-model')
+  const prompt = requests[0].prompt
   for (const expected of ['问候产品', '第 1 次评审', '空输入提示', '只评审需求', '产品价值', '用户价值', '使用频率', '改造难度', prd.version]) {
     assert.ok(prompt.includes(expected), expected)
   }
   assert.ok(!prompt.includes('另一个需求'))
   assert.equal((await call('requirement/move', { id, to: 'ready' })).code, 'REVIEW_REPORT_REQUIRED')
   const changedPrd = await savePrd(root, { id: prd.id, version: prd.version, reqIds: prd.reqIds, markdown: '# 问候说明\n\n只提示纯空格输入。' })
-  children[0].resolve(reply('建议暂缓。频率待核实。'))
+  requests[0].resolve(reply('建议暂缓。频率待核实。'))
   // Only after the child finished do we ask for status, as if returning to the detail.
   const done = await waitState(id, 'done')
   assert.deepEqual(done.reports.map(item => item.opinion), ['建议暂缓。频率待核实。'])
@@ -88,20 +89,25 @@ test('inline reviews deduplicate across workspace aliases, archive snapshots wit
   assert.equal(done.stale, true)
   const lateDuplicate = await ok('requirement/review/start', { id, after: null })
   assert.equal(lateDuplicate.state, 'done')
-  assert.equal(children.length, 1)
+  assert.equal(requests.length, 1)
   assert.equal((await call('requirement/move', { id: other, to: 'ready' })).code, 'REVIEW_REPORT_REQUIRED')
   const second = await ok('requirement/review/start', { id, after: done.reports[0].marker })
   assert.notEqual(second.runId, first.runId)
-  await waitFor(() => children.length === 2)
-  assert.match(children[1].prompt, /第 2 次评审/)
-  assert.ok(children[1].prompt.includes(changedPrd.version))
-  children[1].resolve(reply('建议暂缓，先验证触发频率。'))
+  await waitFor(() => requests.length === 2)
+  assert.match(requests[1].prompt, /第 2 次评审/)
+  assert.ok(requests[1].prompt.includes(changedPrd.version))
+  requests[1].resolve(reply('建议暂缓，先验证触发频率。'))
   const reviewed = await waitState(id, 'done')
   assert.equal(reviewed.reports.length, 2)
   assert.equal(reviewed.stale, false)
   await ok('requirement/update', { id, patch: { scope: '仅提示空值' } })
   assert.equal((await status(id)).stale, true)
-  await ok('requirement/review', { id, action: 'approve' })
+  assert.equal((await call('requirement/review', { id, action: 'approve' })).code, 'REVIEW_REPORT_REQUIRED')
+  await ok('requirement/review/start', { id, after: reviewed.reports[1].marker })
+  await waitFor(() => requests.length === 3)
+  requests[2].resolve(reply('建议推进。'))
+  const final = await waitState(id, 'done')
+  await ok('requirement/review', { id, action: 'approve', reviewMarker: final.reports[2].marker })
   const approved = await ok('requirement/get', { id })
   assert.equal(approved.status, 'ready')
   assert.equal(approved.reviews.filter(item => item.decision === 'approved' && item.by === 'human').length, 1)
@@ -113,24 +119,25 @@ test('inline reviews deduplicate across workspace aliases, archive snapshots wit
     return []
   }), [])
   assert.deepEqual((await ok('run/list')).runs, [])
-  assert.equal(prompts.length, 0)
-  assert.equal(agents.size, 1) // Only the cold project's blank parent.
+  assert.equal(agents.size, 0)
+  assert.equal(children.length, 0)
+  assert.equal(approved.reviews.at(-1).source.reportMarker, final.reports[2].marker)
 })
 
 test('an interrupted reply is discarded and a failed save retries the complete report once', async t => {
-  const { root, call, ok, create, status, waitState, children } = await setup(t)
+  const { root, call, ok, create, status, waitState, requests } = await setup(t)
   const id = await create('保存评审')
   await ok('requirement/review/start', { id, after: null })
-  await waitFor(() => children.length === 1)
-  children[0].resolve(reply('被中断的回复', 'aborted'))
+  await waitFor(() => requests.length === 1)
+  requests[0].resolve(reply('被中断的回复', 'aborted'))
   assert.deepEqual((await waitState(id, 'failed')).reports, [])
   assert.equal((await call('requirement/move', { id, to: 'ready' })).code, 'REVIEW_REPORT_REQUIRED')
   const second = await ok('requirement/review/start', { id, after: null })
-  await waitFor(() => children.length === 2)
-  assert.match(children[1].prompt, /第 1 次评审/)
+  await waitFor(() => requests.length === 2)
+  assert.match(requests[1].prompt, /第 1 次评审/)
   const reviews = join(root, '.project', 'requirements', id, 'reviews')
   await writeFile(reviews, 'fixture obstructs the report directory')
-  children[1].resolve(reply('完整报告'))
+  requests[1].resolve(reply('完整报告'))
   assert.equal((await waitState(id, 'save_failed')).reportsUnavailable, true)
   assert.equal((await call('requirement/move', { id, to: 'ready' })).ok, false)
   await rm(reviews)
@@ -138,7 +145,7 @@ test('an interrupted reply is discarded and a failed save retries the complete r
   assert.equal((await status(id)).state, 'save_failed')
   await Promise.all([0, 1].map(() => ok('requirement/review/start', { id, retrySave: true, runId: second.runId })))
   const done = await waitState(id, 'done')
-  assert.equal(children.length, 2)
+  assert.equal(requests.length, 2)
   assert.deepEqual(done.reports.map(item => item.opinion), ['完整报告'])
   assert.equal(done.reports[0].marker, second.runId)
   assert.match(await readFile(join(reviews, '1.md'), 'utf8'), /by: ai/)
@@ -176,7 +183,7 @@ test('old review reports remain readable, legacy tasks stay hidden, and rejectio
 })
 
 test('review entry and approval require a linked PRD, including requirements already under review', async t => {
-  const { root, ok, call, create, status, waitState, children } = await setup(t)
+  const { root, ok, call, create, status, waitState, requests } = await setup(t)
   const other = await create('另一条已有 PRD 的需求')
   const id = await create('历史需求待补 PRD', false)
   assert.equal((await call('requirement/review', { id, action: 'submit' })).code, 'REVIEW_PRD_REQUIRED')
@@ -190,13 +197,13 @@ test('review entry and approval require a linked PRD, including requirements alr
   assert.equal((await status(id)).hasPrd, false)
   assert.equal((await call('requirement/review/start', { id, after: 'old-no-prd' })).code, 'REVIEW_PRD_REQUIRED')
   assert.equal((await call('requirement/review', { id, action: 'approve' })).code, 'REVIEW_PRD_REQUIRED')
-  assert.equal(children.length, 0)
+  assert.equal(requests.length, 0)
   const prd = await seedReviewPrd(root, id)
   assert.equal((await status(id)).hasReview, false)
   assert.equal((await call('requirement/review', { id, action: 'approve' })).code, 'REVIEW_REPORT_REQUIRED')
   await ok('requirement/review/start', { id, after: 'old-no-prd' })
-  await waitFor(() => children.length === 1)
-  children[0].resolve(reply('基于关联 PRD 的评审。'))
+  await waitFor(() => requests.length === 1)
+  requests[0].resolve(reply('基于关联 PRD 的评审。'))
   assert.equal((await waitState(id, 'done')).hasReview, true)
   await savePrd(root, { ...prd, reqIds: [other] })
   await seedReviewPrd(root, id)

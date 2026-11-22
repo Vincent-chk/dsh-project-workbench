@@ -3,10 +3,12 @@ import { createHash, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { reviewPrds, savePrd } from '../core/prd.js'
+import { moveRequirement, readRequirement } from '../core/store.js'
+import { reviewMaterial } from '../core/review-material.js'
 
 export async function makeRoot(t) {
   const root = await mkdtemp(join(tmpdir(), 'pw-store-'))
-  t.after(() => rm(root, { recursive: true, force: true }))
+  t.after(() => rm(root, { recursive: true, force: true, maxRetries: 3 }))
   return root
 }
 
@@ -17,9 +19,11 @@ export async function seedReviewPrd(root, reqId) {
   return existing ?? savePrd(root, { id: 'prd-' + randomUUID(), reqIds: [reqId], markdown: '# 评审夹具\n\n执行测试需求的首版范围。' })
 }
 
-export async function seedAIReview(root, reqId) {
-  const { id, title, version } = await seedReviewPrd(root, reqId)
-  const source = JSON.stringify(JSON.stringify({ prds: [{ id, title, version }] }))
+export async function seedAIReview(root, reqId, { submit = false } = {}) {
+  await seedReviewPrd(root, reqId)
+  if (submit) await moveRequirement(root, reqId, 'reviewing')
+  const current = await reviewMaterial(root, await readRequirement(root, reqId), await reviewPrds(root, reqId))
+  const source = JSON.stringify(JSON.stringify(current.source))
   const reviews = join(root, '.project', 'requirements', reqId, 'reviews')
   await mkdir(reviews, { recursive: true })
   await writeFile(join(reviews, '0.md'), `---\nschema: 2\nkind: ai_review\nround: 0\ndecision: reported\nby: ai\nmarker: test-ai-review\nopinionText: "需求评审夹具"\nsource: ${source}\n---\n`)

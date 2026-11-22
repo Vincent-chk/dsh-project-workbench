@@ -1,8 +1,9 @@
 import React from 'react'
 import { discoveryQuestionText } from '../core/discovery-qa.js'
 import { rpc } from './api.js'
-import { Disclosure, ErrorDetails, Modal } from './shared/ui.js'
+import { Disclosure, ErrorDetails } from './shared/ui.js'
 import { renderMarkdown } from './pages/resources.js'
+import { PreparationSession } from './preparation.js'
 
 const h = React.createElement
 const { useEffect, useId, useMemo, useRef, useState } = React
@@ -86,34 +87,6 @@ export function DiscoveryRecords({ result, retry, t, busy, openSource, generateP
       h('button', { type: 'button', className: 'pw-button', disabled: busy, onClick: () => generatePrd(record.version) }, t('discoveryUseVersion'))))))
 }
 
-export function DiscoveryPrdDialog({ root, reqId, version, sessionId, t, onClose, onReady, onOpen }) {
-  const [failure, setFailure] = useState(null)
-  const [attempt, setAttempt] = useState(0)
-  const ready = useRef(onReady)
-  ready.current = onReady
-  useEffect(() => {
-    let active = true
-    rpc('prd/generate', { root, reqIds: [reqId], version, sessionId }).then(res => {
-      if (!active) return
-      if (res.ok) ready.current(res.data)
-      else setFailure(res)
-    })
-    return () => { active = false }
-  }, [root, reqId, version, sessionId, attempt])
-
-  const savedGate = failure?.code === 'DISCOVERY_SAVE_REQUIRED'
-  const needGate = failure?.code === 'DISCOVERY_REQUIRED'
-  const poolGate = failure?.code === 'DISCOVERY_POOL_ONLY'
-  const retry = () => { setFailure(null); setAttempt(n => n + 1) }
-  const actions = [h('button', { key: 'close', className: 'pw-button', onClick: onClose }, t('discoveryClose'))]
-  if (savedGate || needGate) actions.push(h('button', { key: 'resume', className: 'pw-button primary', autoFocus: true, onClick: onOpen }, t(savedGate ? 'discoveryGoSave' : 'discoveryGo')))
-  else if (failure && !poolGate) actions.push(h('button', { key: 'retry', className: 'pw-button primary', onClick: retry }, t('pwbRetry')))
-  return h(Modal, { title: t(savedGate ? 'discoverySaveGate' : needGate || poolGate ? 'discoveryGate' : 'discoveryPrd'), onClose, actions },
-    savedGate || needGate || poolGate
-      ? h('p', { role: 'alert' }, t(savedGate ? 'discoverySaveGateBody' : poolGate ? 'discoveryPoolGateBody' : 'discoveryGateBody'))
-      : failure ? h(ErrorDetails, { error: failure, t }) : h('p', { role: 'status' }, t('discoveryPrdPending')))
-}
-
 export function DiscoverySession({ root, sessionId, sessionStatus, visible, t, uiMemory, openRequirement, renderTask, DiscoveryModal }) {
   const [result, setResult] = useState(null)
   const sessionBusy = sessionStatus?.running === true || !!sessionStatus?.pendingInteraction
@@ -122,17 +95,20 @@ export function DiscoverySession({ root, sessionId, sessionStatus, visible, t, u
     let disposed = false
     let timer
     const read = async () => {
-      const res = await rpc('discovery/session', { root, sessionId })
+      const discovery = await rpc('discovery/session', { root, sessionId })
+      const res = discovery.ok && !discovery.data.requirement
+        ? await rpc('preparation/session', { root, sessionId }) : discovery
       if (disposed) return
       setResult(res)
-      if (!res.ok || res.data.requirement) timer = setTimeout(read, 2500)
+      if (!res.ok || res.data.requirement || res.data.preparation) timer = setTimeout(read, 2500)
     }
     read()
     return () => { disposed = true; clearTimeout(timer) }
   }, [root, sessionId, visible, sessionBusy])
   if (!result) return visible && h('p', { role: 'status', className: 'pw-note' }, t('loading'))
   if (!result.ok) return h(ErrorDetails, { error: result, t })
-  const { requirement: req, questions } = result.data
+  const { requirement: req, questions, preparation } = result.data
+  if (preparation) return h(PreparationSession, { key: sessionId, initial: preparation, root, sessionId, sessionBusy, t, openRequirement })
   return req ? h(DiscoverySummary, {
     req, root, sessionId, sessionBusy, t, uiMemory, openRequirement, questions, DiscoveryModal,
   }) : renderTask()
