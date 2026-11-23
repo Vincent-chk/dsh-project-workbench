@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { installAssist } from '../core/assist.js'
 import { adoptProposal, listProposals, markDismissed } from '../core/proposals.js'
 import * as store from '../core/store.js'
-import { makeRoot, seedAIReview, stubSpawnHost, childReply, waitFor, seedReviewPrd } from './util.js'
+import { makeRoot, seedAIReview, stubSpawnHost, childReply, waitFor, seedReviewPrd, startTestDevelopment } from './util.js'
 
 async function reqIn(root, status, title = '需求') {
   await store.initProject(root)
@@ -20,7 +20,7 @@ async function reqIn(root, status, title = '需求') {
   await seedAIReview(root, data.id)
   await store.moveRequirement(root, data.id, 'ready')
   if (status === 'ready') return data.id
-  await store.moveRequirement(root, data.id, 'in_progress')
+  await startTestDevelopment(root, data.id)
   return data.id
 }
 const reqOf = async (root, id) => (await store.scanProject(root)).requirements.find(r => r.id === id)
@@ -118,13 +118,13 @@ test('organizing again after a human edit can produce the same draft on the new 
   assert.equal(requirement.q_who, '人工补充的使用人')
 })
 
-test('organize is limited to the pool; split to development', async t => {
+test('organize is limited to the pool; split to task planning', async t => {
   const root = await makeRoot(t)
   const { assist } = setup(t, root)
   const dev = await reqIn(root, 'in_progress')
   await assert.rejects(assist.routes['requirement/organize']({ root, id: dev }), e => e.code === 'INVALID_STATE')
   const pool = await reqIn(root, 'backlog', '池中需求')
-  await assert.rejects(assist.routes['requirement/split']({ root, id: pool }), e => e.code === 'REQ_NOT_ACTIVE')
+  await assert.rejects(assist.routes['requirement/split']({ root, id: pool }), e => e.code === 'TASK_PLANNING_NOT_ALLOWED')
 })
 
 test('split checks the actual project, returns an existing task, and drafts only a separate gap', async t => {
@@ -133,7 +133,7 @@ test('split checks the actual project, returns an existing task, and drafts only
   const reqId = await reqIn(root, 'backlog', '修复问候并补终端入口')
   await store.updateRequirement(root, reqId, { q_pain: '空名字没有提示，终端无法发起问候', q_out: '账户系统', acceptance: '空名字提示填写\n终端可发起问候' })
   await seedAIReview(root, reqId, { submit: true })
-  for (const status of ['ready', 'in_progress']) await store.moveRequirement(root, reqId, status)
+  await store.moveRequirement(root, reqId, 'ready')
   const { data: existing } = await store.createIssue(root, reqId, '修复空名字', { problemOverview: '处理空名字', acceptance: '空名字提示填写' })
   await store.addIssueUpdate(root, reqId, existing.id, '空字符串已支持，全空格仍缺提示。')
   await writeFile(join(root, 'README.md'), '当前只支持从库函数发起问候。\n')
@@ -187,7 +187,8 @@ test('split preserves an independent gap even when it cites a partially covering
   const reqId = await reqIn(root, 'backlog', '空白和非字符串输入都应安全')
   await store.updateRequirement(root, reqId, { q_pain: '空白名字需要提示，其他类型也不能让函数崩溃', acceptance: '空白名字有提示\n非字符串输入不抛出异常' })
   await seedAIReview(root, reqId, { submit: true })
-  for (const status of ['ready', 'in_progress']) await store.moveRequirement(root, reqId, status)
+  await store.moveRequirement(root, reqId, 'ready')
+  await startTestDevelopment(root, reqId)
   const { data: existing } = await store.createIssue(root, reqId, '只核对空白名字', { problemOverview: '只核对现有空白行为，不修改代码', acceptance: '空白名字有提示' })
   await writeFile(join(root, 'demo.mjs'), "export function greet(name) {\n  if (!name.trim()) return '请填写名字'\n}\n")
   await writeFile(join(root, 'demo.test.mjs'), "test('正常名字保留问候', () => {})\n")
@@ -229,7 +230,8 @@ test('split does not promote old task checks or limits after requirement re-revi
   now += 1000
   await store.updateRequirement(root, reqId, { goal: '修改后的目标' }, { confirmReviewInvalid: true, reason: '重新评审目标' })
   await seedAIReview(root, reqId, { submit: true })
-  for (const status of ['ready', 'in_progress']) await store.moveRequirement(root, reqId, status)
+  await store.moveRequirement(root, reqId, 'ready')
+  await startTestDevelopment(root, reqId)
   now += 1000
   await store.appendObjectiveSync(root, reqId, task.id, { sid: 'test', entries: [{ seq: 2,
     line: `- 改动文件：example.mjs（write，会话 test 第 2 条，${new Date(now).toISOString()}）` }] })
@@ -304,7 +306,8 @@ test('split excludes each item in a multi-part scope exclusion', async t => {
     acceptance: '空名字显示填写提示',
   })
   await seedAIReview(root, reqId, { submit: true })
-  for (const status of ['ready', 'in_progress']) await store.moveRequirement(root, reqId, status)
+  await store.moveRequirement(root, reqId, 'ready')
+  await startTestDevelopment(root, reqId)
   await writeFile(join(root, 'README.md'), '目前空名字不会给出填写提示。')
   const pending = assist.routes['requirement/split']({ root, id: reqId })
   await waitFor(() => children.length === 1)

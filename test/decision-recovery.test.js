@@ -1,11 +1,12 @@
 import { reviewPrds, savePrd } from '../core/prd.js'
 import { reviewMaterial } from '../core/review-material.js'
+import { parseFrontmatter } from '../core/frontmatter.js'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import fs from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { join } from 'node:path'
-import { makeRoot, seedAIReview, issueFileHash, seedReviewPrd } from './util.js'
+import { makeRoot, seedAIReview, issueFileHash, seedReviewPrd, startTestDevelopment } from './util.js'
 import * as store from '../core/store.js'
 import { dispatch } from '../core/rpc.js'
 
@@ -30,7 +31,7 @@ async function makeRequirement(t, developing = false) {
   if (developing) {
     await seedAIReview(root, id)
     await store.moveRequirement(root, id, 'ready')
-    await store.moveRequirement(root, id, 'in_progress')
+    await startTestDevelopment(root, id)
   }
   return { root, id, file: join(root, '.project', 'requirements', id, 'requirement.md') }
 }
@@ -59,7 +60,7 @@ test('a retried approval records the new review marker when the PRD changed afte
   fault = { target: path => path.endsWith('/reviews/1.md'), remaining: 1 }
   await assert.rejects(store.moveRequirement(root, id, 'ready', { reviewMarker: 'test-ai-review' }), { code: 'EIO' })
   const [prd] = await reviewPrds(root, id)
-  const edited = await savePrd(root, { ...prd, markdown: '# 更新后的 PRD' })
+  const edited = await savePrd(root, { ...prd, markdown: '# 更新后的 PRD\n\n新版需求仅覆盖空值处理。' })
   const { source } = await reviewMaterial(root, await store.readRequirement(root, id), [edited])
   await store.saveAIReview(root, id, { report: '建议推进', requestId: 'updated-report', source })
   await store.moveRequirement(root, id, 'ready', { reviewMarker: 'updated-report' })
@@ -87,7 +88,7 @@ test('failed invalidation preserves reviewed content and retries with original f
 test('human acceptance retries a partially written decision with a refreshed reviewed fingerprint', async t => {
   const { root, id } = await makeRequirement(t, true)
   const issueId = (await store.createIssue(root, id, '任务')).data.id
-  await store.updateIssue(root, id, issueId, { resultSummary: '结果', evidence: '依据' })
+  await store.updateIssue(root, id, issueId, { acceptance: '核对结果', resultSummary: '结果', evidence: '依据' })
   await store.confirmIssue(root, id, issueId, { fileHash: await issueFileHash(root, id, issueId) })
   await store.submitRequirement(root, id, { summary: '交付摘要' })
   const read = async () => (await store.scanProject(root)).requirements[0]
@@ -109,7 +110,7 @@ test('human acceptance retries a partially written decision with a refreshed rev
 
 test('reopen preserves multiline decision and completed item through a plan write failure', async t => {
   const { root, id, file } = await makeRequirement(t, true)
-  const issueId = (await store.createIssue(root, id, '任务')).data.id
+  const issueId = (await store.createIssue(root, id, '任务', { problemOverview: '核对处理流程', acceptance: '核对结果' })).data.id
   await store.updateIssue(root, id, issueId, { resultSummary: '旧结果', evidence: '旧依据' })
   await store.confirmIssue(root, id, issueId, { fileHash: await issueFileHash(root, id, issueId) })
   await store.submitRequirement(root, id, { summary: '原摘要' })
@@ -132,7 +133,11 @@ test('reopen preserves multiline decision and completed item through a plan writ
   fault = { target: path => path === file, remaining: 3 }
   await assert.rejects(store.reopenRequirement(root, id, { reason: '再次打回', reopen: [issueId], fileHash: secondHash }),
     error => error.code === 'REOPEN_ITEM_FAILED' && error.message.includes(issueId))
-  await store.moveIssue(root, id, issueId, 'cancelled', { reason: '改为取消' })
+  await assert.rejects(store.moveIssue(root, id, issueId, 'cancelled', { reason: '改为取消' }), { code: 'REOPEN_PENDING' })
+  const issuePath = join(root, '.project', 'requirements', id, 'issues', issueId + '.md')
+  const editedOutside = parseFrontmatter(await fs.readFile(issuePath, 'utf8'))
+  editedOutside.setPlain('status', 'cancelled')
+  await fs.writeFile(issuePath, editedOutside.toString())
   await store.reopenRequirement(root, id, { reason: '再次打回', reopen: [issueId], fileHash: secondHash })
   req = (await store.scanProject(root)).requirements[0]
   assert.equal(req.issues[0].status, 'cancelled')

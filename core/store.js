@@ -7,11 +7,11 @@ import { join, basename, relative, isAbsolute, sep } from 'node:path'
 import { randomBytes, randomUUID, createHash } from 'node:crypto'
 import { atomicWrite, WorkbenchError } from './files.js'
 import { parseFrontmatter } from './frontmatter.js'
-import { aiReviewReports, REVIEW_TASK_PURPOSE, PREPARATION_TASKS, canMoveRequirement, canMoveIssue, canCreateIssue, changesReviewedRequirement, freshDelivery, effectiveEvidence, taskContentBlockers, taskOverview, TASK_CONTENT_FIELDS, REQUIREMENT_STATES, ISSUE_STATES, TERMINAL_ISSUE } from './state.js'
+import { aiReviewReports, REVIEW_TASK_PURPOSE, PREPARATION_TASKS, canMoveRequirement, canMoveIssue, canCreateIssue, changesReviewedRequirement, freshDelivery, effectiveEvidence, startBlockers, taskContentBlockers, taskOverview, TASK_CONTENT_FIELDS, REQUIREMENT_STATES, ISSUE_STATES, TERMINAL_ISSUE } from './state.js'
 import { evidenceFacts, isEvidenceCommand, isEvidenceOutcome, isObservationCommand, isVerificationCommand } from './extract.js'
 import { readSplitEvidence } from './split-evidence.js'
 import { requireReviewPrds, reviewPrds, withPrdLock } from './prd.js'
-import { matchesReview, reviewMaterial, reviewSubmission } from './review-material.js'
+import { matchesReview, requireReviewPreparation, reviewMaterial, reviewSubmission } from './review-material.js'
 
 export const SUPPORTED_SCHEMA = 2
 const REQ_ID_RE = /^req-\d{8}-[0-9a-f]{6}$/
@@ -234,7 +234,8 @@ function verificationFor({ files, commands }, since, evidence, evidenceAt) {
 // its progress entry. `entries` are {seq, line}; only unseen seqs are appended.
 export async function appendObjectiveSync(root, reqId, id, { sid, entries, activityPrefix }) {
   return withIssueLock(root, reqId, id, async () => {
-    if (await reqStatus(root, reqId) !== 'in_progress') return { added: 0 }
+    const { doc: requirement } = await loadReqDoc(root, reqId)
+    if (requirement.get('status') !== 'in_progress' || decodePendingReopen(requirement.get('pendingReopen'))) return { added: 0 }
     const { file, doc } = await loadIssueDoc(root, reqId, id)
     if (TERMINAL_ISSUE.has(doc.get('status'))) return { added: 0 }
     const existingSeqs = new Set([...doc.body.matchAll(new RegExp(`会话 ${sid} 第 (\\d+) 条`, 'g'))].map(m => Number(m[1])))
@@ -319,15 +320,13 @@ function decodePendingDecision(raw) {
   try { const v = JSON.parse(raw); return v && v.marker ? v : null } catch { return null }
 }
 
-// A partial scan cannot prove which tasks were reviewed. Keep other projects
-// and unrelated requirements usable, but never submit or approve this delivery
-// while one of its task files could not be interpreted reliably.
+// A partial scan cannot prove that the complete set of tasks was checked.
 function assertDeliveryDataComplete(index, id) {
   const taskDir = join('requirements', id, 'issues')
   const incomplete = index.diagnostics.some(item =>
     (item.path === taskDir || item.path.startsWith(taskDir + sep)) &&
     ['READ_FAILED', 'MISSING_FRONTMATTER', 'MISSING_FIELD', 'INVALID_STATUS', 'SCHEMA_TOO_NEW'].includes(item.code))
-  if (incomplete) throw new WorkbenchError('DELIVERY_DATA_INCOMPLETE', 'a task in this delivery could not be read or interpreted; repair it and review again')
+  if (incomplete) throw new WorkbenchError('DELIVERY_DATA_INCOMPLETE', 'a task could not be read or interpreted; repair its file and try again')
 }
 // Write a decision record exactly once per attempt. A millisecond attempt marker
 // is persisted in pendingDecision BEFORE the decision write, so a retry after any
@@ -400,8 +399,9 @@ function issueFromDoc(doc, path, requirementDeliveryStartedAt = 0) {
   const result = getSection(doc.body, '处理结果')
   const deliveryStartedAt = Number(doc.get('deliveryStartedAt')) || 0
   const objective = objectiveText(doc.body)
+  const savedObjectiveAt = Number(doc.get('objectiveAt')) || 0
   const since = Math.max(deliveryStartedAt, Number(requirementDeliveryStartedAt) || 0)
-  const { hasObjective, objectiveAt, files, commands } = objectiveEvidence(objective, since, Number(doc.get('objectiveAt')) || 0)
+  const { hasObjective, objectiveAt, files, commands } = objectiveEvidence(objective, since, savedObjectiveAt)
   const issue = {
     id: doc.get('id'), path, title: doc.get('title') ?? '', status: doc.get('status'),
     blocked_reason: doc.get('blocked_reason') ?? '', acceptance: doc.get('acceptance') ?? '',
@@ -428,6 +428,10 @@ function issueFromDoc(doc, path, requirementDeliveryStartedAt = 0) {
   // Both result and evidence must belong to this task delivery (see freshDelivery).
   issue.resultFresh = freshDelivery(issue, since)
   issue.verification = verificationFor({ files, commands }, since, issue.evidence, issue.evidenceAt)
+  if (issue.status === 'done') {
+    const acceptedSince = Math.max(deliveryStartedAt, issue.resultScopeAt || 0)
+    issue.acceptedObjectiveAt = acceptedSince === since ? objectiveAt : objectiveEvidence(objective, acceptedSince, savedObjectiveAt).objectiveAt
+  }
   return issue
 }
 // Effective verification evidence lives in state.js (shared with the guards).
@@ -752,11 +756,12 @@ const REVIEW_RECORD_EDGES = {
   'reviewing>ready': { kind: 'review', decision: 'approved' },
   'reviewing>backlog': { kind: 'review', decision: 'returned' },
   'ready>backlog': { kind: 'review', decision: 'returned' },
+  'ready>backlog': { kind: 'review', decision: 'returned' },
   'in_progress>backlog': { kind: 'review', decision: 'returned' },
   'pending>completed': { kind: 'acceptance', decision: 'approved' },
 }
 
-export async function moveRequirement(root, id, to, { reason, actor = 'human', opinion = '', fileHash, confirmReviewInvalid = false, reopenCount = 0, proposalId, expectFingerprint, reviewMarker } = {}) {
+export async function moveRequirement(root, id, to, { reason, actor = 'human', opinion = '', fileHash, confirmReviewInvalid = false, proposalId, expectFingerprint, reviewMarker } = {}) {
   return withRequirementLock(root, id, async () => {
     const { file, raw, doc } = await loadReqDoc(root, id)
     const from = doc.get('status')
@@ -770,16 +775,19 @@ export async function moveRequirement(root, id, to, { reason, actor = 'human', o
     if (decodePendingReopen(doc.get('pendingReopen'))) {
       throw new WorkbenchError('REOPEN_PENDING', 'finish reopening before changing this requirement')
     }
-    // Review invalidation must flow through requirement/update with an actual
-    // substantive edit; the generic move entry cannot return a reviewed
-    // requirement to the pool on a bare confirmation.
-    if ((from === 'ready' || from === 'in_progress') && to === 'backlog') {
+    if (from === 'in_progress' && to === 'backlog') {
       throw new WorkbenchError('REVIEW_INVALIDATION_REQUIRED', 'returning a reviewed requirement to the pool requires a substantive change via requirement/update')
+    }
+    if (['pending', 'completed'].includes(from) && to === 'in_progress') {
+      throw new WorkbenchError('REOPEN_SELECTION_REQUIRED', 'select tasks to reopen or add new tasks')
     }
     const index = await scanProject(root)
     const req = index.requirements.find(r => r.id === id)
     const issues = req?.issues ?? []
-    if (from === 'pending' && to === 'completed') assertDeliveryDataComplete(index, id)
+    const starting = from === 'ready' && to === 'in_progress' && actor === 'human'
+    if (starting || (from === 'in_progress' && to === 'pending') || (from === 'pending' && to === 'completed')) {
+      assertDeliveryDataComplete(index, id)
+    }
     // A status suggestion is only a location hint; adopting one must never
     // bypass the human confirmation of the actual delivery contents.
     if (from === 'pending' && to === 'completed' && proposalId && !expectFingerprint) {
@@ -796,16 +804,17 @@ export async function moveRequirement(root, id, to, { reason, actor = 'human', o
     const submitting = from === 'backlog' && to === 'reviewing'
     const commit = async directory => {
       const returning = from === 'reviewing' && to === 'backlog'
-      const reports = approving || returning ? aiReviewReports(await readReviews(root, id, { strict: approving })) : []
+      const reviews = approving || starting || returning ? await readReviews(root, id, { strict: approving || starting }) : []
+      const reports = aiReviewReports(reviews)
       const latest = reports.at(-1)
       const currentReq = reqFromDoc(doc, file, id)
       const submissionId = reviewSubmission(currentReq)
       const pendingApproval = pending?.kind === 'review' && pending.decision === 'approved'
       let report = latest?.source?.submissionId === submissionId ? latest : null
       if (approving) {
-        const prds = await requireReviewPrds(directory, id)
-        const { source } = await reviewMaterial(directory, currentReq, prds)
-        if (!matchesReview(report, source) || (reviewMarker !== undefined && reviewMarker !== report.marker)) report = null
+        const material = await reviewMaterial(directory, currentReq, await reviewPrds(directory, id))
+        requireReviewPreparation(material)
+        if (!matchesReview(report, material.source) || (reviewMarker !== undefined && reviewMarker !== report.marker)) report = null
         // A new, valid approval can supersede an incomplete write for another report.
         if (report && pendingApproval && pending.source?.reportMarker !== report.marker) doc.setString('pendingDecision', '')
       } else if (returning && pendingApproval) {
@@ -819,12 +828,21 @@ export async function moveRequirement(root, id, to, { reason, actor = 'human', o
         hasAIReview: approving && !!report,
         confirmReviewInvalid, running,
         summary: doc.get('deliverySummary'),
-        pendingReopen: decodePendingReopen(doc.get('pendingReopen')), reopenCount,
+        pendingReopen: decodePendingReopen(doc.get('pendingReopen')),
         reqDeliveryStartedAt: Number(doc.get('deliveryStartedAt')) || 0,
         summaryAt: Number(doc.get('deliverySummaryAt')) || 0,
       })
       if (!guard.ok) throw new WorkbenchError(guard.code, guard.reason)
       if (submitting) await requireReviewPrds(directory, id)
+      if (starting) {
+        const material = await reviewMaterial(directory, currentReq, await reviewPrds(directory, id))
+        requireReviewPreparation(material)
+        const approval = reviews.filter(entry => entry.kind === 'review' && entry.by === 'human').at(-1)
+        if (approval?.decision !== 'approved' || approval.source?.submissionId !== submissionId ||
+            approval.source.reportMarker !== report?.marker || !matchesReview(report, material.source)) {
+          throw new WorkbenchError('REVIEW_APPROVAL_STALE', 'return to the pool and review the current materials before starting development')
+        }
+      }
       // Record the decision before the status write, using the attempt marker to retry exactly once.
       const record = REVIEW_RECORD_EDGES[`${from}>${to}`]
       if (!record && pending) throw new WorkbenchError('DECISION_PENDING', 'finish the previous decision before making another change')
@@ -850,7 +868,7 @@ export async function moveRequirement(root, id, to, { reason, actor = 'human', o
       return { ok: true, data: { id, from, to } }
     }
     // Hold the PRD queue through commit so a concurrent unlink cannot bypass the gate.
-    return submitting || approving || (from === 'reviewing' && to === 'backlog' && !!pending) ? withPrdLock(root, commit) : commit()
+    return submitting || approving || starting || (from === 'reviewing' && to === 'backlog' && !!pending) ? withPrdLock(root, commit) : commit()
   })
 }
 
@@ -865,6 +883,7 @@ export function deliveryFingerprint(req) {
 // Submit for acceptance: save the summary, then enforce the shared PRD 9.5
 // conditions. Auto (stage 3) and manual (stage 5) flows call this same entry.
 export async function submitRequirement(root, id, { summary, cancelImpact = '', actor = 'human', expectFingerprint } = {}) {
+  if (summary != null && typeof summary !== 'string') throw new WorkbenchError('SUMMARY_REQUIRED', 'a delivery summary must be text')
   return withRequirementLock(root, id, async () => {
     const { file, doc } = await loadReqDoc(root, id)
     const from = doc.get('status')
@@ -893,18 +912,20 @@ export async function submitRequirement(root, id, { summary, cancelImpact = '', 
     if (expectFingerprint != null && deliveryFingerprint(req ?? { issues: [] }) !== expectFingerprint) {
       throw new WorkbenchError('ROUND_CHANGED', 'the delivery changed while the summary was drafted; re-draft for the current delivery')
     }
-    const stamp = Math.max(Date.now(), Number(doc.get('deliveryStartedAt')) || 0)
-    if (!blank(summary)) { doc.setString('deliverySummary', String(summary).trim()); doc.setPlain('deliverySummaryAt', stamp) }
+    const issues = req?.issues ?? []
+    const stamp = issues.reduce((time, issue) => Math.max(time, issue.resultAt), Math.max(Date.now(), Number(doc.get('deliveryStartedAt')) || 0))
+    if (summary?.trim()) { doc.setString('deliverySummary', summary.trim()); doc.setPlain('deliverySummaryAt', stamp) }
     if (!blank(cancelImpact)) { doc.setString('cancelImpact', String(cancelImpact).trim()); doc.setPlain('cancelImpactAt', stamp) }
     const guard = canMoveRequirement({
-      from, to: 'pending', title: doc.get('title'), issues: req?.issues ?? [], actor,
+      from, to: 'pending', title: doc.get('title'), issues, actor,
       summary: doc.get('deliverySummary'),
       pendingReopen: decodePendingReopen(doc.get('pendingReopen')),
       reqDeliveryStartedAt: Number(doc.get('deliveryStartedAt')) || 0,
       summaryAt: Number(doc.get('deliverySummaryAt')) || 0,
     })
     if (!guard.ok) {
-      // Preserve the entered summary even when conditions are not yet met.
+      // Keep the draft text without marking it as a summary of the final delivery.
+      if (summary?.trim()) doc.setPlain('deliverySummaryAt', 0)
       doc.setPlain('updated', nowIso())
       await atomicWrite(file, doc.toString())
       throw new WorkbenchError(guard.code, guard.reason)
@@ -934,8 +955,10 @@ async function loadIssueDoc(root, reqId, id) {
   }
   return { file, raw, doc }
 }
-async function reqStatus(root, reqId) {
-  const { doc } = await loadReqDoc(root, reqId)
+function taskWriteStatus(doc) {
+  if (decodePendingReopen(doc.get('pendingReopen'))) {
+    throw new WorkbenchError('REOPEN_PENDING', 'finish reopening before changing task status or content')
+  }
   return doc.get('status')
 }
 
@@ -997,10 +1020,9 @@ export async function createIssue(root, reqId, title, fields = null, id = null, 
         : { ok: true, data: { id: requestedId, reused: true } }
     }
     const { doc: requirement } = await loadReqDoc(root, reqId)
-    const status = requirement.get('status')
+    const status = taskWriteStatus(requirement)
     const guard = canCreateIssue(status)
     if (!guard.ok) throw new WorkbenchError(guard.code, guard.reason)
-    if (decodePendingReopen(requirement.get('pendingReopen'))) throw new WorkbenchError('REOPEN_PENDING', 'finish reopening before creating a task')
     // Internal fixtures and the old prototype can still open a title-only task.
     if (fields === null) {
       if (typeof title !== 'string' || blank(title)) throw new WorkbenchError('TITLE_REQUIRED', 'title is required')
@@ -1038,8 +1060,11 @@ const TASK_RESULT_FIELDS = ['resultSummary', 'evidence', 'knownLimits']
 // is written atomically with its fields. Result and evidence are stamped
 // SEPARATELY: updating only one leaves the other stale for this delivery.
 function applyIssuePatch(doc, patch, requirementDeliveryStartedAt = 0) {
-  for (const k of Object.keys(patch ?? {})) {
+  for (const [k, value] of Object.entries(patch ?? {})) {
     if (!ISSUE_EDITABLE.has(k)) throw new WorkbenchError('FIELD_NOT_EDITABLE', `cannot edit ${k}`)
+    if (k !== 'order' && k !== 'refs' && value != null && typeof value !== 'string') {
+      throw new WorkbenchError('INVALID_INPUT', `${k} must be text`)
+    }
   }
   let resultAuthored = false, evidenceAuthored = false, limitsAuthored = false
   for (const [k, v] of Object.entries(patch ?? {})) {
@@ -1102,6 +1127,7 @@ export async function updateIssue(root, reqId, id, patch, { fileHash, proposalId
     if (fileHash != null && hashText(raw) !== fileHash) throw new WorkbenchError('CONFLICT', 'issue changed since it was read; refresh and retry')
     const from = doc.get('status')
     const { doc: requirementDoc } = await loadReqDoc(root, reqId)
+    const requirementStatus = taskWriteStatus(requirementDoc)
     const reqSince = Number(requirementDoc.get('deliveryStartedAt')) || 0
     // Done/cancelled tasks are content read-only, but a human list reorder only
     // rewrites the order field; content, result and status stay untouched.
@@ -1111,7 +1137,7 @@ export async function updateIssue(root, reqId, id, patch, { fileHash, proposalId
       if (fileHash == null) throw new WorkbenchError('FINGERPRINT_REQUIRED', 'recording a result requires the task fingerprint')
       if (from === 'in_review') throw new WorkbenchError('INVALID_STATE', 'return the task before recording a new result')
       if (await readRunLock(root, id)) throw new WorkbenchError('RUNNING', 'stop the running task before recording a result')
-      if (await reqStatus(root, reqId) !== 'in_progress') throw new WorkbenchError('REQ_NOT_ACTIVE', 'the requirement must be in development')
+      if (requirementStatus !== 'in_progress') throw new WorkbenchError('REQ_NOT_ACTIVE', 'the requirement must be in development')
       if (Object.keys(patch ?? {}).some(key => !TASK_RESULT_FIELDS.includes(key))) throw new WorkbenchError('FIELD_NOT_EDITABLE', 'record only the result and verification')
       const task = issueFromDoc(doc, file, reqSince)
       const objective = task.hasObjective && task.objectiveAt >= Math.max(reqSince, task.deliveryStartedAt)
@@ -1134,7 +1160,6 @@ export async function updateIssue(root, reqId, id, patch, { fileHash, proposalId
     const invalidates = from === 'in_review' &&
       (taskOverview({ ...current, ...patch }) !== taskOverview(current) ||
         RESULT_INVALIDATING_FIELDS.some(k => patch?.[k] !== undefined && String(patch[k] ?? '') !== currentIssueField(doc, k)))
-    const requirementStatus = (actor === 'ai' || invalidates) ? await reqStatus(root, reqId) : null
     if (actor === 'ai' && requirementStatus !== 'in_progress') {
       throw new WorkbenchError('REQ_NOT_ACTIVE', '所属需求不是开发中，拒绝写入')
     }
@@ -1176,7 +1201,7 @@ export async function moveIssue(root, reqId, id, to, { reason, blockedReason, ac
       if (hashText(raw) !== fileHash) throw new WorkbenchError('CONFLICT', 'task changed since it was read; refresh and re-check the result')
     }
     const { doc: requirementDoc } = await loadReqDoc(root, reqId)
-    const requirementStatus = requirementDoc.get('status')
+    const requirementStatus = taskWriteStatus(requirementDoc)
     const issue = issueFromDoc(doc, file, Number(requirementDoc.get('deliveryStartedAt')) || 0)
     const running = !!(await readRunLock(root, id))
     const linked = await hasLink(root, id)
@@ -1185,6 +1210,10 @@ export async function moveIssue(root, reqId, id, to, { reason, blockedReason, ac
       result: issue.resultSummary, evidence: effectiveEvidence(issue), acceptance: issue.acceptance, resultFresh: issue.resultFresh,
     })
     if (!guard.ok) throw new WorkbenchError(guard.code, guard.reason)
+    if (to === 'doing' && (from === 'todo' || from === 'blocked')) {
+      const missing = startBlockers(issue)
+      if (missing.length) throw new WorkbenchError('MISSING_START_FIELDS', `fill before starting: ${missing.join(', ')}`)
+    }
     doc.setPlain('status', to)
     if (to === 'blocked') { doc.setString('blocked_reason', blockedReason); doc.setPlain('blockedAt', Date.now()) }
     if (from === 'blocked' && to !== 'blocked') { doc.setString('blocked_reason', ''); doc.setPlain('blockedAt', 0) }
@@ -1214,18 +1243,21 @@ export async function moveIssue(root, reqId, id, to, { reason, blockedReason, ac
 // for direct completion; the fingerprint of the displayed content is required.
 export async function confirmIssue(root, reqId, id, { summary, evidence, opinion = '', fileHash } = {}) {
   if (fileHash == null) throw new WorkbenchError('FINGERPRINT_REQUIRED', 'confirming completion requires the content fingerprint (fileHash)')
+  if ([summary, evidence].some(value => value != null && typeof value !== 'string')) {
+    throw new WorkbenchError('INVALID_INPUT', 'the result and verification evidence must be text')
+  }
   return withIssueLock(root, reqId, id, async () => {
     const { file, raw, doc } = await loadIssueDoc(root, reqId, id)
     if (hashText(raw) !== fileHash) throw new WorkbenchError('CONFLICT', 'task changed since it was read; refresh and re-check the result')
     const from = doc.get('status')
     if (TERMINAL_ISSUE.has(from)) throw new WorkbenchError('ILLEGAL_TRANSITION', 'task is already done/cancelled')
     const patch = {}
-    if (!blank(summary)) patch.resultSummary = String(summary).trim()
-    if (!blank(evidence)) patch.evidence = String(evidence).trim()
+    if (summary?.trim()) patch.resultSummary = summary.trim()
+    if (evidence?.trim()) patch.evidence = evidence.trim()
     const { doc: requirementDoc } = await loadReqDoc(root, reqId)
+    const requirementStatus = taskWriteStatus(requirementDoc)
     const reqSince = Number(requirementDoc.get('deliveryStartedAt')) || 0
     applyIssuePatch(doc, patch, reqSince)
-    const requirementStatus = requirementDoc.get('status')
     const issue = issueFromDoc(doc, file, reqSince)
     const running = !!(await readRunLock(root, id))
     const guard = canMoveIssue({ from, to: 'done', requirementStatus, actor: 'human', running, result: issue.resultSummary, evidence: effectiveEvidence(issue), acceptance: issue.acceptance, resultFresh: issue.resultFresh })
@@ -1250,7 +1282,8 @@ export async function continueIssue(root, reqId, id, { text, fileHash } = {}) {
     const from = doc.get('status')
     if (from !== 'in_review') throw new WorkbenchError('INVALID_STATE', 'continue modifies a task awaiting confirmation (in_review); use run/start to resume processing')
     if (await readRunLock(root, id)) throw new WorkbenchError('RUNNING', 'stop the running task before requesting changes')
-    const requirementStatus = await reqStatus(root, reqId)
+    const { doc: requirementDoc } = await loadReqDoc(root, reqId)
+    const requirementStatus = taskWriteStatus(requirementDoc)
     const guard = canMoveIssue({ from, to: 'doing', requirementStatus, actor: 'human', reason: text })
     if (!guard.ok) throw new WorkbenchError(guard.code, guard.reason)
     doc.setPlain('status', 'doing')
@@ -1272,17 +1305,17 @@ export async function continueIssue(root, reqId, id, { text, fileHash } = {}) {
 // summary is not saved first). The incoming summary is itself fresh result, so
 // freshness here turns on the evidence belonging to the current delivery round.
 export async function submitIssueResult(root, reqId, id, { summary, limits, actor = 'ai', fileHash } = {}) {
-  if (blank(summary)) throw new WorkbenchError('RESULT_EVIDENCE_REQUIRED', 'submitting for confirmation needs a result summary')
+  if (typeof summary !== 'string' || !summary.trim()) throw new WorkbenchError('RESULT_EVIDENCE_REQUIRED', 'submitting for confirmation needs a result summary')
   return withIssueLock(root, reqId, id, async () => {
     const { file, raw, doc } = await loadIssueDoc(root, reqId, id)
     if (fileHash != null && hashText(raw) !== fileHash) throw new WorkbenchError('CONFLICT', 'task changed since it was read; refresh and retry')
     const from = doc.get('status')
+    const { doc: requirementDoc } = await loadReqDoc(root, reqId)
+    const requirementStatus = taskWriteStatus(requirementDoc)
+    if (requirementStatus !== 'in_progress') throw new WorkbenchError('REQ_NOT_ACTIVE', 'the requirement must be in development to submit a task result')
     if (from === 'in_review') return { ok: true, data: { id, alreadyPending: true } }
     if (from !== 'doing') throw new WorkbenchError('INVALID_STATE', 'only a task in progress can submit a result; record the start first')
-    const { doc: requirementDoc } = await loadReqDoc(root, reqId)
-    const requirementStatus = requirementDoc.get('status')
     const reqSince = Number(requirementDoc.get('deliveryStartedAt')) || 0
-    if (requirementStatus !== 'in_progress') throw new WorkbenchError('REQ_NOT_ACTIVE', 'the requirement must be in development to submit a task result')
     const since = Math.max(reqSince, Number(doc.get('deliveryStartedAt')) || 0)
     const prospectiveBase = issueFromDoc(doc, file, reqSince)
     // This is an explicitly new summary written AFTER the sync above. Event
@@ -1297,6 +1330,7 @@ export async function submitIssueResult(root, reqId, id, { summary, limits, acto
     })
     if (!guard.ok) throw new WorkbenchError(guard.code, guard.reason)
     applyIssuePatch(doc, { resultSummary: String(summary).trim(), ...(!blank(limits) ? { knownLimits: String(limits).trim() } : {}) }, reqSince)
+    doc.setPlain('resultAt', now)
     doc.setPlain('status', 'in_review')
     doc.setPlain('inReviewAt', Date.now())
     doc.setPlain('updated', nowIso())
@@ -1315,8 +1349,9 @@ export async function recordRunStart(root, reqId, id, { fileHash } = {}) {
     const { file, doc, raw } = await loadIssueDoc(root, reqId, id)
     if (fileHash != null && hashText(raw) !== fileHash) throw new WorkbenchError('CONFLICT', 'task changed before recording its start; refresh and retry')
     const from = doc.get('status')
+    const { doc: requirementDoc } = await loadReqDoc(root, reqId)
+    const requirementStatus = taskWriteStatus(requirementDoc)
     if (from === 'doing') return { ok: true, data: { id, from, to: 'doing', changed: false } }
-    const requirementStatus = await reqStatus(root, reqId)
     const issue = issueFromDoc(doc, file)
     const guard = canMoveIssue({ from, to: 'doing', requirementStatus, actor: 'system', reason: '开始处理', linked: true, running: false, result: issue.result, evidence: effectiveEvidence(issue), acceptance: issue.acceptance, resultFresh: issue.resultFresh })
     if (!guard.ok) throw new WorkbenchError(guard.code, guard.reason)
@@ -1362,17 +1397,20 @@ export async function reopenRequirement(root, id, { reason, reopen = [], create 
       if (fileHash != null && hashText(raw) !== fileHash) throw new WorkbenchError('CONFLICT', 'requirement changed since it was read; refresh and retry')
       if (from !== 'pending' && from !== 'completed') throw new WorkbenchError('ILLEGAL_TRANSITION', `move ${from} -> in_progress is not allowed`)
       const reopenIds = [...new Set(reopen)]
+      const reopenedTasks = []
       for (const iid of reopenIds) {
         assertIssId(iid)
-        const { doc: idoc } = await loadIssueDoc(root, id, iid)
+        const { doc: idoc, file: ifile } = await loadIssueDoc(root, id, iid)
         if (!TERMINAL_ISSUE.has(idoc.get('status'))) throw new WorkbenchError('ILLEGAL_TRANSITION', `task ${iid} is not done/cancelled; nothing to reopen`)
+        reopenedTasks.push(issueFromDoc(idoc, ifile))
       }
       const createItems = (create ?? []).map(c => {
         const fields = initialTaskFields(c?.fields ?? {})
         assertTaskContent({ ...fields, title: c?.title })
         return { id: newId('iss'), action: 'create', title: c.title.trim(), fields, done: false }
       })
-      const guard = canMoveRequirement({ from, to: 'in_progress', title: doc.get('title'), reason, actor: 'human', reopenCount: reopenIds.length + createItems.length })
+      const issues = [...reopenedTasks, ...createItems.map(({ title, fields }) => ({ title, ...fields }))]
+      const guard = canMoveRequirement({ from, to: 'in_progress', reason, actor: 'human', issues })
       if (!guard.ok) throw new WorkbenchError(guard.code, guard.reason)
       // Allocate new-task IDs FIRST. Persist the plan + status BEFORE the decision
       // so any failed write retries against the same plan and the same attempt.

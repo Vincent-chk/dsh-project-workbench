@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { build } from 'esbuild'
-import { makeRoot, seedAIReview, issueFileHash, seedReviewPrd } from './util.js'
+import { makeRoot, seedAIReview, issueFileHash, seedReviewPrd, startTestDevelopment } from './util.js'
 import * as store from '../core/store.js'
 import { dispatch } from '../core/rpc.js'
 import { deliveryFingerprint } from '../client-src/project-state.js'
@@ -77,7 +77,7 @@ async function fixture(t, pending = false) {
   await store.moveRequirement(root, reqId, 'reviewing')
   await seedAIReview(root, reqId)
   await store.moveRequirement(root, reqId, 'ready')
-  await store.moveRequirement(root, reqId, 'in_progress')
+  await startTestDevelopment(root, reqId)
   const issueId = (await store.createIssue(root, reqId, '任务')).data.id
   await store.updateIssue(root, reqId, issueId, { problemOverview: '问题', acceptance: '标准', resultSummary: '旧结果', evidence: '依据' })
   await store.moveIssue(root, reqId, issueId, 'done', { fileHash: await issueFileHash(root, reqId, issueId) })

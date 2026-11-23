@@ -60,7 +60,7 @@ const HUMAN_ONLY_ISSUE_EDGES = new Set([
 
 const reject = (code, reason) => ({ ok: false, code, reason })
 const ok = () => ({ ok: true })
-const blank = v => v === undefined || v === null || String(v).trim() === ''
+const blank = v => typeof v !== 'string' || !v.trim()
 
 // Earlier records used the goal alone to describe the work.
 export function requirementOverview({ q_pain, goal }) {
@@ -95,20 +95,45 @@ export function freshDelivery(issue, since) {
   if (!since) return true
   const objectiveAt = issue.hasObjective ? Number(issue.objectiveAt) || 0 : 0
   const resultAt = Number(issue.resultAt) || 0
-  const evidenceAt = Math.max(Number(issue.evidenceAt) || 0, objectiveAt)
+  const evidenceAt = Math.max(blank(issue.evidence) ? 0 : Number(issue.evidenceAt) || 0, objectiveAt)
   // Evidence produced after the summary can contradict it (e.g. a retry that
   // succeeds after an earlier failure). Require a fresh summary for those facts.
   return resultAt >= since && evidenceAt >= since && resultAt >= evidenceAt
 }
 // Effective verification evidence: explicit evidence or CONFIRMED objective records.
-export const effectiveEvidence = issue => issue.evidence || (issue.hasObjective ? '客观记录' : '')
+export const effectiveEvidence = issue => !blank(issue.evidence) ? issue.evidence : issue.hasObjective ? '客观记录' : ''
 
-export const allTasksApproved = issues => issues.length > 0 && issues.every(issue => issue.status === 'done')
+function taskDeliveryBlockers(issue) {
+  const delivery = { ...issue, objectiveAt: issue.acceptedObjectiveAt ?? issue.objectiveAt }
+  const missing = []
+  if (blank(issue.acceptance)) missing.push('acceptance')
+  if (blank(issue.resultSummary ?? issue.result)) missing.push('resultSummary')
+  if (blank(effectiveEvidence(delivery))) missing.push('evidence')
+  const since = Math.max(Number(issue.deliveryStartedAt) || 0, Number(issue.resultScopeAt) || 0)
+  if (!missing.length && !freshDelivery(delivery, since)) missing.push('currentResult')
+  return missing
+}
+
+export function canDeliverTasks(issues, since = 0) {
+  if (!issues.length) return reject('NO_ISSUES', 'no tasks; nothing to accept')
+  if (issues.some(issue => issue.status !== 'done')) {
+    return reject('TASKS_NOT_ACCEPTED', 'every task must pass acceptance before the requirement can be accepted')
+  }
+  const incomplete = issues.map(issue => ({ title: issue.title || issue.id, fields: taskDeliveryBlockers(issue) }))
+    .filter(issue => issue.fields.length)
+  if (incomplete.length) return reject('TASK_DELIVERY_INCOMPLETE', JSON.stringify(incomplete))
+  // Previously accepted tasks retain their own result. At least one task must
+  // also deliver a new result and evidence after a requirement is reopened.
+  if (!issues.some(issue => !blank(effectiveEvidence(issue)) && freshDelivery(issue, since))) {
+    return reject('RESULT_EVIDENCE_REQUIRED', 'at least one done task needs a fresh result and verification evidence for this delivery')
+  }
+  return ok()
+}
 
 export function canMoveRequirement({
   from, to, title, issues = [], reason, actor = 'human',
   q_pain, goal, hasAIReview = false, confirmReviewInvalid = false, running = [],
-  summary, pendingReopen = null, reopenCount = 0, reqDeliveryStartedAt = 0, summaryAt = 0,
+  summary, pendingReopen = null, reqDeliveryStartedAt = 0, summaryAt = 0,
 }) {
   if (!REQUIREMENT_STATES.includes(from) || !REQUIREMENT_STATES.includes(to)) {
     return reject('ILLEGAL_TRANSITION', `unknown state: ${from} -> ${to}`)
@@ -128,6 +153,9 @@ export function canMoveRequirement({
   if (edge === 'reviewing>ready' && !hasAIReview) {
     return reject('REVIEW_REPORT_REQUIRED', 'complete an AI review before approving this requirement')
   }
+  if (edge === 'ready>in_progress') {
+    return canDevelopTasks(issues.filter(issue => !TERMINAL_ISSUE.has(issue.status)))
+  }
   if (edge === 'reviewing>backlog' && blank(reason)) {
     return reject('REASON_REQUIRED', 'a return reason is required')
   }
@@ -140,26 +168,18 @@ export function canMoveRequirement({
   }
   if (to === 'pending' || to === 'completed') {
     if (pendingReopen) return reject('REOPEN_PENDING', 'a reopen is still in progress; finish it before submitting')
-    if (!issues.length) return reject('NO_ISSUES', 'no tasks; nothing to accept')
-    if (!allTasksApproved(issues)) return reject('TASKS_NOT_ACCEPTED', 'every task must pass acceptance before the requirement can be accepted')
-  }
-  if (edge === 'in_progress>pending') {
-    // Same evidence口径 as task confirmation: explicit evidence or CONFIRMED
-    // objective records. The result AND evidence must belong to this requirement
-    // delivery round (a pre-reopen task does not satisfy a new round).
-    if (!issues.some(i => !blank(i.resultSummary ?? i.result) && !blank(effectiveEvidence(i)) && freshDelivery(i, reqDeliveryStartedAt))) {
-      return reject('RESULT_EVIDENCE_REQUIRED', 'at least one done task needs a fresh result and verification evidence for this delivery')
-    }
+    const delivery = canDeliverTasks(issues, reqDeliveryStartedAt)
+    if (!delivery.ok) return delivery
     if (blank(summary)) return reject('SUMMARY_REQUIRED', 'a delivery summary is required')
-    // The summary must belong to THIS delivery round: a stale summary from before
-    // a reopen cannot carry the requirement back to pending (PRD §9.5).
-    if (reqDeliveryStartedAt && summaryAt < reqDeliveryStartedAt) {
-      return reject('SUMMARY_STALE', 'the delivery summary predates this round; produce a new summary for the current delivery')
+    const latestResult = issues.reduce((latest, issue) => Math.max(latest, Number(issue.resultAt) || 0), reqDeliveryStartedAt)
+    if (summaryAt < latestResult) {
+      return reject('SUMMARY_STALE', 'the delivery summary predates this round or a task result; write a summary of the current delivery')
     }
   }
   if (edge === 'pending>in_progress' || edge === 'completed>in_progress') {
     if (blank(reason)) return reject('REASON_REQUIRED', 'a reason / modification requirement is required')
-    if (!reopenCount) return reject('REOPEN_SELECTION_REQUIRED', 'select tasks to reopen or add new tasks')
+    if (!issues.length) return reject('REOPEN_SELECTION_REQUIRED', 'select tasks to reopen or add new tasks')
+    return canDevelopTasks(issues)
   }
   return ok()
 }
@@ -206,6 +226,7 @@ export function canMoveIssue({
       return reject('RESULT_EVIDENCE_REQUIRED', 'completion needs a result and verification evidence')
     }
     if (!resultFresh) return reject('RESULT_STALE', 'the result predates this delivery; produce a new result and evidence')
+    if (blank(acceptance)) return reject('ACCEPTANCE_REQUIRED', 'completion criteria are required before confirming completion')
   }
   if (to === 'doing' && from === 'todo') {
     if (!linked) return reject('NOT_LINKED', 'link the task to a session before starting')
@@ -220,15 +241,25 @@ export function canMoveIssue({
   return ok()
 }
 
-// Creation guards (PRD §10.3: new task requires an in-development requirement).
+// Tasks can be planned before development. Execution still requires in_progress.
 export function canCreateIssue(requirementStatus) {
-  return requirementStatus === 'in_progress'
+  return ['ready', 'in_progress'].includes(requirementStatus)
     ? ok()
-    : reject('REQ_NOT_ACTIVE', 'tasks can only be created while the requirement is in development')
+    : reject('TASK_PLANNING_NOT_ALLOWED', 'tasks can only be created while the requirement is ready or in development')
 }
 
 export function startBlockers(issue) {
   const missing = taskContentBlockers(issue)
   if (blank(issue.acceptance)) missing.push('acceptance')
   return missing
+}
+
+function canDevelopTasks(issues) {
+  if (!issues.length) return reject('DEV_TASKS_REQUIRED', 'add at least one development task')
+  const incomplete = issues.map(issue => ({
+    title: (typeof issue.title === 'string' && issue.title.trim()) || issue.id,
+    fields: startBlockers(issue),
+  }))
+    .filter(issue => issue.fields.length)
+  return incomplete.length ? reject('DEV_TASK_FIELDS_REQUIRED', JSON.stringify(incomplete)) : ok()
 }

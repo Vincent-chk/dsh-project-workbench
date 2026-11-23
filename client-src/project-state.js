@@ -1,6 +1,6 @@
 // Pure project-state helpers (no React): identity, diagnostics classification and unsaved drafts.
 // Kept separate so node --test can cover the rules without a browser.
-import { requirementOverview, TASK_CONTENT_FIELDS, taskContentBlockers, taskOverview } from '../core/state.js'
+import { requirementOverview, startBlockers, TASK_CONTENT_FIELDS, taskContentBlockers, taskOverview } from '../core/state.js'
 
 export const projectIdOf = w => (String(w?.workspaceId ?? '').startsWith('folder:') ? null : (w?.workspaceId ?? null))
 
@@ -19,8 +19,9 @@ export const issueDraftFrom = (issue = {}) => ({
   refs: Array.isArray(issue.refs) ? issue.refs.join('\n') : '',
 })
 
-export function taskFormError(draft) {
-  const missing = taskContentBlockers({ title: draft.title, problemOverview: draft.problemOverview })
+export function taskFormError(draft, { requireAcceptance = false } = {}) {
+  const task = { title: draft.title, problemOverview: draft.problemOverview, acceptance: draft.acceptance }
+  const missing = requireAcceptance ? startBlockers(task) : taskContentBlockers(task)
   if (missing.length) return { ok: false, code: 'MISSING_TASK_FIELDS', message: `task needs: ${missing.join(', ')}` }
   return null
 }

@@ -1,10 +1,11 @@
-import { mkdtemp, rm, readFile, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, writeFile, mkdir, unlink } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { reviewPrds, savePrd } from '../core/prd.js'
-import { moveRequirement, readRequirement } from '../core/store.js'
+import { createIssue, moveRequirement, readRequirement } from '../core/store.js'
 import { reviewMaterial } from '../core/review-material.js'
+import { savePrototype } from '../core/prototype-material.js'
 
 export async function makeRoot(t) {
   const root = await mkdtemp(join(tmpdir(), 'pw-store-'))
@@ -19,14 +20,38 @@ export async function seedReviewPrd(root, reqId) {
   return existing ?? savePrd(root, { id: 'prd-' + randomUUID(), reqIds: [reqId], markdown: '# 评审夹具\n\n执行测试需求的首版范围。' })
 }
 
-export async function seedAIReview(root, reqId, { submit = false } = {}) {
-  await seedReviewPrd(root, reqId)
+export async function seedReviewPreparation(root, reqId, { prd = true } = {}) {
+  const documents = prd ? [await seedReviewPrd(root, reqId)] : []
+  const dir = join(root, '.project', 'requirements', reqId, 'discovery')
+  await mkdir(dir, { recursive: true })
+  await writeFile(join(dir, '1.md'), '---\nversion: 1\nsavedAt: "2026-01-01T00:00:00Z"\nsessionId: fixture-session\npreviewId: fixture-preview\nskillSeq: 1\nfrom: 2\nthrough: 4\nround: [2, 3, 4]\n---\n\n核对需求范围与验收标准。\n', { flag: 'wx' })
+    .catch(error => { if (error.code !== 'EEXIST') throw error })
+  await savePrototype(root, reqId, {
+    prds: documents.map(({ id, version }) => ({ id, version })), html: '<p>验收预览</p>',
+    material: { summary: '核对验收流程', flow: [{ from: '提交', to: '通过', when: '结果符合预期' }],
+      screens: [{ title: '验收', state: '待核对', elements: [{ kind: 'button', label: '确认' }] }] },
+  }, 1)
+}
+
+export async function seedAIReview(root, reqId, { submit = false, preparation = true } = {}) {
+  if (preparation) await seedReviewPreparation(root, reqId)
+  else await seedReviewPrd(root, reqId)
   if (submit) await moveRequirement(root, reqId, 'reviewing')
   const current = await reviewMaterial(root, await readRequirement(root, reqId), await reviewPrds(root, reqId))
   const source = JSON.stringify(JSON.stringify(current.source))
   const reviews = join(root, '.project', 'requirements', reqId, 'reviews')
   await mkdir(reviews, { recursive: true })
   await writeFile(join(reviews, '0.md'), `---\nschema: 2\nkind: ai_review\nround: 0\ndecision: reported\nby: ai\nmarker: test-ai-review\nopinionText: "需求评审夹具"\nsource: ${source}\n---\n`)
+}
+
+// Exercise the real transition, then remove its fixture task so downstream tests
+// can arrange and assert on exactly the task set they need.
+export async function startTestDevelopment(root, reqId, start = () => moveRequirement(root, reqId, 'in_progress')) {
+  const { data: { id } } = await createIssue(root, reqId, '开工夹具', { problemOverview: '测试任务', acceptance: '验收通过' })
+  const result = await start()
+  if (result?.ok === false) throw new Error(result.message)
+  await unlink(join(root, '.project', 'requirements', reqId, 'issues', `${id}.md`))
+  return result
 }
 
 export function saveReviewPrd(root, reqId) {

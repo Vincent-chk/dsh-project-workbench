@@ -38,8 +38,10 @@ function ReviewSource({ source, t }) {
     prds.length
       ? prds.map(prd => h('p', { className: 'pw-note', key: prd.id }, t('aiReviewPrdVersion'), ' ', prd.title, ' · ', prd.revision ? t('prepVersion').replace('{n}', prd.revision) : versionText(prd.version)))
       : h('p', { className: 'pw-note' }, t('aiReviewNoPrd')),
+    source.discovery && h('p', { className: 'pw-note' }, t('prepDiscovery'), ' · ', t('prepVersion').replace('{n}', source.discovery.version)),
     source.prototype && h('p', { className: 'pw-note' }, t('prepPrototype'), ' · ', t('prepVersion').replace('{n}', source.prototype.version)),
     source.materials && h(Disclosure, { label: t('aiReviewSavedMaterials') },
+      source.materials.discovery && h(ReadText, { label: t('prepDiscovery'), value: source.materials.discovery }),
       (source.materials.documents ?? []).map(doc => h(ReadText, { key: doc.id, label: doc.title, value: doc.excerpt })),
       source.materials.prototype && h(ReadText, { label: t('prepPrototype'), value: JSON.stringify(source.materials.prototype, null, 2) })))
 }
@@ -102,8 +104,9 @@ export function RequirementReview({ req, root, t, busy, onApprove, onReject, onR
   }, [load, reviewing, root])
 
   const dataUnavailable = details?.reportsUnavailable || details?.prdsUnavailable
+  const missingPreparation = details?.missingPreparation ?? []
   const canStart = !busy && !readError && !running && (saveFailed || (details?.hasPrd && !dataUnavailable))
-  const canApprove = !busy && !readError && !dataUnavailable && !running && details?.hasReview
+  const canApprove = !busy && !readError && !dataUnavailable && !running && !missingPreparation.length && details?.hasReview
   const start = async () => {
     if (request.current || !canStart) return
     request.current = true
@@ -144,6 +147,8 @@ export function RequirementReview({ req, root, t, busy, onApprove, onReject, onR
         'aria-describedby': needsReport ? helpId : undefined, onClick: () => onApprove(latest?.marker) }, t('approveReview')),
       reviewing && onReject && h('button', { className: 'pw-button danger', disabled: busy, onClick: () => onReject(details?.hasReview ? suggestedReason : '') }, t('rejectRequirement'))),
     needsReport && h('p', { className: 'pw-note', id: helpId }, t('aiReviewRequired')),
+    reviewing && missingPreparation.length > 0 && h(ErrorDetails, { t, showRaw: false,
+      error: { code: 'PREPARATION_REQUIRED', message: `missing preparation: ${missingPreparation.join(', ')}` } }),
     (running || submitting) && h('p', { className: 'pw-note', role: 'status' }, t('aiReviewRunning')),
     reviewing && details?.state === 'failed' && h('p', { className: 'pw-note', role: 'status' }, details?.error ?? t('aiReviewFailed'),
       details?.errorCode && ' (' + [details.errorCode, details.httpStatus].filter(Boolean).join(' · ') + ')'),

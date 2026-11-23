@@ -2,21 +2,22 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { canMoveRequirement, canMoveIssue, canCreateIssue, startBlockers, REQUIREMENT_STATES, ISSUE_STATES } from '../core/state.js'
 
-const accepted = [{ id: 'i1', status: 'done', result: 'r', evidence: 'e' }, { id: 'i2', status: 'done' }]
+const accepted = ['i1', 'i2'].map(id => ({ id, status: 'done', acceptance: 'a', result: 'r', evidence: 'e' }))
 const submitBase = { issues: accepted, summary: '交付摘要' }
+const planned = [{ id: 'i3', status: 'todo', title: '补充反馈', problemOverview: '失败时提供重试', acceptance: '可以重试' }]
 
 // Every ordered requirement pair against the PRD §10.3 whitelist.
 const REQ_ALLOWED = {
   'backlog>reviewing': { q_pain: '需求概述' },
   'reviewing>ready': { hasAIReview: true },
   'reviewing>backlog': { reason: '补充' },
-  'ready>in_progress': {},
+  'ready>in_progress': { issues: planned },
   'ready>backlog': { reason: '改目标', confirmReviewInvalid: true },
   'in_progress>backlog': { reason: '改范围', confirmReviewInvalid: true },
   'in_progress>pending': submitBase,
-  'pending>completed': {},
-  'pending>in_progress': { reason: '修改要求', reopenCount: 1 },
-  'completed>in_progress': { reason: '重新开发', reopenCount: 1 },
+  'pending>completed': submitBase,
+  'pending>in_progress': { reason: '修改要求', issues: planned },
+  'completed>in_progress': { reason: '重新开发', issues: planned },
 }
 test('requirement transition whitelist (PRD 10.3)', () => {
   let allowed = 0
@@ -59,8 +60,8 @@ test('submit conditions (PRD 9.5): tasks, all tasks approved, result+evidence, s
   assert.equal(canMoveRequirement({ ...base, ...submitBase, issues: [{ status: 'blocked' }] }).code, 'TASKS_NOT_ACCEPTED')
   assert.equal(canMoveRequirement({ ...base, ...submitBase, issues: [{ status: 'in_review', result: 'r', evidence: 'e' }] }).code, 'TASKS_NOT_ACCEPTED')
   assert.equal(canMoveRequirement({ ...base, ...submitBase, issues: [{ status: 'cancelled' }] }).code, 'TASKS_NOT_ACCEPTED')
-  assert.equal(canMoveRequirement({ ...base, ...submitBase, issues: [{ status: 'done' }] }).code, 'RESULT_EVIDENCE_REQUIRED')
-  assert.equal(canMoveRequirement({ ...base, ...submitBase, issues: [{ status: 'done', result: 'r' }] }).code, 'RESULT_EVIDENCE_REQUIRED')
+  assert.equal(canMoveRequirement({ ...base, ...submitBase, issues: [{ status: 'done' }] }).code, 'TASK_DELIVERY_INCOMPLETE')
+  assert.equal(canMoveRequirement({ ...base, ...submitBase, issues: [{ ...accepted[0], evidence: '' }, accepted[1]] }).code, 'TASK_DELIVERY_INCOMPLETE')
   assert.equal(canMoveRequirement({ ...base, issues: accepted }).code, 'SUMMARY_REQUIRED')
   assert.equal(canMoveRequirement({ ...base, ...submitBase, issues: [accepted[0], { status: 'cancelled' }], cancelImpact: '旧说明' }).code, 'TASKS_NOT_ACCEPTED')
   assert.equal(canMoveRequirement({ ...base, ...submitBase, pendingReopen: { at: 1 } }).code, 'REOPEN_PENDING')
@@ -70,10 +71,12 @@ test('submit conditions (PRD 9.5): tasks, all tasks approved, result+evidence, s
 
 test('acceptance pass and reopen selection', () => {
   assert.equal(canMoveRequirement({ from: 'pending', to: 'completed', issues: [{ status: 'doing' }] }).code, 'TASKS_NOT_ACCEPTED')
-  assert.equal(canMoveRequirement({ from: 'pending', to: 'completed', issues: accepted }).ok, true)
+  assert.equal(canMoveRequirement({ from: 'pending', to: 'completed', issues: accepted }).code, 'SUMMARY_REQUIRED')
+  assert.equal(canMoveRequirement({ from: 'pending', to: 'completed', ...submitBase }).ok, true)
   assert.equal(canMoveRequirement({ from: 'pending', to: 'in_progress', reason: 'x' }).code, 'REOPEN_SELECTION_REQUIRED')
-  assert.equal(canMoveRequirement({ from: 'completed', to: 'in_progress', reason: '' , reopenCount: 1 }).code, 'REASON_REQUIRED')
-  assert.equal(canMoveRequirement({ from: 'completed', to: 'in_progress', reason: 'x', reopenCount: 2 }).ok, true)
+  assert.equal(canMoveRequirement({ from: 'completed', to: 'in_progress', reason: '', issues: planned }).code, 'REASON_REQUIRED')
+  assert.equal(canMoveRequirement({ from: 'completed', to: 'in_progress', reason: 'x', issues: [{ ...planned[0], acceptance: ' ' }] }).code, 'DEV_TASK_FIELDS_REQUIRED')
+  assert.equal(canMoveRequirement({ from: 'completed', to: 'in_progress', reason: 'x', issues: planned }).ok, true)
 })
 
 // Full issue matrix with the requirement in development.
@@ -133,7 +136,8 @@ test('issue guards: reasons, link, running, result/evidence, requirement stage',
 
 test('issue creation only when in_progress', () => {
   assert.equal(canCreateIssue('in_progress').ok, true)
-  for (const s of ['backlog', 'reviewing', 'ready', 'pending', 'completed']) assert.equal(canCreateIssue(s).ok, false)
+  assert.equal(canCreateIssue('ready').ok, true)
+  for (const s of ['backlog', 'reviewing', 'pending', 'completed']) assert.equal(canCreateIssue(s).ok, false)
 })
 
 test('start blockers require a title, overview and criteria; steps and root cause are optional', () => {
@@ -161,16 +165,20 @@ test('done rejects a result that predates this delivery (reopen freshness)', () 
 
 test('requirement submit accepts synced objective evidence and rejects stale results', () => {
   const base = { from: 'in_progress', to: 'pending', summary: 's', summaryAt: 200, actor: 'system', reqDeliveryStartedAt: 100 }
+  const objective = { ...accepted[0], evidence: '', hasObjective: true }
   // Objective records can be evidence, but they do not make an old result fresh.
-  assert.equal(canMoveRequirement({ ...base, issues: [{ status: 'done', result: 'r', hasObjective: true, resultAt: 1, objectiveAt: 200 }] }).code, 'RESULT_EVIDENCE_REQUIRED')
-  assert.equal(canMoveRequirement({ ...base, issues: [{ status: 'done', result: 'r', hasObjective: true, resultAt: 200, objectiveAt: 200 }] }).ok, true)
+  assert.equal(canMoveRequirement({ ...base, issues: [{ ...objective, resultAt: 1, objectiveAt: 200 }] }).code, 'RESULT_EVIDENCE_REQUIRED')
+  assert.equal(canMoveRequirement({ ...base, issues: [{ ...objective, resultAt: 200, objectiveAt: 200 }] }).ok, true)
+  assert.equal(canMoveRequirement({ ...base, issues: [{ ...objective, resultAt: 200, objectiveAt: 1, evidenceAt: 200 }] }).code, 'RESULT_EVIDENCE_REQUIRED')
   // New facts after the summary require a new summary even in the same round.
-  assert.equal(canMoveRequirement({ ...base, issues: [{ status: 'done', result: 'r', hasObjective: true, resultAt: 200, objectiveAt: 201 }] }).code, 'RESULT_EVIDENCE_REQUIRED')
-  assert.equal(canMoveRequirement({ ...base, issues: [{ status: 'done', result: 'r', hasObjective: true, resultAt: 201, objectiveAt: 200 }] }).ok, true)
+  assert.equal(canMoveRequirement({ ...base, issues: [{ ...objective, resultAt: 200, objectiveAt: 201 }] }).code, 'RESULT_EVIDENCE_REQUIRED')
+  const current = { ...base, issues: [{ ...objective, resultAt: 201, objectiveAt: 200 }] }
+  assert.equal(canMoveRequirement(current).code, 'SUMMARY_STALE')
+  assert.equal(canMoveRequirement({ ...current, summaryAt: 201 }).ok, true)
   // A done task whose result AND evidence predate this delivery round cannot carry acceptance.
-  assert.equal(canMoveRequirement({ ...base, issues: [{ status: 'done', result: 'r', evidence: 'e', resultAt: 1, evidenceAt: 1 }] }).code, 'RESULT_EVIDENCE_REQUIRED')
+  assert.equal(canMoveRequirement({ ...base, issues: [{ ...accepted[0], resultAt: 1, evidenceAt: 1 }] }).code, 'RESULT_EVIDENCE_REQUIRED')
   // Updating only one of result/evidence leaves the other stale.
-  assert.equal(canMoveRequirement({ ...base, issues: [{ status: 'done', result: 'r', evidence: 'e', resultAt: 200, evidenceAt: 1 }] }).code, 'RESULT_EVIDENCE_REQUIRED')
+  assert.equal(canMoveRequirement({ ...base, issues: [{ ...accepted[0], resultAt: 200, evidenceAt: 1 }] }).code, 'RESULT_EVIDENCE_REQUIRED')
   // Both fresh → accepted.
-  assert.equal(canMoveRequirement({ ...base, issues: [{ status: 'done', result: 'r', evidence: 'e', resultAt: 200, evidenceAt: 200 }] }).ok, true)
+  assert.equal(canMoveRequirement({ ...base, issues: [{ ...accepted[0], resultAt: 200, evidenceAt: 200 }] }).ok, true)
 })

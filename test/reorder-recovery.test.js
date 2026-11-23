@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { makeRoot, seedAIReview } from './util.js'
+import { makeRoot, seedAIReview, startTestDevelopment } from './util.js'
 import { initProject, createRequirement, updateRequirement, moveRequirement, createIssue, scanProject } from '../core/store.js'
 import { dispatch } from '../core/rpc.js'
 import { sortedTasks, reorderPlan, continueReorder } from '../client-src/shell/nav-state.js'
@@ -11,7 +11,8 @@ async function fixture(t, label) {
   const reqId = (await createRequirement(root, label)).data.id
   await updateRequirement(root, reqId, { q_pain: '概述' })
   await seedAIReview(root, reqId, { submit: true })
-  for (const to of ['ready', 'in_progress']) await moveRequirement(root, reqId, to)
+  await moveRequirement(root, reqId, 'ready')
+  await startTestDevelopment(root, reqId)
   for (const title of ['甲', '乙', '丙', '丁']) await createIssue(root, reqId, title, { problemOverview: '要做的事' })
   return { root, reqId }
 }

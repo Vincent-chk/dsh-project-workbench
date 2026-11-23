@@ -5,7 +5,7 @@ import { progressOf, deriveRequirement, currentDoing, todaySuggestion, rankSugge
 const NOW = Date.parse('2026-11-12T12:00:00+08:00')
 const iso = ms => new Date(ms).toISOString()
 const req = (over = {}) => ({ id: 'r', title: '需求', status: 'in_progress', order: 0, goal: 'g', scope: 's', acceptance: 'a', updated: iso(NOW), ...over })
-const done = { id: 'd', status: 'done', result: '结果', evidence: '依据', updated: iso(NOW) }
+const done = { id: 'd', status: 'done', acceptance: '结果符合预期', result: '结果', evidence: '依据', updated: iso(NOW) }
 
 test('progress done/(total-cancelled); in_review not counted; zero denominator -> null', () => {
   assert.equal(progressOf([{ status: 'done' }, { status: 'todo' }]), 0.5)
@@ -31,8 +31,8 @@ test('derive flags: blocked / needsClarification / stalled / submittable / accep
 })
 
 test('a previous delivery does not mark a reopened requirement as submittable', () => {
-  const reopened = req({ deliveryStartedAt: NOW, deliverySummary: '摘要', deliverySummaryAt: NOW, cancelImpact: '不影响范围', cancelImpactAt: NOW })
-  const sibling = { id: 'c', status: 'done' }
+  const reopened = req({ deliveryStartedAt: NOW, deliverySummary: '摘要', deliverySummaryAt: NOW + 1000, cancelImpact: '不影响范围', cancelImpactAt: NOW })
+  const sibling = { ...done, id: 'c', resultAt: NOW - 1000, evidenceAt: NOW - 1000 }
   const oldDelivery = { ...done, resultAt: NOW - 1000, evidenceAt: NOW - 1000 }
   const newDelivery = { ...done, resultAt: NOW + 1000, evidenceAt: NOW + 1000 }
 

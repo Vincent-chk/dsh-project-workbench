@@ -8,7 +8,7 @@ import { textOf } from './extract.js'
 import { WorkbenchError } from './files.js'
 import { listPrds, readPrd, savePrd, validatePrdDraft } from './prd.js'
 import { dispatch } from './rpc.js'
-import { effectiveEvidence, requirementOverview, startBlockers, taskOverview } from './state.js'
+import { canCreateIssue, effectiveEvidence, requirementOverview, startBlockers, taskOverview } from './state.js'
 import * as store from './store.js'
 
 const stop = /^(?:取消(?:这次操作)?|算了|到此为止|先聊别的|换个话题|不用了)[。！.!]?$/u
@@ -486,8 +486,8 @@ export function installConversation(ctx, { links, discovery, routes, resources }
         const project = await projectOf(agent)
         const data = await read(agent, { target: null }, {}, project)
         if (!data.currentTask) {
-          const options = project.requirements.filter(req => req.status === 'in_progress').slice(0, 10)
-          return ['请指定一条开发中的需求或其中的任务。',
+          const options = project.requirements.filter(req => canCreateIssue(req.status).ok && !req.pendingReopen).slice(0, 10)
+          return ['请指定一条待开发或开发中的需求，或者其中的任务。',
             ...options.map(req => '• ' + req.title + (req.issues.length ? ' · ' + req.issues.slice(0, 5).map(issue => issue.title).join('、') : '')),
             '示例 /pwb-task 验收风格切换任务。'].join('\n')
         }

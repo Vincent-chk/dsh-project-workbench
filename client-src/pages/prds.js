@@ -28,7 +28,7 @@ export const prdLocale = {
     prdOpenFull: 'Open full document', prdOutline: 'On this page',
     prdLinkUnavailable: 'This document is no longer linked here.',
     prdImageMissing: 'Image unavailable', prdImageLoading: 'Loading image',
-    reviewPrdRequired: 'Link a saved PRD before sending this requirement for review.', prdGoLink: 'Go to linked PRDs',
+    reviewPrdRequired: 'Link a saved PRD with content before proceeding.', prdGoLink: 'Go to linked PRDs',
   },
   zh: {
     navPrds: 'PRD 管理', prdNew: '新建 PRD', prdRead: '查看 PRD', prdCloseRead: '收起 PRD', prdTrash: '回收站', prdActive: '当前文档',
@@ -42,7 +42,7 @@ export const prdLocale = {
     prdOpenFull: '打开全文', prdOutline: '本文目录',
     prdLinkUnavailable: '此文档已解除关联。',
     prdImageMissing: '图片无法显示', prdImageLoading: '图片加载中',
-    reviewPrdRequired: '请先关联一份 PRD，再提交评审。', prdGoLink: '去关联 PRD',
+    reviewPrdRequired: '请先关联一份有正文的 PRD。', prdGoLink: '去关联 PRD',
   },
 }
 

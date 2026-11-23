@@ -1,13 +1,107 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { join } from 'node:path'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { installDiscovery } from '../core/discovery.js'
 import { installRequirementReview } from '../core/requirement-review.js'
 import { dispatch } from '../core/rpc.js'
 import { readPrd, savePrd } from '../core/prd.js'
 import { discoverySkillName, discoverySkillMarker } from '../core/skill.js'
-import { makeRoot, stubSpawnHost, waitFor } from './util.js'
+import { makeRoot, seedAIReview, stubSpawnHost, waitFor } from './util.js'
+
+test('a PRD with headings and comments but no content cannot enter review', async t => {
+  const root = await makeRoot(t)
+  const call = (method, input) => dispatch(method, { root, ...input }, new AbortController().signal)
+  await call('project/init')
+  const { data: { id } } = await call('requirement/create', { title: '表单保存', fields: { q_pain: '保存失败要保留输入' } })
+  const prd = await call('prd/save', { reqIds: [id], markdown: '# 表单保存\n\n## 验收标准\n\n<!-- 需要补齐 -->' })
+  assert.equal(prd.ok, true)
+  for (const [method, input] of [['requirement/move', { to: 'reviewing' }], ['requirement/review', { action: 'submit' }]]) {
+    assert.equal((await call(method, { id, ...input })).code, 'REVIEW_PRD_REQUIRED')
+  }
+  assert.equal((await call('requirement/get', { id })).data.status, 'backlog')
+})
+
+test('approval cannot move a requirement with missing preparation to ready', async t => {
+  const root = await makeRoot(t)
+  const call = (method, input) => dispatch(method, { root, ...input }, new AbortController().signal)
+  await call('project/init')
+  const { data: { id } } = await call('requirement/create', { title: '表单保存', fields: { q_pain: '保存失败要保留输入' } })
+  await seedAIReview(root, id, { submit: true, preparation: false })
+  const result = await call('requirement/move', { id, to: 'ready' })
+  assert.equal(result.code, 'PREPARATION_REQUIRED')
+  assert.match(result.message, /discovery, prototype$/u)
+  assert.equal((await call('requirement/get', { id })).data.status, 'reviewing')
+  await seedAIReview(root, id)
+  const dir = join(root, '.project', 'requirements', id)
+  for (const [field, name] of [['discovery', 'discovery/1.md'], ['prototype', 'prototypes/1.json']]) {
+    const file = join(dir, name)
+    const content = await readFile(file, 'utf8')
+    await unlink(file)
+    const blocked = await call('requirement/review', { id, action: 'approve' })
+    assert.equal(blocked.code, 'PREPARATION_REQUIRED')
+    assert.equal(blocked.message, `missing preparation: ${field}`)
+    await writeFile(file, content)
+  }
+  const [prd] = (await call('prd/list', { reqId: id })).data
+  const draft = await call('prd/save', { ...prd, markdown: '# 只有标题的草稿' })
+  assert.equal(draft.ok, true)
+  assert.equal((await call('requirement/review', { id, action: 'approve' })).code, 'REVIEW_PRD_REQUIRED')
+  assert.equal((await call('requirement/get', { id })).data.status, 'reviewing')
+})
+
+test('ready tasks can be planned and edited, but development needs their complete definitions', async t => {
+  const root = await makeRoot(t)
+  const call = (method, input) => dispatch(method, { root, ...input }, new AbortController().signal)
+  await call('project/init')
+  const { data: { id } } = await call('requirement/create', { title: '表单保存', fields: { q_pain: '保存失败要保留输入' } })
+  await seedAIReview(root, id, { submit: true })
+  assert.equal((await call('requirement/review', { id, action: 'approve' })).ok, true)
+  const start = () => call('requirement/move', { id, to: 'in_progress' })
+  const get = async () => (await call('requirement/get', { id })).data
+  const before = await get()
+  assert.equal((await start()).code, 'DEV_TASKS_REQUIRED')
+  assert.equal((await call('requirement/startDev', { id })).code, 'DEV_TASKS_REQUIRED')
+  const { data: task } = await call('issue/create', { reqId: id, title: '实现重试', fields: { problemOverview: '保存失败可重试', acceptance: ' ' } })
+  const incomplete = await start()
+  assert.equal(incomplete.code, 'DEV_TASK_FIELDS_REQUIRED')
+  assert.deepEqual(JSON.parse(incomplete.message), [{ title: '实现重试', fields: ['acceptance'] }])
+  assert.equal((await call('issue/move', { reqId: id, id: task.id, to: 'blocked', blockedReason: '等待开工' })).code, 'REQ_NOT_ACTIVE')
+  assert.equal((await get()).hash, before.hash)
+  assert.equal((await call('issue/update', { reqId: id, id: task.id, patch: { acceptance: '可以再次保存原输入' } })).ok, true)
+
+  const damaged = join(root, '.project', 'requirements', id, 'issues', 'iss-20000101-abcdef.md')
+  await writeFile(damaged, '缺少任务元数据')
+  assert.equal((await start()).code, 'DELIVERY_DATA_INCOMPLETE')
+  assert.equal((await get()).status, 'ready')
+  await unlink(damaged)
+  assert.equal((await start()).data.to, 'in_progress')
+  assert.equal((await get()).issues[0].status, 'todo')
+})
+
+test('an approved requirement can return for review when its PRD changes', async t => {
+  const root = await makeRoot(t)
+  const call = (method, input) => dispatch(method, { root, ...input }, new AbortController().signal)
+  await call('project/init')
+  const { data: { id } } = await call('requirement/create', { title: '表单保存', fields: { q_pain: '保存失败要保留输入' } })
+  const approve = () => call('requirement/review', { id, action: 'approve' })
+  const start = () => call('requirement/startDev', { id })
+  await seedAIReview(root, id, { submit: true })
+  assert.equal((await approve()).ok, true)
+  const { data: task } = await call('issue/create', { reqId: id, title: '实现重试', fields: { problemOverview: '保存失败可重试', acceptance: '可以再次保存原输入' } })
+  const [prd] = (await call('prd/list', { reqId: id })).data
+  assert.equal((await call('prd/save', { ...prd, markdown: '# 更新后的表单保存\n\n保存失败时显示原因，并保留上次输入。' })).ok, true)
+  assert.equal((await start()).code, 'REVIEW_APPROVAL_STALE')
+  assert.equal((await call('requirement/move', { id, to: 'backlog', reason: '更新了范围' })).code, 'REVIEW_INVALIDATION_REQUIRED')
+  const returned = await call('requirement/move', { id, to: 'backlog', reason: '更新了范围', confirmReviewInvalid: true })
+  assert.equal(returned.data.to, 'backlog')
+  await seedAIReview(root, id, { submit: true })
+  assert.equal((await approve()).ok, true)
+  assert.equal((await start()).ok, true)
+  const { data: req } = await call('requirement/get', { id })
+  assert.deepEqual(req.issues.map(item => item.id), [task.id])
+  assert.equal(req.reviews.filter(item => item.decision === 'returned').length, 1)
+})
 
 test('preparation reuses a legacy discovery chat, saves PRD and HTML from separate chats, and reviews the saved version without a session', async t => {
   const root = await makeRoot(t)

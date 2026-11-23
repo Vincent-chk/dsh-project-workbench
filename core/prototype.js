@@ -1,7 +1,8 @@
 // Stage-1 DSH 接入原型（PROTOTYPE — 正式接入后移除演示入口，保留可复用接入函数）。
 // The link/run/sync machinery now lives in core/link.js (stage 2); this module keeps
 // the demo data, demo entry routes/tools and the real apply_patch mount used by V-4.
-import { reviewMaterial } from './review-material.js'
+import { readDiscoveryRecords, reviewMaterial, reviewSubmission } from './review-material.js'
+import { latestPrototype, savePrototype } from './prototype-material.js'
 import { join } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -40,19 +41,33 @@ export async function ensureDemoData(root) {
   try { await readFile(join(root, '.project', 'project.md'), 'utf8') } catch { await store.initProject(root, {}) }
   const develop = async reqId => {
     await store.updateRequirement(root, reqId, { goal: '空名字时给出清楚提示', scope: '只处理示例问候函数', acceptance: '三个输入场景通过' })
-    const [prd] = await reviewPrds(root, reqId)
-    const material = prd ?? await savePrd(root, {
+    let documents = await reviewPrds(root, reqId)
+    if (!documents.length) documents = [await savePrd(root, {
       reqIds: [reqId],
       markdown: '# 问候示例\n\n用户未填写名字或输入全空格时，显示“请填写名字”。输入正常名字时，保留原问候。',
-    })
+    })]
+    if (!(await readDiscoveryRecords(root, reqId)).length) {
+      const discovery = ['---', 'version: 1', `savedAt: "${new Date().toISOString()}"`, 'sessionId: prototype-demo',
+        'previewId: prototype-demo-discovery', 'skillSeq: 1', 'from: 2', 'through: 4', 'round: [2, 3, 4]',
+        '---', '', '演示对话结论：空白输入应提示填写，正常输入保留问候。', ''].join('\n')
+      await atomicWrite(join(root, '.project', 'requirements', reqId, 'discovery', '1.md'), discovery)
+    }
+    if (!(await latestPrototype(root, reqId))) {
+      await savePrototype(root, reqId, {
+        prds: documents.map(({ id, title, version, revision }) => ({ id, title, version, revision })),
+        html: '<h1>问候示例</h1><p>未填写名字时，显示“请填写名字”。</p>',
+        material: { summary: '空白输入时提示填写', flow: [{ from: '填写名字', to: '提示填写', when: '名字为空' }],
+          screens: [{ title: '问候', state: '输入为空', elements: [{ kind: 'feedback', label: '请填写名字' }] }] },
+      }, 1)
+    }
     await store.moveRequirement(root, reqId, 'reviewing')
+    const requirement = await store.readRequirement(root, reqId)
     await store.saveAIReview(root, reqId, {
-      requestId: 'prototype-review',
-      source: (await reviewMaterial(root, await store.readRequirement(root, reqId), [material])).source,
+      requestId: 'prototype-review-' + reviewSubmission(requirement),
+      source: (await reviewMaterial(root, requirement, documents)).source,
       report: '原型演示夹具。核对空输入提示及有效输入的问候结果。',
     })
     await store.moveRequirement(root, reqId, 'ready')
-    await store.moveRequirement(root, reqId, 'in_progress')
   }
   let idx = await store.scanProject(root)
   let req = idx.requirements.find(r => r.title === DEMO_REQ_TITLE)
@@ -84,12 +99,12 @@ export async function ensureDemoData(root) {
   for (const title of [DEMO_ISSUE_A, DEMO_ISSUE_B]) {
     let issue = (req.issues ?? []).find(i => i.title === title)
     if (!issue) {
-      const created = await store.createIssue(root, req.id, title)
-      await store.updateIssue(root, req.id, created.data.id, TASK_INFO[title])
+      const created = await store.createIssue(root, req.id, title, TASK_INFO[title])
       issue = { id: created.data.id, title }
     }
     issues.push({ id: issue.id, title })
   }
+  if (req.status === 'ready') await store.moveRequirement(root, req.id, 'in_progress')
   for (const [name, content] of Object.entries(DEMO_FILES)) {
     const p = join(root, name)
     try { await readFile(p, 'utf8') } catch { await atomicWrite(p, content) }

@@ -105,8 +105,9 @@ export async function listPrototypes(root, reqId) {
 export async function readPrototype(root, reqId, version) {
   if (!Number.isSafeInteger(version) || version < 1) throw invalid()
   const { content } = await readWorkspaceFile(root, relativeDirectory(reqId) + '/' + filename(version))
-  const record = JSON.parse(content)
-  if (record.version !== version || typeof record.html !== 'string' || !Array.isArray(record.prds)) throw invalid()
+  let record
+  try { record = JSON.parse(content) } catch { throw invalid() }
+  if (record?.version !== version || typeof record.html !== 'string' || !record.html.trim() || !Array.isArray(record.prds)) throw invalid()
   return { ...record, material: parsePrototype(JSON.stringify(record.material)) }
 }
 

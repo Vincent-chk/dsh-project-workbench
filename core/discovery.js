@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, readFile, readdir, realpath, rename } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
-import { atomicWrite, readWorkspaceFile, WorkbenchError } from './files.js'
+import { atomicWrite, WorkbenchError } from './files.js'
 import { discoveryQuestions } from './discovery-qa.js'
-import { parseFrontmatter } from './frontmatter.js'
 import { validatePrdDraft, readPrd, savePrd, reviewPrds, requireReviewPrds, withPrdLock } from './prd.js'
 import { discoverySkillName, discoverySkillMarker } from './skill.js'
 import { parseJsonOutput, projectSession, startReadOnlyChild } from './spawn.js'
+import { parseDiscoveryRecord, readDiscoveryRecords } from './review-material.js'
 import { ensurePreparationTask, readRequirement, requirementKey, withRequirementLock } from './store.js'
 
 import { latestPrototype, listPrototypes, parsePrototype, readPrototype, renderPrototype, savePrototype } from './prototype-material.js'
@@ -188,40 +188,6 @@ function interview(events, binding, { after = -1, includeLiveAnswers = false } =
   return { skillSeq, messages: prior ? [prior, ...fresh] : fresh, ready: !!reply }
 }
 
-function recordBody(file, n) {
-  const doc = parseFrontmatter(file)
-  const result = {
-    version: doc.get('version'), savedAt: doc.get('savedAt'), sessionId: doc.get('sessionId'), previewId: doc.get('previewId'),
-    skillSeq: doc.get('skillSeq'), from: doc.get('from'), through: doc.get('through'),
-    round: doc.get('round'), markdown: doc.body.trim(), hash: digest(file),
-  }
-  const { round, from, through, skillSeq } = result
-  if (!doc.hasFm || result.version !== n || !Number.isFinite(Date.parse(result.savedAt)) || !result.markdown || !tokenPattern.test(result.sessionId ?? '') || !tokenPattern.test(result.previewId ?? '')
-    || ![from, through, skillSeq].every(Number.isSafeInteger) || skillSeq >= from || through < from
-    || !Array.isArray(round) || round.length !== 3 || !round.every(Number.isSafeInteger)
-    || !(from <= round[0] && round[0] < round[1] && round[1] < round[2] && round[2] <= through)) {
-    throw error('DISCOVERY_INVALID_RECORD', '第 ' + n + ' 版深挖记录无法核验。')
-  }
-  return result
-}
-
-async function readRecords(root, id) {
-  const parts = recordsParts(id)
-  let names
-  try { names = await readdir(await directory(root, parts)) } catch (e) {
-    if (e.code === 'ENOENT') return []
-    throw e
-  }
-  const versions = names.filter(name => /^[1-9]\d*\.md$/u.test(name)).map(name => Number(name.slice(0, -3)))
-  if (!versions.every(Number.isSafeInteger)) throw error('DISCOVERY_INVALID_RECORD', '深挖记录版本号无效。')
-  return Promise.all(versions.sort((a, b) => b - a).map(async n => {
-    const name = recordName(n)
-    if (!(await lstat(join(root, ...parts, name))).isFile()) throw error('INVALID_PATH', '深挖记录路径不可用。')
-    const { content } = await readWorkspaceFile(root, join(...parts, name))
-    return recordBody(content, n)
-  }))
-}
-
 function promptContext(req) {
   return { title: req.title, audience: req.q_who, problem: req.q_pain, goal: req.goal, scope: req.scope,
     acceptance: req.acceptance || req.q_success, excluded: req.q_out, background: req.background }
@@ -288,7 +254,7 @@ export function installDiscovery(ctx, { readOnlyChildren }) {
         await saveBinding(root, binding)
       }
       if (!binding.started) {
-        const prior = (await readRecords(root, reqId))[0]
+        const prior = (await readDiscoveryRecords(root, reqId))[0]
         await ctx.sessionController.prompt({
           sessionId: binding.sessionId, requestId: binding.requestId, mode: 'queue',
           content: [{ type: 'text', text: [interviewRequest(req),
@@ -335,7 +301,7 @@ export function installDiscovery(ctx, { readOnlyChildren }) {
   async function list({ root: inputRoot, reqId }) {
     const root = await workspaceRoot(inputRoot)
     await requirement(root, reqId)
-    const [binding, records] = await Promise.all([readBinding(root, reqId), readRecords(root, reqId)])
+    const [binding, records] = await Promise.all([readBinding(root, reqId), readDiscoveryRecords(root, reqId)])
     return { sessionId: binding?.sessionId, records }
   }
 
@@ -351,7 +317,7 @@ export function installDiscovery(ctx, { readOnlyChildren }) {
       const events = await history(ctx, root, sessionId)
       const agent = ctx.agents?.get(sessionId)
       if (agent && agent.status !== 'idle') throw error('SESSION_BUSY', '请在主会话完成当前回复或待办操作后再整理。')
-      const [latest] = await readRecords(root, reqId)
+      const [latest] = await readDiscoveryRecords(root, reqId)
       const after = latest?.sessionId === sessionId ? latest.through : -1
       const transcript = interview(events, binding, { after })
       if (transcript.skillSeq === undefined) throw error('DISCOVERY_SKILL_REQUIRED', '请等 Grill Me 完成首次提问。若会话未加载技能，请检查 DSH 和工作台版本。')
@@ -389,7 +355,7 @@ export function installDiscovery(ctx, { readOnlyChildren }) {
     const key = await requirementKey(root, reqId)
     return withRequirementLock(root, reqId, async () => {
       const req = await requirement(root, reqId)
-      const records = await readRecords(root, reqId)
+      const records = await readDiscoveryRecords(root, reqId)
       const prior = records.find(record => record.previewId === previewId && record.sessionId === sessionId)
       if (prior) return prior
       requirePool(req)
@@ -419,7 +385,7 @@ export function installDiscovery(ctx, { readOnlyChildren }) {
         await rename(temporary, destination)
       })
       summaryDrafts.delete(key)
-      return recordBody(content, version)
+      return parseDiscoveryRecord(content, version)
     })
   }
 
@@ -448,7 +414,7 @@ export function installDiscovery(ctx, { readOnlyChildren }) {
     const requirements = [], sources = [], material = []
     for (const reqId of ids) {
       const req = await requirement(root, reqId)
-      const records = await readRecords(root, reqId)
+      const records = await readDiscoveryRecords(root, reqId)
       const record = version === undefined ? records[0] : records.find(item => item.version === version)
       if (!record) throw version === undefined ? await missingRecord(root, req)
         : error('DISCOVERY_INVALID_VERSION', '找不到所选深挖版本，请刷新后重试。')
@@ -484,7 +450,7 @@ export function installDiscovery(ctx, { readOnlyChildren }) {
     }
     for (const source of draft.sources) {
       await requirement(root, source.reqId)
-      const records = await readRecords(root, source.reqId)
+      const records = await readDiscoveryRecords(root, source.reqId)
       if (!records.some(item => item.version === source.version && item.hash === source.hash)) {
         throw error('DISCOVERY_SOURCE_CHANGED', '起草所用的深挖记录已变化，请重新生成。')
       }
@@ -500,7 +466,7 @@ export function installDiscovery(ctx, { readOnlyChildren }) {
     const root = await workspaceRoot(inputRoot)
     await requirement(root, reqId)
     const [prds, records, prototypes] = await Promise.all([
-      reviewPrds(root, reqId), readRecords(root, reqId), listPrototypes(root, reqId),
+      reviewPrds(root, reqId), readDiscoveryRecords(root, reqId), listPrototypes(root, reqId),
     ])
     return { prds: prds.map(({ id, title, revision }) => ({ id, title, revision })),
       discoveryVersions: records.map(({ version }) => version), prototypes }
@@ -530,7 +496,7 @@ export function installDiscovery(ctx, { readOnlyChildren }) {
     const discovery = []
     for (const { reqId, version } of sources) {
       const related = reqId === req.id ? req : await requirement(root, reqId)
-      const records = await readRecords(root, reqId)
+      const records = await readDiscoveryRecords(root, reqId)
       const record = version === undefined ? records[0] : records.find(item => item.version === version)
       if (!record) throw version === undefined ? await missingRecord(root, related)
         : error('DISCOVERY_INVALID_VERSION', '所选深挖记录不可用。')
@@ -683,7 +649,7 @@ export function installDiscovery(ctx, { readOnlyChildren }) {
         if (current && !current.reqIds.includes(req.id)) throw error('PRD_NOT_FOUND', '该 PRD 已解除关联。')
         const discoveries = binding.source.discoveries ?? []
         if (!binding.lastSave) for (const source of discoveries) {
-          const records = await readRecords(root, source.reqId)
+          const records = await readDiscoveryRecords(root, source.reqId)
           if (!records.some(record => record.version === source.version && record.hash === source.hash)) {
             throw error('DISCOVERY_SOURCE_CHANGED', '起草所用的深挖记录已变化，请重新生成。')
           }
@@ -721,7 +687,7 @@ export function installDiscovery(ctx, { readOnlyChildren }) {
     'discovery/source': async ({ root: inputRoot, reqId, version }) => {
       const root = await workspaceRoot(inputRoot)
       await requirement(root, reqId)
-      const record = (await readRecords(root, reqId)).find(item => item.version === version)
+      const record = (await readDiscoveryRecords(root, reqId)).find(item => item.version === version)
       if (!record) throw error('DISCOVERY_INVALID_VERSION', '找不到所选深挖版本，请刷新。')
       await history(ctx, root, record.sessionId)
       return { sessionId: record.sessionId }

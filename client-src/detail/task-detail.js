@@ -89,6 +89,7 @@ export function IssueDetail({ issue, req, t, root, mutate, openWikiPage, openTas
   const supplementary = description !== overview ? description : ''
   const hasExtraInfo = !!(issue.triggerPath?.trim() || issue.rootCause?.trim() || supplementary || issue.refs?.length)
   const infoOpen = drawerView?.kind === 'info'
+  const planning = req.status === 'ready'
   const inactive = req.status !== 'in_progress' || !!req.pendingReopen
   const mayRecord = !inactive && ['todo', 'doing', 'blocked'].includes(issue.status)
   const reviewing = !inactive && issue.status === 'in_review'
@@ -136,7 +137,7 @@ export function IssueDetail({ issue, req, t, root, mutate, openWikiPage, openTas
       h('button', { className: 'pw-button', disabled: busy, onClick: () => setSupplementing(v => !v) }, t('supplement')),
     mayRecord && (reworkReason ? reviewReady : hasResult) && h('button', { className: 'pw-button' + (reworkReason ? ' primary' : ''), disabled: busy || runLocked,
       onClick: () => mutate('issue/move', { root, reqId: req.id, id: issue.id, to: 'in_review', fileHash: issue.hash }) }, t('submitTaskAcceptance')),
-    h('button', { className: 'pw-button', disabled: busy, onClick: () => openTask(issue.id) }, t('openTaskSession')),
+    !planning && h('button', { className: 'pw-button', disabled: busy, onClick: () => openTask(issue.id) }, t('openTaskSession')),
     mayRecord && h('button', { className: 'pw-button pw-quiet', disabled: busy, onClick: () => { closeDrawer(); setRecording(true) } }, t('recordTaskResult')))
   const readProgress = (event, activityKey) => {
     const index = progressRecords(issue.activity, t, 'issue').findIndex(entry => entry.key === activityKey)
@@ -207,7 +208,7 @@ export function IssueDetail({ issue, req, t, root, mutate, openWikiPage, openTas
               busy: busy || runLocked, memory: uiMemory, onRunningChange: setAssistRunning }),
             onReadProgress: readProgress, onReadEvidence: readEvidence,
             onAdd: terminal || inactive ? undefined : text => mutate('issue/addUpdate', { root, reqId: req.id, id: issue.id, text }) },
-            inactive && h('p', { className: 'pw-note' }, t(req.pendingReopen ? 'errReopenPending' : 'errNotActive')),
+            inactive && h('p', { className: 'pw-note' }, t(planning ? 'planTasksHint' : req.pendingReopen ? 'errReopenPending' : 'errNotActive')),
             !reworkReason && actions,
             supplementing && h('form', { className: 'pw-progress-form', onSubmit: saveSupplement },
               h('textarea', { className: 'pw-textarea', autoFocus: true, rows: 3, 'aria-label': t('supplement'), placeholder: t('supplementPlaceholder'), value: supplement, onChange: e => setSupplement(e.target.value) }),

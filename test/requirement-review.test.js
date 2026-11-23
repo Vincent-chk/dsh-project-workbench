@@ -8,7 +8,7 @@ import { installRequirementReview } from '../core/requirement-review.js'
 import { dispatch } from '../core/rpc.js'
 import { savePrd } from '../core/prd.js'
 import { saveAIReview } from '../core/store.js'
-import { makeRoot, seedReviewPrd, stubSpawnHost, waitFor } from './util.js'
+import { makeRoot, seedReviewPreparation, seedReviewPrd, stubSpawnHost, waitFor } from './util.js'
 
 const reply = (text, stopReason = 'completed') => ({ stopReason, output: [{ type: 'text', text }] })
 
@@ -35,7 +35,7 @@ async function setup(t) {
   const create = async (title, submit = true) => {
     const { id } = await ok('requirement/create', { title, fields: { q_pain: '输入空值时给出提示' } })
     if (submit) {
-      await seedReviewPrd(root, id)
+      await seedReviewPreparation(root, id)
       await ok('requirement/review', { id, action: 'submit' })
     }
     return id
@@ -57,6 +57,8 @@ test('inline reviews deduplicate across workspace aliases, archive snapshots wit
   const id = await create('空输入提示', false)
   const other = await create('另一个需求', false)
   const prd = await savePrd(root, { id: 'prd-' + randomUUID(), reqIds: [id, other], markdown: '# 问候说明\n\n空输入提示。' })
+  await seedReviewPreparation(root, id, { prd: false })
+  await seedReviewPreparation(root, other, { prd: false })
   await ok('requirement/review', { id, action: 'submit' })
   await ok('requirement/review', { id: other, action: 'submit' })
   const alias = join(root, 'workspace-alias')
@@ -193,6 +195,7 @@ test('review entry and approval require a linked PRD, including requirements alr
   // A stored requirement may already be under review from a version with no PRD guard.
   const file = join(root, '.project', 'requirements', id, 'requirement.md')
   await writeFile(file, (await readFile(file, 'utf8')).replace('status: backlog', 'status: reviewing'))
+  await seedReviewPreparation(root, id, { prd: false })
   await saveAIReview(root, id, { requestId: 'old-no-prd', report: '早期没有 PRD 的报告', source: { prds: [] } })
   assert.equal((await status(id)).hasPrd, false)
   assert.equal((await call('requirement/review/start', { id, after: 'old-no-prd' })).code, 'REVIEW_PRD_REQUIRED')

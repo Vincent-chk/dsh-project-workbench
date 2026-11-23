@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFile, writeFile, mkdir, readdir, rm, symlink, chmod } from 'node:fs/promises'
 import { basename, join } from 'node:path'
-import { makeRoot, seedAIReview, issueFileHash, seedReviewPrd } from './util.js'
+import { makeRoot, seedAIReview, issueFileHash, seedReviewPrd, startTestDevelopment } from './util.js'
 import { homeSummary } from '../core/derive.js'
 import {
   initProject, scanProject, validateProject, createRequirement, updateRequirement, moveRequirement,
@@ -25,7 +25,7 @@ async function started(root, title = '需求') {
   await moveRequirement(root, id, 'reviewing')
   await seedAIReview(root, id)
   await moveRequirement(root, id, 'ready')
-  await moveRequirement(root, id, 'in_progress')
+  await startTestDevelopment(root, id)
   return id
 }
 async function link(root, reqId, issueId, sid = 'session-test') {
@@ -91,7 +91,7 @@ test('starting a blocked task clears its waiting time before a new block', async
 test('confirmation wait tracks entry time through progress and clears on exit', async t => {
   const root = await makeRoot(t)
   const reqId = await started(root)
-  const issueId = (await createIssue(root, reqId, '等待确认')).data.id
+  const issueId = (await createIssue(root, reqId, '等待确认', { problemOverview: '查看验收等待提示', acceptance: '显示等待时间' })).data.id
   await link(root, reqId, issueId)
   await moveIssue(root, reqId, issueId, 'doing')
   await updateIssue(root, reqId, issueId, { acceptance: '标准', resultSummary: '结果', evidence: '依据' })
@@ -222,10 +222,10 @@ test('in_progress → backlog requires no running tasks', async t => {
   assert.equal((await scanProject(root)).requirements[0].status, 'backlog')
 })
 
-test('issue creation rejected unless in_progress', async t => {
+test('issue creation rejected before a requirement is ready', async t => {
   const root = await makeRoot(t)
   const id = await draft(root)
-  await assert.rejects(createIssue(root, id, 't'), e => e.code === 'REQ_NOT_ACTIVE')
+  await assert.rejects(createIssue(root, id, 't'), e => e.code === 'TASK_PLANNING_NOT_ALLOWED')
 })
 
 test('requirement submission waits until every task passes acceptance', async t => {
@@ -261,7 +261,7 @@ test('auto (ai/system) and manual submit share the same acceptance conditions', 
   // Automatic submission is allowed when conditions hold...
   assert.equal((await submitRequirement(root, id, { summary: 's', actor: 'ai' })).data.to, 'pending')
   // ...and rejected for the same reasons as manual (here: an open task after reopen).
-  await reopenRequirement(root, id, { reason: '打回', create: [{ title: '新', fields: { problemOverview: '要补做的工作' } }] })
+  await reopenRequirement(root, id, { reason: '打回', create: [{ title: '新', fields: { problemOverview: '要补做的工作', acceptance: '核对修改符合要求' } }] })
   await assert.rejects(submitRequirement(root, id, { summary: 's', actor: 'system' }), e => e.code === 'TASKS_NOT_ACCEPTED')
   await assert.rejects(submitRequirement(root, id, { summary: 's', actor: 'human' }), e => e.code === 'TASKS_NOT_ACCEPTED')
 })
@@ -286,7 +286,7 @@ test('editing an in-review task cannot change its status after its requirement r
   const id = await started(root)
   const { data: { id: iss } } = await createIssue(root, id, '任务')
   await link(root, id, iss)
-  await updateIssue(root, id, iss, { acceptance: '标准', triggerPath: '原路径', resultSummary: '结果', evidence: '依据' })
+  await updateIssue(root, id, iss, { problemOverview: '查看任务', acceptance: '标准', triggerPath: '原路径', resultSummary: '结果', evidence: '依据' })
   await moveIssue(root, id, iss, 'doing')
   await moveIssue(root, id, iss, 'in_review')
   await updateRequirement(root, id, { goal: '新目标' }, { confirmReviewInvalid: true, reason: '新目标需要评审' })
@@ -303,6 +303,8 @@ test('blocked issue requires reason; clearing on unblock; AI may block but not c
   const id = await started(root)
   const { data: iss } = await createIssue(root, id, 't')
   await link(root, id, iss.id)
+  await assert.rejects(moveIssue(root, id, iss.id, 'doing'), { code: 'MISSING_START_FIELDS' })
+  await updateIssue(root, id, iss.id, { problemOverview: '核对处理流程', acceptance: '结果符合预期' })
   await moveIssue(root, id, iss.id, 'doing')
   await assert.rejects(moveIssue(root, id, iss.id, 'blocked', {}), e => e.code === 'BLOCKED_REASON_REQUIRED')
   await moveIssue(root, id, iss.id, 'blocked', { blockedReason: '等待依赖', actor: 'ai' })
@@ -348,7 +350,7 @@ test('six-info sections round-trip and preserve 说明 plus unrelated body', asy
 test('deliveryStartedAt: set on create, reset on reopen/continue, kept on normal moves', async t => {
   const root = await makeRoot(t)
   const id = await started(root)
-  const { data: iss } = await createIssue(root, id, 't')
+  const { data: iss } = await createIssue(root, id, 't', { problemOverview: '核对处理流程', acceptance: 'a' })
   const created = (await scanProject(root)).requirements[0].issues[0].deliveryStartedAt
   assert.ok(created > 0)
   await link(root, id, iss.id)
@@ -369,7 +371,7 @@ test('deliveryStartedAt: set on create, reset on reopen/continue, kept on normal
 test('continue-modify preserves the result while an execution request is still active', async t => {
   const root = await makeRoot(t)
   const reqId = await started(root)
-  const { data: { id } } = await createIssue(root, reqId, '任务')
+  const { data: { id } } = await createIssue(root, reqId, '任务', { problemOverview: '核对任务结果', acceptance: '结果可验证' })
   await link(root, reqId, id)
   await moveIssue(root, reqId, id, 'doing')
   await updateIssue(root, reqId, id, { acceptance: '标准', resultSummary: '结果', evidence: '依据' })
@@ -402,7 +404,7 @@ test('terminal content is read-only until reopened', async t => {
   await assert.rejects(updateRequirement(root, id, { next: 'x' }), e => e.code === 'TERMINAL_READ_ONLY')
 })
 
-test('confirm: fingerprint required, conflict, direct completion needs result+evidence', async t => {
+test('confirm: fingerprint required, conflict, direct completion needs criteria, result and evidence', async t => {
   const root = await makeRoot(t)
   const id = await started(root)
   const { data: { id: iss } } = await createIssue(root, id, 't')
@@ -412,7 +414,11 @@ test('confirm: fingerprint required, conflict, direct completion needs result+ev
   await assert.rejects(confirmIssue(root, id, iss, {}), e => e.code === 'FINGERPRINT_REQUIRED')
   const fresh = await issueFileHash(root, id, iss)
   await assert.rejects(confirmIssue(root, id, iss, { fileHash: fresh }), e => e.code === 'RESULT_EVIDENCE_REQUIRED')
-  const ok = await confirmIssue(root, id, iss, { summary: '结果', evidence: '依据', fileHash: fresh })
+  const result = { summary: '结果', evidence: '依据' }
+  await assert.rejects(confirmIssue(root, id, iss, { ...result, fileHash: fresh }), { code: 'ACCEPTANCE_REQUIRED' })
+  assert.equal(await issueFileHash(root, id, iss), fresh)
+  await updateIssue(root, id, iss, { acceptance: '验证结果符合预期' })
+  const ok = await confirmIssue(root, id, iss, { ...result, fileHash: await issueFileHash(root, id, iss) })
   assert.equal(ok.data.to, 'done')
 })
 
@@ -446,7 +452,7 @@ test('issue refs are editable: round-trip, relative-only, byte-preserving', asyn
 test('update log appends to requirement and issue activity; issue move records actor', async t => {
   const root = await makeRoot(t)
   const id = await started(root)
-  const { data: iss } = await createIssue(root, id, 't')
+  const { data: iss } = await createIssue(root, id, 't', { problemOverview: '核对进展记录', acceptance: '活动记录可查看' })
   await addRequirementUpdate(root, id, '需求进展一')
   await addIssueUpdate(root, id, iss.id, 'issue 进展')
   await link(root, id, iss.id)
@@ -487,7 +493,7 @@ test('activity excludes similarly named sections and objective evidence', async 
 test('concurrent issue edits, status and progress preserve each other after a rejected write', async t => {
   const root = await makeRoot(t)
   const id = await started(root)
-  const { data: issue } = await createIssue(root, id, 't')
+  const { data: issue } = await createIssue(root, id, 't', { problemOverview: '核对并发写入', acceptance: '各项写入均保存' })
   await link(root, id, issue.id)
   const results = await Promise.allSettled([
     updateIssue(root, id, issue.id, { status: 'done' }), // not editable → rejected, must not block queue
@@ -582,7 +588,7 @@ test('reopen: allocates IDs first, reopens + creates, same titles do not imperso
   const a = await doneIssue(root, id, '任务甲')
   const b = await doneIssue(root, id, '任务乙')
   await submitRequirement(root, id, { summary: 's' })
-  const res = await reopenRequirement(root, id, { reason: '打回修改', reopen: [a, b], create: [{ title: '同名新任务', fields: { problemOverview: '要补做的工作' } }, { title: '同名新任务', fields: { problemOverview: '第二份不同的工作' } }] })
+  const res = await reopenRequirement(root, id, { reason: '打回修改', reopen: [a, b], create: [{ title: '同名新任务', fields: { problemOverview: '要补做的工作', acceptance: '核对修改符合要求' } }, { title: '同名新任务', fields: { problemOverview: '第二份不同的工作', acceptance: '核对修改符合要求' } }] })
   assert.equal(res.data.status, 'in_progress')
   assert.equal(res.data.items.length, 4)
   const idx = await scanProject(root)
@@ -704,7 +710,7 @@ test('path-traversal ids are rejected', async t => {
 test('old-format task without deliveryStartedAt gets it backfilled on first start', async t => {
   const root = await makeRoot(t)
   const id = await started(root)
-  const { data: iss } = await createIssue(root, id, '旧任务')
+  const { data: iss } = await createIssue(root, id, '旧任务', { description: '旧版的任务说明', acceptance: '开始时间正确补写' })
   // Strip the new field to simulate a pre-stage-2 file.
   const file = issFile(root, id, iss.id)
   await writeFile(file, (await readFile(file, 'utf8')).replace(/^deliveryStartedAt: \d+\n/m, ''))
@@ -862,13 +868,13 @@ test('reopen retry with the original fingerprint resumes the same plan and decis
   const issuesDir = join(root, '.project', 'requirements', id, 'issues')
   await chmod(issuesDir, 0o500) // item processing fails after the plan is saved
   try {
-    await assert.rejects(reopenRequirement(root, id, { reason: '打回', reopen: [a], create: [{ title: '新', fields: { problemOverview: '要补做的工作' } }], fileHash: originalHash }), e => e.code === 'REOPEN_ITEM_FAILED')
+    await assert.rejects(reopenRequirement(root, id, { reason: '打回', reopen: [a], create: [{ title: '新', fields: { problemOverview: '要补做的工作', acceptance: '核对修改符合要求' } }], fileHash: originalHash }), e => e.code === 'REOPEN_ITEM_FAILED')
   } finally { await chmod(issuesDir, 0o700) }
   assert.ok((await scanProject(root)).requirements[0].pendingReopen) // plan persisted
   await assert.rejects(reopenRequirement(root, id, { reason: '打回', reopen: [a],
-    create: [{ title: '新', fields: { problemOverview: '另一个任务内容' } }] }), { code: 'REOPEN_CONFLICT' })
+    create: [{ title: '新', fields: { problemOverview: '另一个任务内容', acceptance: '核对修改符合要求' } }] }), { code: 'REOPEN_CONFLICT' })
   // Retry with the SAME original fingerprint must not conflict (continuation).
-  const res = await reopenRequirement(root, id, { reason: '打回', reopen: [a], create: [{ title: '新', fields: { problemOverview: '要补做的工作' } }], fileHash: originalHash })
+  const res = await reopenRequirement(root, id, { reason: '打回', reopen: [a], create: [{ title: '新', fields: { problemOverview: '要补做的工作', acceptance: '核对修改符合要求' } }], fileHash: originalHash })
   assert.equal(res.data.status, 'in_progress')
   const req = (await scanProject(root)).requirements[0]
   assert.equal(req.pendingReopen, null)
@@ -966,13 +972,13 @@ test('an old done task cannot carry acceptance after another task is reopened', 
   // A legacy external edit can leave every task done without publishing a fresh result.
   const file = issFile(root, id, a)
   await writeFile(file, (await readFile(file, 'utf8')).replace('status: todo', 'status: done'))
-  await assert.rejects(submitRequirement(root, id, { summary: '新摘要' }), { code: 'RESULT_EVIDENCE_REQUIRED' })
+  await assert.rejects(submitRequirement(root, id, { summary: '新摘要' }), { code: 'TASK_DELIVERY_INCOMPLETE' })
 })
 
 test('issue/continue is limited to in_review; resuming uses run/start', async t => {
   const root = await makeRoot(t)
   const id = await started(root)
-  const { data: iss } = await createIssue(root, id, 't')
+  const { data: iss } = await createIssue(root, id, 't', { problemOverview: '任务已开始', acceptance: '继续处理时保留结果' })
   await link(root, id, iss.id)
   await moveIssue(root, id, iss.id, 'doing')
   await assert.rejects(continueIssue(root, id, iss.id, { text: '继续' }), e => e.code === 'INVALID_STATE')

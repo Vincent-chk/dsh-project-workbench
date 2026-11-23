@@ -1,6 +1,6 @@
 import { PreparationActions } from '../preparation.js'
 import React from 'react'
-import { aiReviewReports, changesReviewedRequirement, requirementOverview } from '../../core/state.js'
+import { aiReviewReports, canCreateIssue, changesReviewedRequirement, requirementOverview } from '../../core/state.js'
 import { rpc } from '../api.js'
 import { DiscoveryRecords, useDiscoveryRecords } from '../discovery.js'
 import { reqDraftKey, reqDraftFrom, issueDraftFrom, issueDraftKey, draftOf, sameDraft } from '../project-state.js'
@@ -167,7 +167,7 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
   const [readError, setReadError] = useState(null)
   const live = useRef(false)
   const proposalSeq = useRef(0)
-  const mode = req.status === 'backlog' ? 'organize' : req.status === 'in_progress' ? 'split' : null
+  const mode = req.status === 'backlog' ? 'organize' : canCreateIssue(req.status).ok && !req.pendingReopen ? 'split' : null
   useEffect(() => {
     if (initialPrdId || restorePrds) {
       setManagePrds(false)
@@ -277,7 +277,7 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
   const editing = form.editing && canEdit
   const tasks = req.issues ?? []
   const mainBlock = req.pendingReopen || ['pending', 'completed'].includes(req.status) ? 'delivery'
-    : ({ reviewing: 'review', in_progress: 'tasks' }[req.status] ?? 'basic')
+    : ({ reviewing: 'review', ready: 'tasks', in_progress: 'tasks' }[req.status] ?? 'basic')
   const useOrderedLayout = linear || arranging
   useEffect(() => {
     if (!focus || useOrderedLayout) return
@@ -412,7 +412,7 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
     in_progress: ['pending', 'submit'],
   }[req.status])
   const transitionButton = transition && h('button', {
-    type: 'button', className: 'pw-button' + (mainBlock === 'basic' ? ' primary' : ''),
+    type: 'button', className: 'pw-button' + (req.status === 'in_progress' ? '' : ' primary'),
     disabled: busy, onClick: () => onMove(req, transition[0]),
   }, t(transition[1]))
   const activeDrawer = !editing && !managePrds && !useOrderedLayout && drawer && {
@@ -460,7 +460,9 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
             !editing && h('button', { type: 'button', className: 'pw-button', onClick: () => { closeDrawer(); setLinear(!linear) } },
               t(linear ? 'reqReturnToDetail' : 'reqReadInOrder')),
             regular && h('button', { type: 'button', className: 'pw-button', onClick: openPrdManagement }, t('reqManagePrds')),
-            regular && mainBlock === 'tasks' && addDevelopmentNote && h('button', { type: 'button', className: 'pw-button',
+            regular && req.status === 'ready' && h('button', { type: 'button', className: 'pw-button', disabled: busy,
+              onClick: () => onMove(req, 'backlog') }, t('returnForPreparation')),
+            regular && req.status === 'in_progress' && mainBlock === 'tasks' && addDevelopmentNote && h('button', { type: 'button', className: 'pw-button',
               onClick: () => setAddProgress(!addProgress), 'aria-expanded': addProgress }, t('recordProgress')),
             req.status === 'backlog' && !editing && h('button', { className: 'pw-button', disabled: busy, onClick: organize }, t('aiOrganize')),
             canDelete && !editing && h('button', { className: 'pw-button danger', disabled: busy, onClick: onDelete }, t('delete')))))),
@@ -473,12 +475,13 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
     scrollMemory: uiMemory.detailScroll ??= {}, scrollKey: layoutKey }, content)
 }
 
-// 任务栏：标题是独立详情入口（≥44px），每行一个状态控件；开发中可排序、
-// 新建、AI 拆分，并进入处理或验收（PRD §7.5）。其他阶段任务状态只读。
+// 待开发可规划任务，开发中可处理或验收任务。
 export function IssueSidebar({ req, t, moveIssue, onOpenIssue, onCreateTask, busy, onSuggest, onReorderTask, onStartTask,
   suggestionReview, filter = '', onFilter, readOnly, children }) {
   const [sorting, setSorting] = useState(false)
-  const locked = readOnly || req.status !== 'in_progress' || !!req.pendingReopen
+  const locked = readOnly || !canCreateIssue(req.status).ok || !!req.pendingReopen
+  const planning = !locked && req.status === 'ready'
+  const showOperations = !locked && (!planning || sorting)
   const tasks = sortedTasks(req.issues)
   const visible = sorting || !filter ? tasks : tasks.filter(task => task.status === filter)
   const done = tasks.filter(task => task.status === 'done').length
@@ -487,7 +490,7 @@ export function IssueSidebar({ req, t, moveIssue, onOpenIssue, onCreateTask, bus
   const flags = [['blocked', 'devBlocked'], ['in_review', 'devInReview']]
     .map(([status, label]) => [status, label, tasks.filter(task => task.status === status).length])
   return h('section', { className: 'pw-req-tasks', 'aria-label': t('reqTasks') },
-    !locked && !!tasks.length && h('div', { className: 'pw-req-progress' },
+    !locked && !planning && !!tasks.length && h('div', { className: 'pw-req-progress' },
       h('div', { className: 'pw-req-progress-heading' },
         h('strong', null, t('reqProgress')),
         h('span', null, t('reqActiveTasks').replace('{done}', String(done)).replace('{total}', String(effective)))),
@@ -506,6 +509,7 @@ export function IssueSidebar({ req, t, moveIssue, onOpenIssue, onCreateTask, bus
         tasks.length > 1 && onReorderTask && h('button', {
           type: 'button', className: 'pw-button pw-quiet', disabled: busy, onClick: () => setSorting(!sorting), 'aria-pressed': sorting,
         }, t(sorting ? 'reqFinishOrder' : 'reqTaskOrder')))),
+    planning && h('p', { className: 'pw-note' }, t('planTasksHint')),
     suggestionReview,
     !visible.length && h('p', { className: 'pw-note', role: 'status' }, t(filter ? 'noResults' : 'reqNoTasks')),
     filter && !sorting && h('button', { type: 'button', className: 'pw-button pw-quiet', onClick: () => onFilter?.('') }, t('reqClearTaskFilter')),
@@ -513,14 +517,14 @@ export function IssueSidebar({ req, t, moveIssue, onOpenIssue, onCreateTask, bus
       h('thead', null, h('tr', null,
         h('th', { scope: 'col' }, t('issueTitle')),
         h('th', { scope: 'col' }, t('reqTaskStatus')),
-        !locked && h('th', { scope: 'col' }, t('reqTaskOperations')))),
+        showOperations && h('th', { scope: 'col' }, t('reqTaskOperations')))),
       h('tbody', null, visible.map((task, index) => h('tr', { key: task.id },
         h('td', null,
           h('button', { type: 'button', id: 'pw-task-' + task.id, className: 'pw-issue-title', onClick: () => onOpenIssue(task.id) }, task.title)),
         h('td', null, readOnly
           ? h('span', { className: 'pw-istatus st-' + task.status }, t('st_' + task.status))
           : h(IssueStatusSelect, { req, issue: task, t, moveIssue, busy })),
-        !locked && h('td', null, sorting
+        showOperations && h('td', null, sorting
           ? h('span', { className: 'pw-actions' },
             h('button', { type: 'button', className: 'pw-orderbtn', disabled: busy || index === 0,
               'aria-label': t('moveUp') + ' · ' + task.title, onClick: () => onReorderTask(task.id, 'up') }, '↑'),

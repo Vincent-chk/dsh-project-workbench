@@ -57,7 +57,9 @@ var __projectWorkbenchModule = (() => {
   function aiReviewReports(reviews = []) {
     return reviews.filter((record) => record.kind === "ai_review" && record.by === "ai" && record.decision === "reported" && typeof record.marker === "string" && !!record.marker.trim() && typeof record.opinion === "string" && !!record.opinion.trim());
   }
-  var blank = (v) => v === void 0 || v === null || String(v).trim() === "";
+  var reject = (code, reason) => ({ ok: false, code, reason });
+  var ok = () => ({ ok: true });
+  var blank = (v) => typeof v !== "string" || !v.trim();
   function requirementOverview({ q_pain, goal }) {
     return String(q_pain ?? "").trim() || String(goal ?? "").trim();
   }
@@ -74,7 +76,10 @@ var __projectWorkbenchModule = (() => {
   function changesReviewedRequirement(current, patch) {
     return requirementOverview(current) !== requirementOverview({ ...current, ...patch }) || ["goal", "scope", "q_out", "acceptance", "q_success"].some((key) => Object.hasOwn(patch, key) && String(patch[key] ?? "") !== String(current[key] ?? ""));
   }
-  var effectiveEvidence = (issue) => issue.evidence || (issue.hasObjective ? "\u5BA2\u89C2\u8BB0\u5F55" : "");
+  var effectiveEvidence = (issue) => !blank(issue.evidence) ? issue.evidence : issue.hasObjective ? "\u5BA2\u89C2\u8BB0\u5F55" : "";
+  function canCreateIssue(requirementStatus) {
+    return ["ready", "in_progress"].includes(requirementStatus) ? ok() : reject("TASK_PLANNING_NOT_ALLOWED", "tasks can only be created while the requirement is ready or in development");
+  }
   function startBlockers(issue) {
     const missing = taskContentBlockers(issue);
     if (blank(issue.acceptance)) missing.push("acceptance");
@@ -119,8 +124,9 @@ var __projectWorkbenchModule = (() => {
     description: issue.description?.trim() !== taskOverview(issue) ? issue.description ?? "" : "",
     refs: Array.isArray(issue.refs) ? issue.refs.join("\n") : ""
   });
-  function taskFormError(draft) {
-    const missing = taskContentBlockers({ title: draft.title, problemOverview: draft.problemOverview });
+  function taskFormError(draft, { requireAcceptance = false } = {}) {
+    const task = { title: draft.title, problemOverview: draft.problemOverview, acceptance: draft.acceptance };
+    const missing = requireAcceptance ? startBlockers(task) : taskContentBlockers(task);
     if (missing.length) return { ok: false, code: "MISSING_TASK_FIELDS", message: `task needs: ${missing.join(", ")}` };
     return null;
   }
@@ -288,6 +294,11 @@ var __projectWorkbenchModule = (() => {
       sidebarReviewDetails: "Review information",
       taskOverviewField: "Task overview",
       taskCriteriaOptional: "Completion criteria (can be added later)",
+      taskCriteriaField: "Completion criteria",
+      planTasksHint: "Add a title, overview and completion criteria to each planned task before starting development.",
+      goPlanTasks: "Open planned tasks",
+      returnForPreparation: "Return to the request pool",
+      returnForPreparationHint: "Update the preparation materials and submit them for a new review.",
       taskCause: "Root cause",
       taskSupplement: "Additional notes",
       taskRefsInput: "References (one per line)",
@@ -320,7 +331,16 @@ var __projectWorkbenchModule = (() => {
       errRefresh: "This content changed. Refresh and review the latest version.",
       errReviewUpdated: "The content changed. The latest version is shown; review it before confirming again.",
       errDeliveryStatusChanged: "This requirement is no longer in development. Your draft was not saved; copy it if needed, close this window and review the current delivery.",
-      errDeliveryDataIncomplete: "A task could not be read. Restore it, then review the delivery again.",
+      errDeliveryDataIncomplete: "A task could not be read. Repair its file and try again.",
+      errPreparationRequired: "Complete {fields} in the request pool before approval.",
+      errReviewApprovalStale: "Return to the request pool and get approval for the current materials before starting development.",
+      errDevTasksRequired: "Add at least one task to do before starting development.",
+      errDevTaskFields: "Fill in the missing information before starting development. {tasks}",
+      errTaskDeliveryIncomplete: "Complete the acceptance materials for these tasks. {tasks}",
+      taskDeliveryFresh: "result and evidence from the task\u2019s acceptance round",
+      errTaskPlanning: "Add tasks while the requirement is ready or in development.",
+      errInvalidDiscovery: "A saved discovery record could not be verified. Check the record and try again.",
+      errInvalidPrototype: "The saved prototype could not be verified. Return to the request pool and check the prototype.",
       errDraftStale: "This suggestion is out of date. Open the latest version before drafting again.",
       errResultEvidence: "Add the result and verification evidence for this round.",
       errCriteriaRequired: "Add completion criteria first.",
@@ -413,6 +433,11 @@ var __projectWorkbenchModule = (() => {
       sidebarReviewDetails: "\u6838\u5BF9\u4FE1\u606F",
       taskOverviewField: "\u4EFB\u52A1\u6982\u8FF0",
       taskCriteriaOptional: "\u5B8C\u6210\u6807\u51C6\uFF08\u53EF\u540E\u8865\uFF09",
+      taskCriteriaField: "\u5B8C\u6210\u6807\u51C6",
+      planTasksHint: "\u5F00\u59CB\u5F00\u53D1\u524D\uFF0C\u8BF7\u4E3A\u6BCF\u9879\u5F85\u505A\u4EFB\u52A1\u586B\u5199\u6807\u9898\u3001\u4EFB\u52A1\u6982\u8FF0\u548C\u5B8C\u6210\u6807\u51C6\u3002",
+      goPlanTasks: "\u53BB\u8865\u5145\u4EFB\u52A1",
+      returnForPreparation: "\u9000\u56DE\u9700\u6C42\u6C60\u8865\u8D44\u6599",
+      returnForPreparationHint: "\u56DE\u5230\u9700\u6C42\u6C60\u540E\uFF0C\u8BF7\u8865\u9F50\u6750\u6599\u5E76\u91CD\u65B0\u9001\u5BA1\u3002",
       taskCause: "\u6839\u56E0",
       taskSupplement: "\u9644\u52A0\u8BF4\u660E",
       taskRefsInput: "\u5173\u8054\u8D44\u6599\uFF08\u6BCF\u884C\u4E00\u9879\uFF09",
@@ -445,7 +470,16 @@ var __projectWorkbenchModule = (() => {
       errRefresh: "\u5185\u5BB9\u5DF2\u6709\u66F4\u65B0\uFF0C\u8BF7\u5237\u65B0\u540E\u91CD\u65B0\u6838\u5BF9\u3002",
       errReviewUpdated: "\u5185\u5BB9\u5DF2\u6709\u66F4\u65B0\uFF0C\u5DF2\u663E\u793A\u6700\u65B0\u5185\u5BB9\uFF0C\u8BF7\u91CD\u65B0\u6838\u5BF9\u540E\u518D\u786E\u8BA4\u3002",
       errDeliveryStatusChanged: "\u9700\u6C42\u5DF2\u4E0D\u5728\u5F00\u53D1\u4E2D\uFF0C\u4E0B\u9762\u586B\u5199\u7684\u5185\u5BB9\u672A\u4FDD\u5B58\u3002\u9700\u8981\u65F6\u8BF7\u5148\u590D\u5236\uFF0C\u518D\u5173\u95ED\u7A97\u53E3\u5E76\u6838\u5BF9\u5F53\u524D\u4EA4\u4ED8\u5185\u5BB9\u3002",
-      errDeliveryDataIncomplete: "\u6709\u4EFB\u52A1\u65E0\u6CD5\u8BFB\u53D6\uFF0C\u8BF7\u4FEE\u590D\u540E\u91CD\u65B0\u6838\u5BF9\u4EA4\u4ED8\u5185\u5BB9\u3002",
+      errDeliveryDataIncomplete: "\u6709\u4EFB\u52A1\u65E0\u6CD5\u8BFB\u53D6\uFF0C\u8BF7\u4FEE\u590D\u4EFB\u52A1\u6587\u4EF6\u540E\u91CD\u8BD5\u3002",
+      errPreparationRequired: "\u8BC4\u5BA1\u6750\u6599\u7F3A\u5C11{fields}\uFF0C\u8BF7\u5728\u9700\u6C42\u6C60\u8865\u9F50\u3002",
+      errReviewApprovalStale: "\u5F53\u524D\u6750\u6599\u7F3A\u5C11\u6709\u6548\u7684\u8BC4\u5BA1\u901A\u8FC7\u8BB0\u5F55\uFF0C\u8BF7\u9000\u56DE\u9700\u6C42\u6C60\u91CD\u65B0\u8BC4\u5BA1\u3002",
+      errDevTasksRequired: "\u5F00\u59CB\u5F00\u53D1\u524D\uFF0C\u8BF7\u5148\u62C6\u51FA\u5E76\u4FDD\u5B58\u81F3\u5C11\u4E00\u9879\u5F85\u505A\u4EFB\u52A1\u3002",
+      errDevTaskFields: "\u5F00\u59CB\u5F00\u53D1\u524D\uFF0C\u8BF7\u8865\u9F50\u4EFB\u52A1\u4FE1\u606F\u3002{tasks}",
+      errTaskDeliveryIncomplete: "\u8BF7\u8865\u9F50\u8FD9\u4E9B\u4EFB\u52A1\u7684\u9A8C\u6536\u6750\u6599\u3002{tasks}",
+      taskDeliveryFresh: "\u540C\u4E00\u8F6E\u7684\u7ED3\u679C\u4E0E\u9A8C\u8BC1\u4F9D\u636E",
+      errTaskPlanning: "\u8BF7\u5728\u5F85\u5F00\u53D1\u6216\u5F00\u53D1\u4E2D\u6DFB\u52A0\u4EFB\u52A1\u3002",
+      errInvalidDiscovery: "\u5DF2\u6709\u6DF1\u6316\u8BB0\u5F55\u65E0\u6CD5\u6838\u9A8C\uFF0C\u8BF7\u68C0\u67E5\u8BB0\u5F55\u540E\u91CD\u8BD5\u3002",
+      errInvalidPrototype: "\u5DF2\u4FDD\u5B58\u7684\u539F\u578B\u65E0\u6CD5\u6838\u9A8C\uFF0C\u8BF7\u9000\u56DE\u9700\u6C42\u6C60\u68C0\u67E5\u539F\u578B\u3002",
       errDraftStale: "\u5EFA\u8BAE\u5DF2\u8FC7\u65F6\uFF0C\u8BF7\u6253\u5F00\u6700\u65B0\u5185\u5BB9\u540E\u91CD\u65B0\u8D77\u8349\u3002",
       errResultEvidence: "\u8BF7\u8865\u5145\u672C\u6B21\u7ED3\u679C\u548C\u9A8C\u8BC1\u4F9D\u636E\u3002",
       errCriteriaRequired: "\u8BF7\u5148\u8865\u5145\u5B8C\u6210\u6807\u51C6\u3002",
@@ -748,6 +782,11 @@ var __projectWorkbenchModule = (() => {
     REVIEW_NOT_ACTIVE: "errNotAllowed",
     REVIEW_TASK_ONLY: "errNotAllowed",
     REVIEW_PRD_REQUIRED: "reviewPrdRequired",
+    REVIEW_APPROVAL_STALE: "errReviewApprovalStale",
+    DEV_TASKS_REQUIRED: "errDevTasksRequired",
+    TASK_PLANNING_NOT_ALLOWED: "errTaskPlanning",
+    DISCOVERY_INVALID_RECORD: "errInvalidDiscovery",
+    PROTOTYPE_INVALID: "errInvalidPrototype",
     DISCOVERY_SKILL_REQUIRED: "discoveryWaitForQuestion",
     DISCOVERY_ROUND_REQUIRED: "discoveryNeedDiscussion",
     DISCOVERY_NO_NEW: "discoveryNoNewDiscussion",
@@ -759,6 +798,7 @@ var __projectWorkbenchModule = (() => {
     FIELD_NOT_EDITABLE: "errInvalidInput",
     INVALID_ID: "errInvalidInput",
     INVALID_ROOT: "errInvalidInput",
+    INVALID_INPUT: "errInvalidInput",
     INVALID_PROPOSAL: "errInvalidInput",
     NOT_A_DRAFT: "errTrashDraft",
     INVALID_KIND: "errTrashDraft",
@@ -771,6 +811,27 @@ var __projectWorkbenchModule = (() => {
     if (code === "REOPEN_ITEM_FAILED") {
       const access = /EACCES|EPERM|EROFS|EBUSY|immutable|permission|read.?only|权限|不可变/i.test(message);
       return { text: `${t("errReopenItems")}${access ? " \u5DE5\u4F5C\u533A\u6216\u4EFB\u52A1\u6587\u4EF6\u5F53\u524D\u4E0D\u53EF\u5199\uFF0C\u8BF7\u6062\u590D\u6743\u9650\u6216\u6587\u4EF6\u9650\u5236\u540E\u91CD\u8BD5\u3002" : " \u8BF7\u6838\u5BF9\u672A\u5B8C\u6210\u4EFB\u52A1\u540E\u91CD\u8BD5\u3002"} \u5DF2\u5904\u7406\u90E8\u5206\u4E0D\u4F1A\u91CD\u590D\uFF0C\u65B0\u5EFA\u4EFB\u52A1\u6CBF\u7528\u539F ID\u3002`, raw };
+    }
+    const taskFieldLabel = (field) => t({
+      title: "issueTitle",
+      problemOverview: "taskOverviewField",
+      acceptance: "taskCriteriaField",
+      resultSummary: "demoResult",
+      evidence: "demoEvidence",
+      currentResult: "taskDeliveryFresh"
+    }[field] ?? "draftDescription");
+    if (code === "PREPARATION_REQUIRED") {
+      const labels2 = { discovery: "prepDiscovery", prd: "reqRelatedPrds", prototype: "prepPrototype" };
+      const fields = message.split(": ").at(-1).split(", ").filter((field) => Object.hasOwn(labels2, field)).map((field) => t(labels2[field]));
+      return { text: t("errPreparationRequired").replace("{fields}", fields.join("\u3001")), raw };
+    }
+    if (code === "DEV_TASK_FIELDS_REQUIRED" || code === "TASK_DELIVERY_INCOMPLETE") {
+      let tasks = "";
+      try {
+        tasks = JSON.parse(message).map(({ title, fields }) => `${title}\uFF08${fields.map(taskFieldLabel).join("\u3001")}\uFF09`).join("\u3002");
+      } catch {
+      }
+      return { text: t(code === "DEV_TASK_FIELDS_REQUIRED" ? "errDevTaskFields" : "errTaskDeliveryIncomplete").replace("{tasks}", () => tasks).trim(), raw };
     }
     if (code === "MISSING_START_FIELDS" || code === "MISSING_TASK_FIELDS" || code === "REVIEW_INFO_REQUIRED") {
       const fields = message.split(": ").at(-1).split(", ").filter((field) => Object.hasOwn(draftFields, field)).map((field) => {
@@ -874,14 +935,14 @@ var __projectWorkbenchModule = (() => {
       rows ? h2("textarea", { ...props, rows }) : h2("input", props)
     );
   }
-  function TaskFields({ form, t, busy, focus = "title" }) {
+  function TaskFields({ form, t, busy, focus = "title", requireAcceptance = false }) {
     const field = (name, label, rows, required) => h2(EditableField, { form, name, label: t(label), rows, required, disabled: busy, autoFocus: focus === name });
     return h2(
       "div",
       { className: "pw-task-fields" },
       field("title", "issueTitle", 0, true),
       field("problemOverview", "taskOverviewField", 1, true),
-      field("acceptance", "taskCriteriaOptional", 2),
+      field("acceptance", requireAcceptance ? "taskCriteriaField" : "taskCriteriaOptional", 2, requireAcceptance),
       h2(
         Disclosure,
         { label: t("taskAdditional") },
@@ -1843,7 +1904,7 @@ ${detail.trim()}` : value);
   // client-src/shared/modals.js
   var h6 = import_react6.default.createElement;
   var { useEffect: useEffect3, useState: useState4 } = import_react6.default;
-  function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, reopenState, requirements, newDraft, changeNewDraft, createReq, clearNewDraft, locatePrdLink }) {
+  function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, reopenState, requirements, newDraft, changeNewDraft, createReq, clearNewDraft, locatePrdLink, openReady }) {
     const [value, setValue] = useState4("");
     const [checked, setChecked] = useState4([]);
     const [newTask, setNewTask] = useState4(issueDraftFrom);
@@ -1931,12 +1992,17 @@ ${detail.trim()}` : value);
     }
     if (modal.kind === "moveError") {
       const needsPrd = modal.error?.code === "REVIEW_PRD_REQUIRED" && !!modal.reqId;
+      const needsTasks = !!modal.reqId && ["DEV_TASKS_REQUIRED", "DEV_TASK_FIELDS_REQUIRED"].includes(modal.error?.code);
       return h6(Modal, { title: t("moveRejectedTitle"), onClose: close, actions: [
-        h6("button", { key: "close", className: "pw-button" + (needsPrd ? "" : " primary"), onClick: close }, t("ok")),
+        h6("button", { key: "close", className: "pw-button" + (needsPrd || needsTasks ? "" : " primary"), onClick: close }, t("ok")),
         needsPrd && h6("button", { key: "prd", className: "pw-button primary", onClick: () => {
           close();
           locatePrdLink(modal.reqId);
-        } }, t("prdGoLink"))
+        } }, t("prdGoLink")),
+        needsTasks && h6("button", { key: "tasks", className: "pw-button primary", onClick: () => {
+          close();
+          openReady(modal.reqId);
+        } }, t("goPlanTasks"))
       ] }, needsPrd ? h6("p", { role: "alert" }, t("reviewPrdRequired")) : h6(ErrorDetails, { error: modal.error ?? { message: modal.message }, t, showRaw: false }));
     }
     if (modal.kind === "reason") {
@@ -1973,12 +2039,12 @@ ${detail.trim()}` : value);
     }
     if (modal.kind === "rejectTaskAcceptance") {
       const { issue, reqId } = modal;
-      const reject = () => mutate("issue/continue", { root, reqId, id: issue.id, text: value.trim(), fileHash: issue.hash }, { inlineError: true });
+      const reject2 = () => mutate("issue/continue", { root, reqId, id: issue.id, text: value.trim(), fileHash: issue.hash }, { inlineError: true });
       return h6(
         Modal,
         { title: t("taskReject"), onClose: cancel, actions: [
           h6("button", { type: "button", className: "pw-button", disabled: busy, onClick: cancel }, t("cancel")),
-          h6("button", { type: "button", className: "pw-button primary", disabled: busy || !value.trim(), onClick: () => run(reject) }, t("taskConfirmReject"))
+          h6("button", { type: "button", className: "pw-button primary", disabled: busy || !value.trim(), onClick: () => run(reject2) }, t("taskConfirmReject"))
         ] },
         h6("p", null, issue.title),
         h6(
@@ -2059,7 +2125,7 @@ ${detail.trim()}` : value);
       const req = liveReq;
       const retry = reopenState || req.pendingReopen;
       const submit = () => run(() => {
-        const invalid = !retry && addingTask && taskFormError(newTask);
+        const invalid = !retry && addingTask && taskFormError(newTask, { requireAcceptance: true });
         if (invalid) return invalid;
         return mutate("requirement/reopen", retry ? { root, id: req.id } : {
           root,
@@ -2096,7 +2162,7 @@ ${detail.trim()}` : value);
               setAddingTask(event.target.checked);
             }
           }), " ", t("newTask")),
-          addingTask && h6(TaskFields, { form: taskForm, t, busy })
+          addingTask && h6(TaskFields, { form: taskForm, t, busy, requireAcceptance: true })
         ),
         errorView
       );
@@ -2129,7 +2195,7 @@ ${detail.trim()}` : value);
   var MOVES = {
     backlog: { reviewing: "move" },
     reviewing: { ready: "move", backlog: "reason" },
-    ready: { in_progress: "move" },
+    ready: { in_progress: "move", backlog: "reason" },
     in_progress: { pending: "submitDelivery" },
     pending: { completed: "confirmComplete", in_progress: "reopenRequirement" },
     completed: { in_progress: "reopenRequirement" }
@@ -4591,7 +4657,7 @@ ${detail.trim()}` : value);
       prdLinkUnavailable: "This document is no longer linked here.",
       prdImageMissing: "Image unavailable",
       prdImageLoading: "Loading image",
-      reviewPrdRequired: "Link a saved PRD before sending this requirement for review.",
+      reviewPrdRequired: "Link a saved PRD with content before proceeding.",
       prdGoLink: "Go to linked PRDs"
     },
     zh: {
@@ -4623,7 +4689,7 @@ ${detail.trim()}` : value);
       prdLinkUnavailable: "\u6B64\u6587\u6863\u5DF2\u89E3\u9664\u5173\u8054\u3002",
       prdImageMissing: "\u56FE\u7247\u65E0\u6CD5\u663E\u793A",
       prdImageLoading: "\u56FE\u7247\u52A0\u8F7D\u4E2D",
-      reviewPrdRequired: "\u8BF7\u5148\u5173\u8054\u4E00\u4EFD PRD\uFF0C\u518D\u63D0\u4EA4\u8BC4\u5BA1\u3002",
+      reviewPrdRequired: "\u8BF7\u5148\u5173\u8054\u4E00\u4EFD\u6709\u6B63\u6587\u7684 PRD\u3002",
       prdGoLink: "\u53BB\u5173\u8054 PRD"
     }
   };
@@ -4916,9 +4982,9 @@ ${detail.trim()}` : value);
     const [image, setImage] = useState9(null);
     useEffect8(() => {
       let active = true;
-      rpc("prd/image", { root, id, name }).then(({ ok, data }) => {
+      rpc("prd/image", { root, id, name }).then(({ ok: ok2, data }) => {
         if (!active) return;
-        const safe = ok && /^image\/(?:png|jpeg|gif|webp)$/.test(data?.mime) && typeof data.base64 === "string";
+        const safe = ok2 && /^image\/(?:png|jpeg|gif|webp)$/.test(data?.mime) && typeof data.base64 === "string";
         setImage(safe ? `data:${data.mime};base64,${data.base64}` : "");
       });
       return () => {
@@ -5138,10 +5204,10 @@ ${detail.trim()}` : value);
     };
   }
   function imageData(file) {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve, reject2) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result).split(",", 2)[1]);
-      reader.onerror = reject;
+      reader.onerror = reject2;
       reader.readAsDataURL(file);
     });
   }
@@ -5387,16 +5453,16 @@ ${detail.trim()}` : value);
     const approveAll = async () => {
       if (run?.busy || !content.length) return;
       setRun({ busy: true, message: t("syncAdoptContent") });
-      let ok = 0;
+      let ok2 = 0;
       let fail = 0;
       for (const p of content) {
         const res = await rpc("sync/apply", { root, proposalId: p.id });
-        if (res.ok) ok++;
+        if (res.ok) ok2++;
         else fail++;
       }
       if (!mounted.current) return;
       await load();
-      setRun({ busy: false, message: t("syncBatchResult").replace("{adopted}", String(ok)).replace("{failed}", String(fail)) });
+      setRun({ busy: false, message: t("syncBatchResult").replace("{adopted}", String(ok2)).replace("{failed}", String(fail)) });
       refresh();
     };
     const total = (baseline?.accepted ?? 0) + (baseline?.dismissed ?? 0);
@@ -5525,10 +5591,12 @@ ${detail.trim()}` : value);
       null,
       h19("p", { className: "pw-note" }, t("aiReviewRequirementVersion"), " ", versionText2(source.requirementVersion)),
       prds.length ? prds.map((prd) => h19("p", { className: "pw-note", key: prd.id }, t("aiReviewPrdVersion"), " ", prd.title, " \xB7 ", prd.revision ? t("prepVersion").replace("{n}", prd.revision) : versionText2(prd.version))) : h19("p", { className: "pw-note" }, t("aiReviewNoPrd")),
+      source.discovery && h19("p", { className: "pw-note" }, t("prepDiscovery"), " \xB7 ", t("prepVersion").replace("{n}", source.discovery.version)),
       source.prototype && h19("p", { className: "pw-note" }, t("prepPrototype"), " \xB7 ", t("prepVersion").replace("{n}", source.prototype.version)),
       source.materials && h19(
         Disclosure,
         { label: t("aiReviewSavedMaterials") },
+        source.materials.discovery && h19(ReadText, { label: t("prepDiscovery"), value: source.materials.discovery }),
         (source.materials.documents ?? []).map((doc) => h19(ReadText, { key: doc.id, label: doc.title, value: doc.excerpt })),
         source.materials.prototype && h19(ReadText, { label: t("prepPrototype"), value: JSON.stringify(source.materials.prototype, null, 2) })
       )
@@ -5613,8 +5681,9 @@ ${detail.trim()}` : value);
       return () => window.removeEventListener("pw-prd-changed", changed);
     }, [load, reviewing, root]);
     const dataUnavailable = details?.reportsUnavailable || details?.prdsUnavailable;
+    const missingPreparation = details?.missingPreparation ?? [];
     const canStart = !busy && !readError && !running && (saveFailed || details?.hasPrd && !dataUnavailable);
-    const canApprove = !busy && !readError && !dataUnavailable && !running && details?.hasReview;
+    const canApprove = !busy && !readError && !dataUnavailable && !running && !missingPreparation.length && details?.hasReview;
     const start = async () => {
       if (request.current || !canStart) return;
       request.current = true;
@@ -5664,6 +5733,11 @@ ${detail.trim()}` : value);
         reviewing && onReject && h19("button", { className: "pw-button danger", disabled: busy, onClick: () => onReject(details?.hasReview ? suggestedReason : "") }, t("rejectRequirement"))
       ),
       needsReport && h19("p", { className: "pw-note", id: helpId }, t("aiReviewRequired")),
+      reviewing && missingPreparation.length > 0 && h19(ErrorDetails, {
+        t,
+        showRaw: false,
+        error: { code: "PREPARATION_REQUIRED", message: `missing preparation: ${missingPreparation.join(", ")}` }
+      }),
       (running || submitting) && h19("p", { className: "pw-note", role: "status" }, t("aiReviewRunning")),
       reviewing && details?.state === "failed" && h19(
         "p",
@@ -6482,7 +6556,7 @@ ${detail.trim()}` : value);
     const [readError, setReadError] = useState15(null);
     const live = useRef12(false);
     const proposalSeq = useRef12(0);
-    const mode = req.status === "backlog" ? "organize" : req.status === "in_progress" ? "split" : null;
+    const mode = req.status === "backlog" ? "organize" : canCreateIssue(req.status).ok && !req.pendingReopen ? "split" : null;
     useEffect14(() => {
       if (initialPrdId || restorePrds) {
         setManagePrds(false);
@@ -6604,7 +6678,7 @@ ${detail.trim()}` : value);
     const canEdit = !req.pendingReopen && !["pending", "completed"].includes(req.status);
     const editing = form.editing && canEdit;
     const tasks = req.issues ?? [];
-    const mainBlock = req.pendingReopen || ["pending", "completed"].includes(req.status) ? "delivery" : { reviewing: "review", in_progress: "tasks" }[req.status] ?? "basic";
+    const mainBlock = req.pendingReopen || ["pending", "completed"].includes(req.status) ? "delivery" : { reviewing: "review", ready: "tasks", in_progress: "tasks" }[req.status] ?? "basic";
     const useOrderedLayout = linear || arranging;
     useEffect14(() => {
       if (!focus || useOrderedLayout) return;
@@ -6811,7 +6885,7 @@ ${detail.trim()}` : value);
     }[req.status];
     const transitionButton = transition && h24("button", {
       type: "button",
-      className: "pw-button" + (mainBlock === "basic" ? " primary" : ""),
+      className: "pw-button" + (req.status === "in_progress" ? "" : " primary"),
       disabled: busy,
       onClick: () => onMove(req, transition[0])
     }, t(transition[1]));
@@ -6904,7 +6978,13 @@ ${detail.trim()}` : value);
                 t(linear ? "reqReturnToDetail" : "reqReadInOrder")
               ),
               regular && h24("button", { type: "button", className: "pw-button", onClick: openPrdManagement }, t("reqManagePrds")),
-              regular && mainBlock === "tasks" && addDevelopmentNote && h24("button", {
+              regular && req.status === "ready" && h24("button", {
+                type: "button",
+                className: "pw-button",
+                disabled: busy,
+                onClick: () => onMove(req, "backlog")
+              }, t("returnForPreparation")),
+              regular && req.status === "in_progress" && mainBlock === "tasks" && addDevelopmentNote && h24("button", {
                 type: "button",
                 className: "pw-button",
                 onClick: () => setAddProgress(!addProgress),
@@ -6953,7 +7033,9 @@ ${detail.trim()}` : value);
     children
   }) {
     const [sorting, setSorting] = useState15(false);
-    const locked = readOnly || req.status !== "in_progress" || !!req.pendingReopen;
+    const locked = readOnly || !canCreateIssue(req.status).ok || !!req.pendingReopen;
+    const planning = !locked && req.status === "ready";
+    const showOperations = !locked && (!planning || sorting);
     const tasks = sortedTasks(req.issues);
     const visible = sorting || !filter ? tasks : tasks.filter((task) => task.status === filter);
     const done = tasks.filter((task) => task.status === "done").length;
@@ -6963,7 +7045,7 @@ ${detail.trim()}` : value);
     return h24(
       "section",
       { className: "pw-req-tasks", "aria-label": t("reqTasks") },
-      !locked && !!tasks.length && h24(
+      !locked && !planning && !!tasks.length && h24(
         "div",
         { className: "pw-req-progress" },
         h24(
@@ -7005,6 +7087,7 @@ ${detail.trim()}` : value);
           }, t(sorting ? "reqFinishOrder" : "reqTaskOrder"))
         )
       ),
+      planning && h24("p", { className: "pw-note" }, t("planTasksHint")),
       suggestionReview,
       !visible.length && h24("p", { className: "pw-note", role: "status" }, t(filter ? "noResults" : "reqNoTasks")),
       filter && !sorting && h24("button", { type: "button", className: "pw-button pw-quiet", onClick: () => onFilter?.("") }, t("reqClearTaskFilter")),
@@ -7016,7 +7099,7 @@ ${detail.trim()}` : value);
           null,
           h24("th", { scope: "col" }, t("issueTitle")),
           h24("th", { scope: "col" }, t("reqTaskStatus")),
-          !locked && h24("th", { scope: "col" }, t("reqTaskOperations"))
+          showOperations && h24("th", { scope: "col" }, t("reqTaskOperations"))
         )),
         h24("tbody", null, visible.map((task, index) => h24(
           "tr",
@@ -7027,7 +7110,7 @@ ${detail.trim()}` : value);
             h24("button", { type: "button", id: "pw-task-" + task.id, className: "pw-issue-title", onClick: () => onOpenIssue(task.id) }, task.title)
           ),
           h24("td", null, readOnly ? h24("span", { className: "pw-istatus st-" + task.status }, t("st_" + task.status)) : h24(IssueStatusSelect, { req, issue: task, t, moveIssue, busy })),
-          !locked && h24("td", null, sorting ? h24(
+          showOperations && h24("td", null, sorting ? h24(
             "span",
             { className: "pw-actions" },
             h24("button", {
@@ -7509,6 +7592,7 @@ ${detail.trim()}` : value);
     const supplementary = description !== overview ? description : "";
     const hasExtraInfo = !!(issue.triggerPath?.trim() || issue.rootCause?.trim() || supplementary || issue.refs?.length);
     const infoOpen = drawerView?.kind === "info";
+    const planning = req.status === "ready";
     const inactive = req.status !== "in_progress" || !!req.pendingReopen;
     const mayRecord = !inactive && ["todo", "doing", "blocked"].includes(issue.status);
     const reviewing = !inactive && issue.status === "in_review";
@@ -7596,7 +7680,7 @@ ${detail.trim()}` : value);
         disabled: busy || runLocked,
         onClick: () => mutate("issue/move", { root, reqId: req.id, id: issue.id, to: "in_review", fileHash: issue.hash })
       }, t("submitTaskAcceptance")),
-      h26("button", { className: "pw-button", disabled: busy, onClick: () => openTask(issue.id) }, t("openTaskSession")),
+      !planning && h26("button", { className: "pw-button", disabled: busy, onClick: () => openTask(issue.id) }, t("openTaskSession")),
       mayRecord && h26("button", { className: "pw-button pw-quiet", disabled: busy, onClick: () => {
         closeDrawer();
         setRecording(true);
@@ -7745,7 +7829,7 @@ ${detail.trim()}` : value);
               onReadEvidence: readEvidence,
               onAdd: terminal || inactive ? void 0 : (text) => mutate("issue/addUpdate", { root, reqId: req.id, id: issue.id, text })
             },
-            inactive && h26("p", { className: "pw-note" }, t(req.pendingReopen ? "errReopenPending" : "errNotActive")),
+            inactive && h26("p", { className: "pw-note" }, t(planning ? "planTasksHint" : req.pendingReopen ? "errReopenPending" : "errNotActive")),
             !reworkReason && actions,
             supplementing && h26(
               "form",
@@ -8164,7 +8248,7 @@ ${detail.trim()}` : value);
         if (navRef.current.page === "blocked") await refreshBlocked();
       } else if (!inlineError) {
         if (method === "requirement/move" || method === "issue/move") {
-          setModal({ kind: "moveError", error: res, ...res.code === "REVIEW_PRD_REQUIRED" && { reqId: input.id } });
+          setModal({ kind: "moveError", error: res, ...method === "requirement/move" && { reqId: input.id } });
         } else setError(res);
       }
       setSaving(false);
@@ -8426,7 +8510,14 @@ ${detail.trim()}` : value);
       }
       if (kind === "move") return submit(void 0, false, { reviewMarker: options.reviewMarker });
       if (kind === "reason") {
-        setModal({ kind, title: t("returnReview"), suggestion: options.suggestion, onOk: (reason) => submit(reason, true) });
+        const reprepare = req.status === "ready";
+        setModal({
+          kind,
+          title: t(reprepare ? "returnForPreparation" : "returnReview"),
+          suggestion: options.suggestion,
+          body: reprepare ? t("returnForPreparationHint") : void 0,
+          onOk: (reason) => submit(reason, true, { confirmReviewInvalid: reprepare })
+        });
         return;
       }
       if (kind === "confirmComplete") {
@@ -8961,6 +9052,7 @@ ${detail.trim()}` : value);
         trashWithUndo,
         requirements,
         locatePrdLink,
+        openReady: (reqId) => openDetailAt({ reqId, issueId: null }, "ready"),
         newDraft,
         clearNewDraft,
         changeNewDraft: (name, value) => setNewDraft((draft) => ({ ...draft, [name]: value })),
@@ -9539,9 +9631,9 @@ ${detail.trim()}` : value);
           action();
         },
         onSave: async () => {
-          const ok = await leaveRef.current?.save();
-          if (!ok?.ok) {
-            setLeave((current) => current ? { ...current, error: ok ? workbenchError(ok, t).text : t("saveFailed") } : current);
+          const ok2 = await leaveRef.current?.save();
+          if (!ok2?.ok) {
+            setLeave((current) => current ? { ...current, error: ok2 ? workbenchError(ok2, t).text : t("saveFailed") } : current);
             return;
           }
           const action = leave.action;

@@ -113,9 +113,14 @@ export async function reviewPrds(root, reqId) {
   return listPrds(root, reqId, { includeContent: true })
 }
 
+export function hasReviewablePrd(documents) {
+  return documents.some(({ markdown }) => markdown.replace(/<!--[\s\S]*?(?:-->|$)/gu, '')
+    .split(/\r?\n/u).some(line => line.trim() && !/^\s*#{1,6}(?:[ \t]+|$)/u.test(line)))
+}
+
 export async function requireReviewPrds(root, reqId) {
   const docs = await reviewPrds(root, reqId)
-  if (!docs.length) throw new WorkbenchError('REVIEW_PRD_REQUIRED', '请先保存并关联一份 PRD，再进行评审。')
+  if (!hasReviewablePrd(docs)) throw new WorkbenchError('REVIEW_PRD_REQUIRED', '请先保存并关联一份有正文的 PRD。')
   return docs
 }
 

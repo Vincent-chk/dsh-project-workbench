@@ -101,9 +101,9 @@ test('review rejects absent, unrelated, deleted and unreadable PRDs across entry
   const { first, second, root, call, success } = await project(t)
   const id = first
   assert.equal((await call('requirement/review', { id, action: 'submit' })).code, 'REVIEW_PRD_REQUIRED')
-  const other = await success('prd/save', { reqIds: [second], markdown: '# 其他需求' })
+  const other = await success('prd/save', { reqIds: [second], markdown: '# 其他需求\n\n提交反馈并展示结果。' })
   assert.equal((await call('requirement/move', { id, to: 'reviewing' })).code, 'REVIEW_PRD_REQUIRED')
-  const doc = await success('prd/save', { reqIds: [id], markdown: '# 评审资料' })
+  const doc = await success('prd/save', { reqIds: [id], markdown: '# 评审资料\n\n用户可重试提交。' })
   const deleted = await success('prd/delete', { id: doc.id, version: doc.version })
   assert.equal((await call('requirement/review', { id, action: 'submit' })).code, 'REVIEW_PRD_REQUIRED')
   await success('prd/restore', { id: doc.id, version: deleted.version })

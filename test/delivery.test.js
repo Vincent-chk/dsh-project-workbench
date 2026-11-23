@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { installDelivery, taskConditions } from '../core/delivery.js'
 import { dispatch } from '../core/rpc.js'
 import * as store from '../core/store.js'
-import { makeRoot, seedAIReview, issueFileHash, stubSpawnHost, childReply, waitFor, seedReviewPrd } from './util.js'
+import { makeRoot, seedAIReview, issueFileHash, stubSpawnHost, childReply, waitFor, seedReviewPrd, startTestDevelopment } from './util.js'
 
 async function devReq(root, title = '需求') {
   await store.initProject(root)
@@ -17,7 +17,7 @@ async function devReq(root, title = '需求') {
   await store.moveRequirement(root, data.id, 'reviewing')
   await seedAIReview(root, data.id)
   await store.moveRequirement(root, data.id, 'ready')
-  await store.moveRequirement(root, data.id, 'in_progress')
+  await startTestDevelopment(root, data.id)
   return data.id
 }
 async function fullIssue(root, reqId, title = '任务') {
@@ -137,7 +137,7 @@ test('no summary when conditions fail: no tasks, all cancelled, open tasks, pend
   await delivery.maybeSubmit(root, open)
   assert.equal(children.length, 0)
   // pendingReopen blocks even when every task is terminal with fresh results.
-  const req = { status: 'in_progress', pendingReopen: { items: [] }, deliveryStartedAt: 0, issues: [{ status: 'done', resultSummary: 'r', evidence: 'e', resultAt: 1, evidenceAt: 1 }] }
+  const req = { status: 'in_progress', pendingReopen: { items: [] }, deliveryStartedAt: 0, issues: [{ status: 'done', acceptance: '标准', resultSummary: 'r', evidence: 'e', resultAt: 1, evidenceAt: 1 }] }
   assert.equal(taskConditions(req), false)
   assert.equal(taskConditions({ ...req, pendingReopen: null }), true)
 })
@@ -269,7 +269,7 @@ test('reopened delivery summary uses only this round’s manual and system evide
   await store.appendObjectiveSync(root, reqId, id, { sid: 'new', entries: [
     { seq: 1, line: `- 执行命令：new-test（结果 exit:0，会话 new 第 1 条，${newAt}）` },
   ] })
-  const failedCheck = (await store.createIssue(root, reqId, '保留失败记录的任务')).data.id
+  const failedCheck = await fullIssue(root, reqId, '保留失败记录的任务')
   await store.recordRunStart(root, reqId, failedCheck)
   const checkedSince = (await reqOf(root, reqId)).issues.find(issue => issue.id === failedCheck).deliveryStartedAt
   await store.appendObjectiveSync(root, reqId, failedCheck, { sid: 'first-check', entries: [

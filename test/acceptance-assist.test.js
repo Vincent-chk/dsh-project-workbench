@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import * as store from '../core/store.js'
 import { installAcceptanceAssist } from '../core/acceptance-assist.js'
 import { consumeChildToolAllow } from '../core/spawn.js'
-import { makeRoot, seedAIReview, stubSpawnHost, issueFileHash, waitFor } from './util.js'
+import { makeRoot, seedAIReview, stubSpawnHost, issueFileHash, waitFor, startTestDevelopment } from './util.js'
 
 async function fixture(t, issueFields = {}) {
   const root = await makeRoot(t)
@@ -13,7 +13,8 @@ async function fixture(t, issueFields = {}) {
   const { data: { id: reqId } } = await store.createRequirement(root, '输入提示')
   await store.updateRequirement(root, reqId, { q_pain: '空白提示', acceptance: '空白时提示填写' })
   await seedAIReview(root, reqId, { submit: true })
-  for (const state of ['ready', 'in_progress']) await store.moveRequirement(root, reqId, state)
+  await store.moveRequirement(root, reqId, 'ready')
+  await startTestDevelopment(root, reqId)
   const { data: { id: issueId } } = await store.createIssue(root, reqId, '处理空白', { problemOverview: '显示提示', acceptance: '空白时提示填写', ...issueFields })
   await store.updateIssue(root, reqId, issueId, { resultSummary: '已实现', evidence: '人工核对' })
   await store.moveIssue(root, reqId, issueId, 'in_review', { fileHash: await issueFileHash(root, reqId, issueId) })

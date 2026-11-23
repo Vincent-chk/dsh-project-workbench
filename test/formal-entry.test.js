@@ -8,7 +8,7 @@ import test from 'node:test'
 import { apply } from '../index.js'
 import * as store from '../core/store.js'
 import { PROJECT_DENIAL, TASK_READ_DENIAL } from '../core/write-guard.js'
-import { makeRoot, seedAIReview, stubSpawnHost, seedReviewPrd } from './util.js'
+import { makeRoot, seedAIReview, stubSpawnHost, seedReviewPrd, startTestDevelopment } from './util.js'
 
 test('formal host keeps task entry and write guard without prototype routes, tools or probes', async t => {
   const root = await makeRoot(t)
@@ -67,7 +67,7 @@ test('formal host keeps task entry and write guard without prototype routes, too
   await store.moveRequirement(root, reqId, 'reviewing')
   await seedAIReview(root, reqId)
   await store.moveRequirement(root, reqId, 'ready')
-  await store.moveRequirement(root, reqId, 'in_progress')
+  await startTestDevelopment(root, reqId)
   const issueId = (await store.createIssue(root, reqId, '正式任务')).data.id
   await store.updateIssue(root, reqId, issueId, { problemOverview: '概述', acceptance: '标准' })
   const located = await rpc('task/locate', { root, issueId })

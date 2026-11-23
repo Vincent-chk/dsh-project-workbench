@@ -8,7 +8,7 @@ import fs from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { installLinks } from '../core/link.js'
 import * as store from '../core/store.js'
-import { makeRoot, seedAIReview, issueFileHash, seedReviewPrd } from './util.js'
+import { makeRoot, seedAIReview, issueFileHash, seedReviewPrd, startTestDevelopment } from './util.js'
 
 function stubCtx() {
   const listeners = {}
@@ -47,7 +47,7 @@ async function devReq(root, title = '需求') {
   await store.moveRequirement(root, data.id, 'reviewing')
   await seedAIReview(root, data.id)
   await store.moveRequirement(root, data.id, 'ready')
-  await store.moveRequirement(root, data.id, 'in_progress')
+  await startTestDevelopment(root, data.id)
   return data.id
 }
 async function fullIssue(root, reqId, title = '任务') {
@@ -56,6 +56,23 @@ async function fullIssue(root, reqId, title = '任务') {
   return data.id
 }
 const readLink = async (root, sid) => JSON.parse(await readFile(join(root, '.project', '.local', 'links', `${sid}.json`), 'utf8'))
+
+test('task runs and status changes wait for a partially saved requirement reopen', async t => {
+  const root = await makeRoot(t)
+  const { ctx, prompts } = stubCtx()
+  const links = installLinks(ctx)
+  const reqId = await devReq(root)
+  const issueId = await fullIssue(root, reqId)
+  const { sessionId } = await links.locate(root, issueId)
+  const file = join(root, '.project', 'requirements', reqId, 'requirement.md')
+  const original = await readFile(file, 'utf8')
+  const plan = { atMs: Date.now(), reason: '接续返工', items: [{ id: issueId, action: 'reopen', done: false }] }
+  await writeFile(file, original.replace(/^status: in_progress$/mu, `status: in_progress\npendingReopen: ${JSON.stringify(JSON.stringify(plan))}`))
+  await assert.rejects(links.runStart(root, issueId, sessionId), { code: 'REOPEN_PENDING' })
+  assert.equal(prompts.length, 0)
+  await assert.rejects(store.moveIssue(root, reqId, issueId, 'blocked', { blockedReason: '等待任务就绪' }), { code: 'REOPEN_PENDING' })
+  assert.equal((await store.scanProject(root)).requirements[0].issues[0].status, 'todo')
+})
 
 test('link/set + get + listSessions + clear with project ownership', async t => {
   const root = await makeRoot(t)

@@ -5,14 +5,15 @@ import { join } from 'node:path'
 import { parseFrontmatter } from '../core/frontmatter.js'
 import * as store from '../core/store.js'
 import { taskResult } from '../client-src/workbench-content.js'
-import { makeRoot, seedAIReview, issueFileHash } from './util.js'
+import { makeRoot, seedAIReview, issueFileHash, startTestDevelopment } from './util.js'
 
 async function developingRequirement(root) {
   await store.initProject(root)
   const reqId = (await store.createRequirement(root, '需求')).data.id
   await store.updateRequirement(root, reqId, { goal: '目标', scope: '范围', acceptance: '标准' })
   await seedAIReview(root, reqId, { submit: true })
-  for (const state of ['ready', 'in_progress']) await store.moveRequirement(root, reqId, state)
+  await store.moveRequirement(root, reqId, 'ready')
+  await startTestDevelopment(root, reqId)
   return reqId
 }
 
@@ -23,6 +24,74 @@ async function objectiveRecord(root, reqId, issueId) {
   doc.setPlain('objectiveAt', Date.now())
   await writeFile(file, doc.toString())
 }
+
+test('every completed task retains verification before requirement submission and approval', async t => {
+  const root = await makeRoot(t)
+  const reqId = await developingRequirement(root)
+  const fields = { problemOverview: '验证结果', acceptance: '验收通过' }
+  const first = (await store.createIssue(root, reqId, '任务甲', fields)).data.id
+  const second = (await store.createIssue(root, reqId, '任务乙', fields)).data.id
+  for (const id of [first, second]) {
+    const hash = await issueFileHash(root, reqId, id)
+    await store.confirmIssue(root, reqId, id, { fileHash: hash, summary: '已实施', evidence: '通过了实测' })
+  }
+  const file = join(root, '.project', 'requirements', reqId, 'issues', second + '.md')
+  const valid = await readFile(file, 'utf8')
+  const doc = parseFrontmatter(valid)
+  doc.setString('evidence', '')
+  await writeFile(file, doc.toString())
+  await assert.rejects(store.submitRequirement(root, reqId, { summary: '交付' }), { code: 'TASK_DELIVERY_INCOMPLETE' })
+  assert.equal((await store.readRequirement(root, reqId)).status, 'in_progress')
+  await writeFile(file, valid)
+  await store.submitRequirement(root, reqId, { summary: '交付' })
+  await writeFile(file, doc.toString())
+  await assert.rejects(store.moveRequirement(root, reqId, 'completed'), { code: 'TASK_DELIVERY_INCOMPLETE' })
+  assert.equal((await store.readRequirement(root, reqId)).status, 'pending')
+})
+
+test('a saved summary from before a task has a result cannot move a requirement to acceptance', async t => {
+  const root = await makeRoot(t)
+  const reqId = await developingRequirement(root)
+  const issueId = (await store.createIssue(root, reqId, '任务甲', { problemOverview: '验证结果', acceptance: '验收通过' })).data.id
+  const realNow = Date.now
+  let now = 1900000000000
+  Date.now = () => now
+  t.after(() => { Date.now = realNow })
+  await assert.rejects(store.submitRequirement(root, reqId, { summary: '还没看到结果时写的摘要' }), { code: 'TASKS_NOT_ACCEPTED' })
+  now += 1000
+  await store.confirmIssue(root, reqId, issueId, { fileHash: await issueFileHash(root, reqId, issueId), summary: '新结果', evidence: '新依据' })
+  await assert.rejects(store.moveRequirement(root, reqId, 'pending'), { code: 'SUMMARY_STALE' })
+  assert.equal((await store.readRequirement(root, reqId)).status, 'in_progress')
+  assert.equal((await store.submitRequirement(root, reqId, { summary: '核对了新结果' })).data.to, 'pending')
+})
+
+test('a submitted AI result stays valid when the just-read verification clock is ahead', async t => {
+  const root = await makeRoot(t)
+  const reqId = await developingRequirement(root)
+  const issueId = (await store.createIssue(root, reqId, '校对结果', { problemOverview: '记录客观依据', acceptance: '测试通过' })).data.id
+  await store.recordRunStart(root, reqId, issueId)
+  const realNow = Date.now
+  const now = 1900000000000
+  Date.now = () => now
+  t.after(() => { Date.now = realNow })
+  await store.appendObjectiveSync(root, reqId, issueId, { sid: 'verify', entries: [
+    { seq: 1, line: `- 改动文件：demo.txt（write，会话 verify 第 1 条，${new Date(now + 1000).toISOString()}）` },
+  ] })
+  assert.equal((await store.submitIssueResult(root, reqId, issueId, { summary: '已核对本轮文件' })).data.to, 'in_review')
+  const issue = (await store.scanProject(root)).requirements[0].issues[0]
+  assert.equal(issue.resultFresh, true)
+  assert.equal((await store.confirmIssue(root, reqId, issueId, { fileHash: issue.hash })).data.to, 'done')
+})
+
+test('structured values cannot substitute for a result or verification text', async t => {
+  const root = await makeRoot(t)
+  const reqId = await developingRequirement(root)
+  const id = (await store.createIssue(root, reqId, '验证结果', { problemOverview: '校对结果材料', acceptance: '完成验收' })).data.id
+  const fileHash = await issueFileHash(root, reqId, id)
+  await assert.rejects(store.confirmIssue(root, reqId, id, { fileHash, summary: { done: true }, evidence: '实测' }), { code: 'INVALID_INPUT' })
+  await assert.rejects(store.updateIssue(root, reqId, id, { resultSummary: '已验证', evidence: true }, { fileHash }), { code: 'INVALID_INPUT' })
+  assert.equal(await issueFileHash(root, reqId, id), fileHash)
+})
 
 test('objective records supply evidence but never substitute for a result summary', async t => {
   const root = await makeRoot(t)
@@ -72,7 +141,7 @@ test('new objective evidence after a result requires a new summary before confir
 test('fresh objective evidence cannot make a previous delivery result fresh', async t => {
   const root = await makeRoot(t)
   const reqId = await developingRequirement(root)
-  const issueId = (await store.createIssue(root, reqId, '任务')).data.id
+  const issueId = (await store.createIssue(root, reqId, '任务', { problemOverview: '验证本次处理', acceptance: '核对本轮结果' })).data.id
   await store.updateIssue(root, reqId, issueId, { resultSummary: '旧结果', evidence: '旧依据' })
   await store.confirmIssue(root, reqId, issueId, { fileHash: await issueFileHash(root, reqId, issueId) })
   await store.submitRequirement(root, reqId, { summary: '旧交付' })
@@ -111,7 +180,7 @@ test('generic move requires modification request, while a substantive edit inval
 test('reopening a task in the same millisecond does not reuse its previous result', async t => {
   const root = await makeRoot(t)
   const reqId = await developingRequirement(root)
-  const issueId = (await store.createIssue(root, reqId, '任务')).data.id
+  const issueId = (await store.createIssue(root, reqId, '任务', { problemOverview: '验证本次处理', acceptance: '核对本轮结果' })).data.id
   const now = Date.now
   Date.now = () => 1900000000000
   try {
@@ -129,7 +198,7 @@ test('reopening a task in the same millisecond does not reuse its previous resul
 test('reopened task keeps prior limits as unverified history until explicitly replaced', async t => {
   const root = await makeRoot(t)
   const reqId = await developingRequirement(root)
-  const id = (await store.createIssue(root, reqId, '任务')).data.id
+  const id = (await store.createIssue(root, reqId, '任务', { problemOverview: '查看任务限制' })).data.id
   const read = async () => (await store.scanProject(root)).requirements[0].issues[0]
   const now = Date.now
   Date.now = () => 1900000000000
@@ -174,8 +243,9 @@ test('a requirement reopened in the same millisecond cannot use an unrelated old
   const now = Date.now
   Date.now = () => 1900000000000
   try {
-    const first = (await store.createIssue(root, reqId, '甲')).data.id
-    const second = (await store.createIssue(root, reqId, '乙')).data.id
+    const fields = { problemOverview: '验证本次处理', acceptance: '核对本轮结果' }
+    const first = (await store.createIssue(root, reqId, '甲', fields)).data.id
+    const second = (await store.createIssue(root, reqId, '乙', fields)).data.id
     for (const id of [first, second]) {
       await store.updateIssue(root, reqId, id, { resultSummary: '旧结果', evidence: '旧依据' })
       await store.confirmIssue(root, reqId, id, { fileHash: await issueFileHash(root, reqId, id) })
@@ -184,8 +254,11 @@ test('a requirement reopened in the same millisecond cannot use an unrelated old
     await store.reopenRequirement(root, reqId, { reason: '修改', reopen: [first] })
     const file = join(root, '.project', 'requirements', reqId, 'issues', `${first}.md`)
     await writeFile(file, (await readFile(file, 'utf8')).replace('status: todo', 'status: done'))
-    await assert.rejects(store.submitRequirement(root, reqId, { summary: '新交付' }), { code: 'RESULT_EVIDENCE_REQUIRED' })
-    const third = (await store.createIssue(root, reqId, '新任务')).data.id
+    await assert.rejects(store.submitRequirement(root, reqId, { summary: '新交付' }), { code: 'TASK_DELIVERY_INCOMPLETE' })
+    // Repair the reopened task before letting another task carry the new round.
+    await store.moveIssue(root, reqId, first, 'todo', { reason: '补齐此前被标记完成的任务' })
+    await store.confirmIssue(root, reqId, first, { fileHash: await issueFileHash(root, reqId, first), summary: '已补齐', evidence: '本轮核对通过' })
+    const third = (await store.createIssue(root, reqId, '新任务', fields)).data.id
     await store.updateIssue(root, reqId, third, { resultSummary: '新结果', evidence: '新依据' })
     await store.confirmIssue(root, reqId, third, { fileHash: await issueFileHash(root, reqId, third) })
     assert.equal((await store.submitRequirement(root, reqId, { summary: '新交付' })).data.to, 'pending')
@@ -202,7 +275,7 @@ test('re-review uses the later requirement round for result and verification, ev
   try {
     const reqId = await developingRequirement(root)
     const issueId = (await store.createIssue(root, reqId, '重审中的任务')).data.id
-    await store.updateIssue(root, reqId, issueId, { acceptance: '结果可核验' })
+    await store.updateIssue(root, reqId, issueId, { problemOverview: '重审时保留原任务', acceptance: '结果可核验' })
     await store.recordRunStart(root, reqId, issueId)
     let req = (await store.scanProject(root)).requirements[0]
     const oldStart = req.issues[0].deliveryStartedAt
@@ -213,7 +286,8 @@ test('re-review uses the later requirement round for result and verification, ev
     await store.updateIssue(root, reqId, issueId, { resultSummary: '旧轮结果', knownLimits: '旧轮限制' })
     await store.updateRequirement(root, reqId, { goal: '修改后的目标' }, { confirmReviewInvalid: true, reason: '需求改变' })
     await seedAIReview(root, reqId, { submit: true })
-    for (const state of ['ready', 'in_progress']) await store.moveRequirement(root, reqId, state)
+    await store.moveRequirement(root, reqId, 'ready')
+    await store.moveRequirement(root, reqId, 'in_progress')
     req = (await store.scanProject(root)).requirements[0]
     let issue = req.issues[0]
     assert.equal(issue.status, 'doing')

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { access, chmod, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { makeRoot, saveReviewPrd, seedAIReview } from './util.js'
+import { makeRoot, saveReviewPrd, seedAIReview, seedReviewPreparation, startTestDevelopment } from './util.js'
 import { dispatch } from '../core/rpc.js'
 import { createRequirement, deliveryFingerprint } from '../core/store.js'
 
@@ -17,7 +17,7 @@ async function devReq(root, title = 'x') {
   await call('requirement/review', { root, id: data.id, action: 'submit' })
   await seedAIReview(root, data.id)
   await call('requirement/review', { root, id: data.id, action: 'approve' })
-  await call('requirement/startDev', { root, id: data.id })
+  await startTestDevelopment(root, data.id, () => call('requirement/startDev', { root, id: data.id }))
   return data.id
 }
 async function issHash(root, reqId, id) {
@@ -129,6 +129,8 @@ test('task content is required at creation and editing, and ordinary edits never
   const result = { resultSummary: '已检查空名字', evidence: '空字符串显示了提示' }
   assert.equal((await call('issue/update', { root, reqId, id, recordResult: true, patch: { resultSummary: '只填结果' }, fileHash: first.hash })).code, 'RESULT_EVIDENCE_REQUIRED')
   assert.equal((await call('issue/update', { root, reqId, id, recordResult: true, patch: result, fileHash: first.hash })).ok, true)
+  assert.equal((await call('issue/confirm', { root, reqId, id, fileHash: (await read()).hash })).code, 'ACCEPTANCE_REQUIRED')
+  assert.equal((await call('issue/update', { root, reqId, id, patch: { acceptance: '空名字显示提示' }, fileHash: (await read()).hash })).ok, true)
   assert.equal((await call('issue/confirm', { root, reqId, id, fileHash: (await read()).hash })).ok, true)
   assert.equal((await call('issue/move', { root, reqId, id, to: 'todo', reason: '重新核对' })).ok, true)
   const reopened = await read()
@@ -193,10 +195,12 @@ test('RPC full move journey and illegal move returns structured error', async t 
   assert.equal(blocked.hash, draft.hash)
   await saveReviewPrd(root, id)
   assert.equal((await call('requirement/review', { root, id, action: 'submit' })).ok, true)
+  await seedReviewPreparation(root, id)
   assert.equal((await call('requirement/review', { root, id, action: 'approve' })).code, 'REVIEW_REPORT_REQUIRED')
   assert.equal((await call('requirement/move', { root, id, to: 'ready' })).code, 'REVIEW_REPORT_REQUIRED')
   await seedAIReview(root, id)
   assert.equal((await call('requirement/review', { root, id, action: 'approve' })).ok, true)
+  assert.equal((await call('issue/create', { root, reqId: id, title: '核对流程', fields: { problemOverview: '核对用户流程', acceptance: '失败时可以重试' } })).ok, true)
   assert.equal((await call('requirement/startDev', { root, id })).ok, true)
   const illegal = await call('requirement/move', { root, id, to: 'completed', expectFingerprint: 'invalid' })
   assert.equal(illegal.ok, false)
@@ -235,7 +239,7 @@ test('RPC actor is server-set: a body claiming ai cannot bypass human-only accep
   const root = await makeRoot(t)
   await call('project/init', { root })
   const reqId = await devReq(root)
-  const { data: iss } = await call('issue/create', { root, reqId, title: 'task', fields: { problemOverview: '要处理的内容' } })
+  const { data: iss } = await call('issue/create', { root, reqId, title: 'task', fields: { problemOverview: '要处理的内容', acceptance: '核对处理结果' } })
   // issue/move to done is human-only; the route forces human, but a direct AI
   // tool path would be rejected. Here verify the UI route completes as human.
   await call('issue/update', { root, reqId, id: iss.id, patch: { resultSummary: 'r', evidence: 'e' } })
@@ -248,12 +252,15 @@ test('RPC reopen returns to development with selected tasks and is retryable', a
   const root = await makeRoot(t)
   await call('project/init', { root })
   const reqId = await devReq(root)
-  const { data: iss } = await call('issue/create', { root, reqId, title: 'task', fields: { problemOverview: '要处理的内容' } })
+  const { data: iss } = await call('issue/create', { root, reqId, title: 'task', fields: { problemOverview: '要处理的内容', acceptance: '核对处理结果' } })
   await call('issue/update', { root, reqId, id: iss.id, patch: { resultSummary: 'r', evidence: 'e' } })
   await call('issue/confirm', { root, reqId, id: iss.id, fileHash: await issHash(root, reqId, iss.id) })
   const shown = (await call('requirement/get', { root, id: reqId })).data
   await call('requirement/submit', { root, id: reqId, summary: 's', expectFingerprint: deliveryFingerprint(shown) })
-  const reopened = await call('requirement/reopen', { root, id: reqId, reason: '打回修改', reopen: [iss.id], create: [{ title: '新任务', fields: { problemOverview: '要补做的工作' } }] })
+  const incomplete = await call('requirement/reopen', { root, id: reqId, reason: '打回修改', create: [{ title: '新任务', fields: { problemOverview: '要补做的工作' } }] })
+  assert.equal(incomplete.code, 'DEV_TASK_FIELDS_REQUIRED')
+  assert.equal((await call('requirement/get', { root, id: reqId })).data.status, 'pending')
+  const reopened = await call('requirement/reopen', { root, id: reqId, reason: '打回修改', reopen: [iss.id], create: [{ title: '新任务', fields: { problemOverview: '要补做的工作', acceptance: '核对修改符合要求' } }] })
   assert.equal(reopened.ok, true)
   assert.equal(reopened.data.status, 'in_progress')
   const got = await call('requirement/get', { root, id: reqId })
@@ -390,6 +397,8 @@ test('CT-17: sync/apply approval reuses the exact move guards (illegal transitio
     kind: 'advance', target: { reqId: req.id }, evidence: ['repo://src/x.js#L1-L9'],
     suggested_patch: { to: 'ready' }, reason: '合法推进',
   }] })
+  assert.equal((await call('sync/apply', { root, proposalId: ok.data.saved[0] })).code, 'PREPARATION_REQUIRED')
+  await seedReviewPreparation(root, req.id)
   assert.equal((await call('sync/apply', { root, proposalId: ok.data.saved[0] })).code, 'REVIEW_REPORT_REQUIRED')
   await seedAIReview(root, req.id)
   const appliedOk = await call('sync/apply', { root, proposalId: ok.data.saved[0] })

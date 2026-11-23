@@ -7,7 +7,7 @@ import { taskResult } from '../client-src/workbench-content.js'
 import { join } from 'node:path'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import * as store from './store.js'
-import { allTasksApproved, freshDelivery, effectiveEvidence, requirementOverview } from './state.js'
+import { canDeliverTasks, freshDelivery, requirementOverview } from './state.js'
 import { projectSession, startReadOnlyChild, parseJsonOutput } from './spawn.js'
 import { WorkbenchError } from './files.js'
 
@@ -19,8 +19,7 @@ const textOf = result => result.output.filter(b => b.type === 'text').map(b => b
 export function taskConditions(req) {
   const issues = req.issues ?? []
   if (req.status !== 'in_progress' || req.pendingReopen) return false
-  return allTasksApproved(issues) &&
-    issues.some(i => !blank(i.resultSummary ?? i.result) && !blank(effectiveEvidence(i)) && freshDelivery(i, req.deliveryStartedAt))
+  return canDeliverTasks(issues, req.deliveryStartedAt).ok
 }
 
 function summaryPrompt(req) {

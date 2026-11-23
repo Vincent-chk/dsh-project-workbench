@@ -354,7 +354,7 @@ export function MainShell(props) {
       if (navRef.current.page === 'blocked') await refreshBlocked()
     } else if (!inlineError) {
       if (method === 'requirement/move' || method === 'issue/move') {
-        setModal({ kind: 'moveError', error: res, ...(res.code === 'REVIEW_PRD_REQUIRED' && { reqId: input.id }) })
+        setModal({ kind: 'moveError', error: res, ...(method === 'requirement/move' && { reqId: input.id }) })
       } else setError(res)
     }
     setSaving(false)
@@ -578,7 +578,10 @@ export function MainShell(props) {
     }
     if (kind === 'move') return submit(undefined, false, { reviewMarker: options.reviewMarker })
     if (kind === 'reason') {
-      setModal({ kind, title: t('returnReview'), suggestion: options.suggestion, onOk: reason => submit(reason, true) })
+      const reprepare = req.status === 'ready'
+      setModal({ kind, title: t(reprepare ? 'returnForPreparation' : 'returnReview'), suggestion: options.suggestion,
+        body: reprepare ? t('returnForPreparationHint') : undefined,
+        onOk: reason => submit(reason, true, { confirmReviewInvalid: reprepare }) })
       return
     }
     if (kind === 'confirmComplete') {
@@ -929,6 +932,7 @@ export function MainShell(props) {
     }),
     modal && !['leave', 'prdEditor'].includes(modal.kind) && h(ReasonModal, {
       key: modal.kind, modal, t, setModal, mutate, root, trashWithUndo, requirements, locatePrdLink,
+      openReady: reqId => openDetailAt({ reqId, issueId: null }, 'ready'),
       newDraft, clearNewDraft,
       changeNewDraft: (name, value) => setNewDraft(draft => ({ ...draft, [name]: value })),
       createReq: () => createReq(true),

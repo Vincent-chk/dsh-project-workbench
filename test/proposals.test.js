@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { submitProposals, saveSplitProposals, listProposals, purgeExpired, markApproved, markDismissed, readBaseline, writeBaseline, adoptProposal } from '../core/proposals.js'
 import { dispatch } from '../core/rpc.js'
 import * as store from '../core/store.js'
-import { seedAIReview, seedReviewPrd } from './util.js'
+import { seedAIReview, seedReviewPrd, startTestDevelopment } from './util.js'
 
 async function root(t) {
   const r = await mkdtemp(join(tmpdir(), 'pw-prop-'))
@@ -98,7 +98,7 @@ async function devReq(r) {
   await store.moveRequirement(r, data.id, 'reviewing')
   await seedAIReview(r, data.id)
   await store.moveRequirement(r, data.id, 'ready')
-  await store.moveRequirement(r, data.id, 'in_progress')
+  await startTestDevelopment(r, data.id)
   return data.id
 }
 const ev = ['session://s/1']
@@ -232,7 +232,7 @@ test('adoption never bypasses guards: new_task into a non-developing requirement
   await store.initProject(r)
   const { data } = await store.createRequirement(r, '草稿')
   const { data: prop } = await submitProposals(r, [{ kind: 'new_task', target: { reqId: data.id }, evidence: ev, suggested_patch: { title: 'x' }, reason: '拆分' }])
-  await assert.rejects(adoptProposal(r, prop.saved[0]), e => e.code === 'REQ_NOT_ACTIVE')
+  await assert.rejects(adoptProposal(r, prop.saved[0]), e => e.code === 'TASK_PLANNING_NOT_ALLOWED')
   // Still pending after a failed adopt — retryable once the requirement develops.
   assert.equal((await listProposals(r))[0].status, 'pending')
 })

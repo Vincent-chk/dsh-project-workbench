@@ -16,7 +16,7 @@ const reviewInstructions = [
 ].join('\n')
 
 async function buildReviewRound(root, req, number, prds) {
-  const [{ source, prototype }, projectFile, readme] = await Promise.all([
+  const [{ source, discovery, prototype }, projectFile, readme] = await Promise.all([
     reviewMaterial(root, req, prds),
     readWorkspaceFile(root, '.project/project.md').catch(() => null),
     readWorkspaceFile(root, 'README.md').catch(() => null),
@@ -29,12 +29,13 @@ async function buildReviewRound(root, req, number, prds) {
     remaining -= excerpt.length
     return { id, title, version, shared: reqIds.length > 1, excerpt, excerptOnly: excerpt.length < markdown.length }
   })
-  const material = { background, requirement: reviewFields(req), documents, prototype: prototype?.material ?? null }
+  const material = { background, requirement: reviewFields(req), documents, discovery: discovery?.markdown ?? null, prototype: prototype?.material ?? null }
   const prompt = [
     reviewInstructions,
     `请为《${req.title}》开展第 ${number} 次评审。只评审需求 ${req.id}，共享 PRD 中其余段落只用于理解背景。`,
     '产品背景 ' + JSON.stringify(background),
     '本轮需求 ' + JSON.stringify({ ...reviewFields(req), version: source.requirementVersion }),
+    ...(discovery ? ['已保存的需求深挖 ' + JSON.stringify({ version: discovery.version, markdown: discovery.markdown })] : []),
     '关联 PRD ' + JSON.stringify(documents),
     ...(prototype ? ['已确认的流程图和线框 ' + JSON.stringify({
       version: prototype.version, basedOn: prototype.prds, material: prototype.material,
@@ -110,13 +111,14 @@ export function installRequirementReview(ctx) {
     const materials = req.status === 'reviewing'
       ? await withPrdLock(root, async directory => {
         const prds = await reviewPrds(directory, id)
-        return (await reviewMaterial(directory, req, prds)).source
+        return reviewMaterial(directory, req, prds)
       }).catch(() => null) : null
-    const hasReview = !!materials?.prds.length && matchesReview(latest, materials)
+    const hasPrd = !!materials && !materials.missing.includes('prd')
+    const hasReview = hasPrd && matchesReview(latest, materials.source)
     return {
       reports, status: req.status, reportsUnavailable: !records, runId: job?.requestId,
       prdsUnavailable: req.status === 'reviewing' && !materials,
-      hasPrd: !!materials?.prds.length, materials, hasReview,
+      hasPrd, materials: materials?.source ?? null, missingPreparation: materials?.missing ?? [], hasReview,
       state: job?.state ?? (latest ? 'done' : 'idle'), error: job?.error, errorCode: job?.errorCode, httpStatus: job?.httpStatus,
       stale: !!materials && !!latest && !hasReview,
     }

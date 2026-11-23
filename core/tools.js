@@ -57,6 +57,7 @@ export function installTools(ctx, links) {
     if (!link) throw new WorkbenchError('NO_LINK', '当前会话未关联任务')
     const { req, issue } = await issueOf(root, link.issueId)
     if (req.status !== 'in_progress') throw new WorkbenchError('REQ_NOT_ACTIVE', '所属需求不是开发中，拒绝写入')
+    if (req.pendingReopen) throw new WorkbenchError('REOPEN_PENDING', '请先完成需求的返工操作。')
     if (TERMINAL_ISSUE.has(issue.status)) throw new WorkbenchError('TERMINAL_READ_ONLY', '任务已结束，只读；重新打开需用户在界面操作')
     return { root, link, req, issue }
   }

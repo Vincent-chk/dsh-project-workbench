@@ -3,7 +3,7 @@ import test from 'node:test'
 import fs from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { join } from 'node:path'
-import { makeRoot, seedAIReview, seedReviewPrd } from './util.js'
+import { makeRoot, seedAIReview, seedReviewPrd, startTestDevelopment } from './util.js'
 
 const originalRename = fs.rename
 let failFile = null
@@ -36,7 +36,7 @@ for (const kind of ['field_draft', 'review']) {
     let issueId
     if (kind === 'field_draft') {
       await ok('requirement/review', { id: reqId, action: 'approve' })
-      await ok('requirement/startDev', { id: reqId })
+      await startTestDevelopment(root, reqId, () => ok('requirement/startDev', { id: reqId }))
       issueId = (await ok('issue/create', { reqId, title: '任务', fields: { problemOverview: '已有任务说明' } })).id
     }
     const target = issueId ? { reqId, issueId } : { reqId }

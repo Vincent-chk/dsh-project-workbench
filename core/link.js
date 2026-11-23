@@ -259,6 +259,7 @@ export function installLinks(ctx) {
         const found = await issueOf(root, issueId)
         req = found.req
         if (req.status !== 'in_progress') throw new WorkbenchError('REQ_NOT_ACTIVE', 'the requirement must be in development to start a task')
+        if (req.pendingReopen) throw new WorkbenchError('REOPEN_PENDING', 'finish reopening before starting tasks')
         if (!['todo', 'doing', 'blocked'].includes(found.issue.status)) {
           throw new WorkbenchError('INVALID_STATE', `task is ${found.issue.status}; use confirm/continue/reopen instead of start`)
         }

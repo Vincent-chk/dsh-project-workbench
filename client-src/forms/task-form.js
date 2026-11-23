@@ -17,12 +17,12 @@ export function EditableField({ form, name, label, rows, disabled, required, aut
     rows ? h('textarea', { ...props, rows }) : h('input', props))
 }
 
-export function TaskFields({ form, t, busy, focus = 'title' }) {
+export function TaskFields({ form, t, busy, focus = 'title', requireAcceptance = false }) {
   const field = (name, label, rows, required) => h(EditableField, { form, name, label: t(label), rows, required, disabled: busy, autoFocus: focus === name })
   return h('div', { className: 'pw-task-fields' },
     field('title', 'issueTitle', 0, true),
     field('problemOverview', 'taskOverviewField', 1, true),
-    field('acceptance', 'taskCriteriaOptional', 2),
+    field('acceptance', requireAcceptance ? 'taskCriteriaField' : 'taskCriteriaOptional', 2, requireAcceptance),
     h(Disclosure, { label: t('taskAdditional') },
       field('triggerPath', 'taskSteps', 2), field('rootCause', 'taskCause', 2),
       field('description', 'taskSupplement', 2), field('refs', 'taskRefsInput', 2)))

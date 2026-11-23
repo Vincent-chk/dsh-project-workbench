@@ -6,7 +6,7 @@ import { listProposals, saveSplitProposals, submitProposals } from './proposals.
 import { projectSession, startReadOnlyChild, parseJsonOutput } from './spawn.js'
 import { WorkbenchError } from './files.js'
 import { readSplitEvidence } from './split-evidence.js'
-import { freshDelivery, requirementOverview, startBlockers, taskOverview } from './state.js'
+import { canCreateIssue, freshDelivery, requirementOverview, startBlockers, taskOverview } from './state.js'
 
 const textOf = result => result.output.filter(b => b.type === 'text').map(b => b.text).join('\n')
 const assertRoot = root => {
@@ -170,7 +170,11 @@ export function installAssist(ctx, { readOnlyChildren }) {
       const req = idx.requirements.find(r => r.id === reqId)
       if (!req) throw new WorkbenchError('NOT_FOUND', `requirement ${reqId} not found`)
       if (kind === 'organize' && req.status !== 'backlog') throw new WorkbenchError('INVALID_STATE', '需求整理仅用于需求池中的需求')
-      if (kind === 'split' && (req.status !== 'in_progress' || req.pendingReopen)) throw new WorkbenchError('REQ_NOT_ACTIVE', '只有开发中的需求可以拆分任务')
+      if (kind === 'split') {
+        const guard = canCreateIssue(req.status)
+        if (!guard.ok) throw new WorkbenchError(guard.code, guard.reason)
+        if (req.pendingReopen) throw new WorkbenchError('REOPEN_PENDING', 'finish reopening before splitting tasks')
+      }
       if (kind === 'split' && idx.diagnostics.some(item => item.path?.startsWith(`requirements/${reqId}/issues`) &&
         ['MISSING_FRONTMATTER', 'READ_FAILED', 'INVALID_STATUS'].includes(item.code))) {
         throw new WorkbenchError('ASSIST_FAILED', '部分现有任务无法读取，请恢复后重新核对')

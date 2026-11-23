@@ -20,7 +20,7 @@ export const COLS = ['backlog', 'reviewing', 'ready', 'in_progress', 'pending', 
 export const MOVES = {
   backlog: { reviewing: 'move' },
   reviewing: { ready: 'move', backlog: 'reason' },
-  ready: { in_progress: 'move' },
+  ready: { in_progress: 'move', backlog: 'reason' },
   in_progress: { pending: 'submitDelivery' },
   pending: { completed: 'confirmComplete', in_progress: 'reopenRequirement' },
   completed: { in_progress: 'reopenRequirement' },

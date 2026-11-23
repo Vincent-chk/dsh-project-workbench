@@ -7,7 +7,7 @@ import { discoveryQuestionText } from '../core/discovery-qa.js'
 import { discoverySkillMarker, discoverySkillName } from '../core/skill.js'
 import { readInvocation } from '../core/conversation-commands.js'
 import * as store from '../core/store.js'
-import { childReply, makeRoot, saveReviewPrd, seedAIReview, stubSpawnHost, waitFor } from './util.js'
+import { childReply, makeRoot, saveReviewPrd, seedAIReview, stubSpawnHost, waitFor, startTestDevelopment } from './util.js'
 
 async function setup(t) {
   const root = await makeRoot(t)
@@ -153,7 +153,7 @@ test('pwb-update reuses the current session, records progress and decisions, and
   await store.moveRequirement(p.root, id, 'reviewing')
   await seedAIReview(p.root, id)
   await store.moveRequirement(p.root, id, 'ready')
-  await store.moveRequirement(p.root, id, 'in_progress')
+  await startTestDevelopment(p.root, id)
   const { data: { id: issueId } } = await store.createIssue(p.root, id, '设置频率', { problemOverview: '可编辑通知频率', acceptance: '用户可以切换' })
   assert.equal((await p.rpc('link/set', { root: p.root, sessionId: p.sessionId, issueId })).ok, true)
   p.begin('/pwb-requirement 补充别的需求')
@@ -254,7 +254,7 @@ test('task actions record real results and leave final completion to the existin
   await store.moveRequirement(p.root, id, 'reviewing')
   await seedAIReview(p.root, id)
   await store.moveRequirement(p.root, id, 'ready')
-  await store.moveRequirement(p.root, id, 'in_progress')
+  await startTestDevelopment(p.root, id)
   p.begin('/pwb-task 新建风格切换')
   const { id: issueId } = await p.tool('addTask', { reqId: id, fields: { title: '风格切换', overview: '切换两种风格', acceptance: '两种风格可切换' } })
   assert.equal(p.prompts.length, 0)

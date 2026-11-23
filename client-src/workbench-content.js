@@ -86,7 +86,10 @@ export const workbenchContentLocale = {
     taskSteps: 'Steps or use cases', taskMissing: 'No task description has been recorded.',
     sidebarTaskDescription: 'Task description', sidebarFinding: 'Recorded finding', sidebarNotRecorded: 'Nothing recorded yet.',
     sidebarRequirementScope: 'Current scope of the parent requirement', sidebarReviewDetails: 'Review information',
-    taskOverviewField: 'Task overview', taskCriteriaOptional: 'Completion criteria (can be added later)',
+    taskOverviewField: 'Task overview', taskCriteriaOptional: 'Completion criteria (can be added later)', taskCriteriaField: 'Completion criteria',
+    planTasksHint: 'Add a title, overview and completion criteria to each planned task before starting development.',
+    goPlanTasks: 'Open planned tasks', returnForPreparation: 'Return to the request pool',
+    returnForPreparationHint: 'Update the preparation materials and submit them for a new review.',
     taskCause: 'Root cause', taskSupplement: 'Additional notes', taskRefsInput: 'References (one per line)',
     newTask: 'New task', backToTasks: 'Back to task list', recordTaskResult: 'Record result',
     useRecordedEvidence: 'The verification already recorded for this round can be used.',
@@ -104,7 +107,16 @@ export const workbenchContentLocale = {
     errEnterProgress: 'Enter an update first.', errRefresh: 'This content changed. Refresh and review the latest version.',
     errReviewUpdated: 'The content changed. The latest version is shown; review it before confirming again.',
     errDeliveryStatusChanged: 'This requirement is no longer in development. Your draft was not saved; copy it if needed, close this window and review the current delivery.',
-    errDeliveryDataIncomplete: 'A task could not be read. Restore it, then review the delivery again.',
+    errDeliveryDataIncomplete: 'A task could not be read. Repair its file and try again.',
+    errPreparationRequired: 'Complete {fields} in the request pool before approval.',
+    errReviewApprovalStale: 'Return to the request pool and get approval for the current materials before starting development.',
+    errDevTasksRequired: 'Add at least one task to do before starting development.',
+    errDevTaskFields: 'Fill in the missing information before starting development. {tasks}',
+    errTaskDeliveryIncomplete: 'Complete the acceptance materials for these tasks. {tasks}',
+    taskDeliveryFresh: 'result and evidence from the task’s acceptance round',
+    errTaskPlanning: 'Add tasks while the requirement is ready or in development.',
+    errInvalidDiscovery: 'A saved discovery record could not be verified. Check the record and try again.',
+    errInvalidPrototype: 'The saved prototype could not be verified. Return to the request pool and check the prototype.',
     errDraftStale: 'This suggestion is out of date. Open the latest version before drafting again.',
     errResultEvidence: 'Add the result and verification evidence for this round.', errCriteriaRequired: 'Add completion criteria first.',
     errOldResult: 'Record a new result and evidence for the current round.', errDeliverySummary: 'Provide a summary for this round.',
@@ -151,7 +163,10 @@ export const workbenchContentLocale = {
     taskSteps: '操作步骤或使用场景', taskMissing: '尚未记录任务说明。',
     sidebarTaskDescription: '任务描述', sidebarFinding: '已记录的发现', sidebarNotRecorded: '尚未记录。',
     sidebarRequirementScope: '所属需求的当前边界', sidebarReviewDetails: '核对信息',
-    taskOverviewField: '任务概述', taskCriteriaOptional: '完成标准（可后补）',
+    taskOverviewField: '任务概述', taskCriteriaOptional: '完成标准（可后补）', taskCriteriaField: '完成标准',
+    planTasksHint: '开始开发前，请为每项待做任务填写标题、任务概述和完成标准。',
+    goPlanTasks: '去补充任务', returnForPreparation: '退回需求池补资料',
+    returnForPreparationHint: '回到需求池后，请补齐材料并重新送审。',
     taskCause: '根因', taskSupplement: '附加说明', taskRefsInput: '关联资料（每行一项）',
     newTask: '新建任务', backToTasks: '返回任务列表', recordTaskResult: '记录结果',
     useRecordedEvidence: '可以使用本轮已保存的验证依据。',
@@ -169,7 +184,16 @@ export const workbenchContentLocale = {
     errEnterProgress: '请先填写进展。', errRefresh: '内容已有更新，请刷新后重新核对。',
     errReviewUpdated: '内容已有更新，已显示最新内容，请重新核对后再确认。',
     errDeliveryStatusChanged: '需求已不在开发中，下面填写的内容未保存。需要时请先复制，再关闭窗口并核对当前交付内容。',
-    errDeliveryDataIncomplete: '有任务无法读取，请修复后重新核对交付内容。',
+    errDeliveryDataIncomplete: '有任务无法读取，请修复任务文件后重试。',
+    errPreparationRequired: '评审材料缺少{fields}，请在需求池补齐。',
+    errReviewApprovalStale: '当前材料缺少有效的评审通过记录，请退回需求池重新评审。',
+    errDevTasksRequired: '开始开发前，请先拆出并保存至少一项待做任务。',
+    errDevTaskFields: '开始开发前，请补齐任务信息。{tasks}',
+    errTaskDeliveryIncomplete: '请补齐这些任务的验收材料。{tasks}',
+    taskDeliveryFresh: '同一轮的结果与验证依据',
+    errTaskPlanning: '请在待开发或开发中添加任务。',
+    errInvalidDiscovery: '已有深挖记录无法核验，请检查记录后重试。',
+    errInvalidPrototype: '已保存的原型无法核验，请退回需求池检查原型。',
     errDraftStale: '建议已过时，请打开最新内容后重新起草。',
     errResultEvidence: '请补充本次结果和验证依据。', errCriteriaRequired: '请先补充完成标准。',
     errOldResult: '请补充这一轮的新结果和验证依据。', errDeliverySummary: '请填写本轮交付摘要。',
@@ -424,11 +448,13 @@ const errors = {
   REVIEW_INVALIDATION_REQUIRED: 'errReviewChanged', REOPEN_PENDING: 'errReopenPending', REOPEN_CONFLICT: 'errReopenPending',
   REVIEW_REPORT_REQUIRED: 'aiReviewRequired', REVIEW_NOT_ACTIVE: 'errNotAllowed', REVIEW_TASK_ONLY: 'errNotAllowed',
   REVIEW_PRD_REQUIRED: 'reviewPrdRequired',
+  REVIEW_APPROVAL_STALE: 'errReviewApprovalStale', DEV_TASKS_REQUIRED: 'errDevTasksRequired', TASK_PLANNING_NOT_ALLOWED: 'errTaskPlanning',
+  DISCOVERY_INVALID_RECORD: 'errInvalidDiscovery', PROTOTYPE_INVALID: 'errInvalidPrototype',
   DISCOVERY_SKILL_REQUIRED: 'discoveryWaitForQuestion', DISCOVERY_ROUND_REQUIRED: 'discoveryNeedDiscussion',
   DISCOVERY_NO_NEW: 'discoveryNoNewDiscussion',
   DECISION_PENDING: 'errReopenPending', REOPEN_SELECTION_REQUIRED: 'errReopenSelection', REOPEN_ITEM_FAILED: 'errReopenItems',
   ABSOLUTE_REF: 'errInvalidRef', INVALID_REF: 'errInvalidRef', FIELD_NOT_EDITABLE: 'errInvalidInput',
-  INVALID_ID: 'errInvalidInput', INVALID_ROOT: 'errInvalidInput', INVALID_PROPOSAL: 'errInvalidInput',
+  INVALID_ID: 'errInvalidInput', INVALID_ROOT: 'errInvalidInput', INVALID_INPUT: 'errInvalidInput', INVALID_PROPOSAL: 'errInvalidInput',
   NOT_A_DRAFT: 'errTrashDraft', INVALID_KIND: 'errTrashDraft', ALREADY_EXISTS: 'errExists',
 }
 
@@ -439,6 +465,22 @@ export function workbenchError(error, t) {
   if (code === 'REOPEN_ITEM_FAILED') {
     const access = /EACCES|EPERM|EROFS|EBUSY|immutable|permission|read.?only|权限|不可变/i.test(message)
     return { text: `${t('errReopenItems')}${access ? ' 工作区或任务文件当前不可写，请恢复权限或文件限制后重试。' : ' 请核对未完成任务后重试。'} 已处理部分不会重复，新建任务沿用原 ID。`, raw }
+  }
+  const taskFieldLabel = field => t(({
+    title: 'issueTitle', problemOverview: 'taskOverviewField', acceptance: 'taskCriteriaField',
+    resultSummary: 'demoResult', evidence: 'demoEvidence', currentResult: 'taskDeliveryFresh',
+  })[field] ?? 'draftDescription')
+  if (code === 'PREPARATION_REQUIRED') {
+    const labels = { discovery: 'prepDiscovery', prd: 'reqRelatedPrds', prototype: 'prepPrototype' }
+    const fields = message.split(': ').at(-1).split(', ').filter(field => Object.hasOwn(labels, field)).map(field => t(labels[field]))
+    return { text: t('errPreparationRequired').replace('{fields}', fields.join('、')), raw }
+  }
+  if (code === 'DEV_TASK_FIELDS_REQUIRED' || code === 'TASK_DELIVERY_INCOMPLETE') {
+    let tasks = ''
+    try {
+      tasks = JSON.parse(message).map(({ title, fields }) => `${title}（${fields.map(taskFieldLabel).join('、')}）`).join('。')
+    } catch { /* An incomplete error envelope still gets the general message. */ }
+    return { text: t(code === 'DEV_TASK_FIELDS_REQUIRED' ? 'errDevTaskFields' : 'errTaskDeliveryIncomplete').replace('{tasks}', () => tasks).trim(), raw }
   }
   if (code === 'MISSING_START_FIELDS' || code === 'MISSING_TASK_FIELDS' || code === 'REVIEW_INFO_REQUIRED') {
     const fields = message.split(': ').at(-1).split(', ').filter(field => Object.hasOwn(draftFields, field)).map(field => {

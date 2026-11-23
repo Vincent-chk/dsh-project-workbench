@@ -14,7 +14,7 @@ const { useEffect, useState } = React
 
 // 关键操作弹窗：原因收集、送审/验收确认、打回与重开（含部分成功接续）、
 // 人工交付提交、草稿删除。提交中禁止重复操作，失败保留输入与真实状态。
-export function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, reopenState, requirements, newDraft, changeNewDraft, createReq, clearNewDraft, locatePrdLink }) {
+export function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, reopenState, requirements, newDraft, changeNewDraft, createReq, clearNewDraft, locatePrdLink, openReady }) {
   const [value, setValue] = useState('')
   const [checked, setChecked] = useState([])
   const [newTask, setNewTask] = useState(issueDraftFrom)
@@ -75,9 +75,11 @@ export function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, r
   }
   if (modal.kind === 'moveError') {
     const needsPrd = modal.error?.code === 'REVIEW_PRD_REQUIRED' && !!modal.reqId
+    const needsTasks = !!modal.reqId && ['DEV_TASKS_REQUIRED', 'DEV_TASK_FIELDS_REQUIRED'].includes(modal.error?.code)
     return h(Modal, { title: t('moveRejectedTitle'), onClose: close, actions: [
-      h('button', { key: 'close', className: 'pw-button' + (needsPrd ? '' : ' primary'), onClick: close }, t('ok')),
+      h('button', { key: 'close', className: 'pw-button' + (needsPrd || needsTasks ? '' : ' primary'), onClick: close }, t('ok')),
       needsPrd && h('button', { key: 'prd', className: 'pw-button primary', onClick: () => { close(); locatePrdLink(modal.reqId) } }, t('prdGoLink')),
+      needsTasks && h('button', { key: 'tasks', className: 'pw-button primary', onClick: () => { close(); openReady(modal.reqId) } }, t('goPlanTasks')),
     ] }, needsPrd ? h('p', { role: 'alert' }, t('reviewPrdRequired'))
       : h(ErrorDetails, { error: modal.error ?? { message: modal.message }, t, showRaw: false }))
   }
@@ -151,7 +153,7 @@ export function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, r
     const req = liveReq
     const retry = reopenState || req.pendingReopen
     const submit = () => run(() => {
-      const invalid = !retry && addingTask && taskFormError(newTask)
+      const invalid = !retry && addingTask && taskFormError(newTask, { requireAcceptance: true })
       if (invalid) return invalid
       return mutate('requirement/reopen', retry ? { root, id: req.id } : {
         root, id: req.id, reason: value.trim(), reopen: checked, create: addingTask ? [newTaskInput(newTask)] : [], fileHash: req.hash,
@@ -173,7 +175,7 @@ export function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, r
         } }), i.title)),
       h('label', { className: 'pw-field' }, h('input', { type: 'checkbox', checked: addingTask, disabled: busy,
         onChange: event => { setError(null); setAddingTask(event.target.checked) } }), ' ', t('newTask')),
-      addingTask && h(TaskFields, { form: taskForm, t, busy })),
+      addingTask && h(TaskFields, { form: taskForm, t, busy, requireAcceptance: true })),
     errorView)
   }
   if (modal.kind === 'delete') {
