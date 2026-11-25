@@ -1,12 +1,25 @@
 import React from 'react'
 import { archRenderErrorKeys } from '../workbench-content.js'
 import { rpc } from '../api.js'
-import { ErrorDetails, Modal } from '../shared/ui.js'
+import { Disclosure, ErrorDetails, Modal } from '../shared/ui.js'
 import { stripFrontmatter, parseEvidenceRef, evidenceLines, wikiLocalDate } from './wiki-source.js'
 
 const h = React.createElement
 const { useCallback, useEffect, useRef, useState } = React
 const baseName = p => String(p ?? '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || ''
+
+export const pagesLocale = {
+  en: {
+    wikiRebuildNotice: 'Updating rebuilds the Wiki from the project. Git-ignored files are skipped. The previous Wiki is kept in a local backup.',
+    archSourcesCount: 'Sources ({n})', archViewFile: 'View file',
+    syncDetails: 'Review suggestion', syncHistory: 'Decision history', syncScopeAction: 'Revise scope',
+  },
+  zh: {
+    wikiRebuildNotice: '更新会根据项目重新生成 Wiki。Git 忽略的文件不参与，原版 Wiki 保存在项目本地备份中。',
+    archSourcesCount: '来源依据（{n}）', archViewFile: '查看文件',
+    syncDetails: '查看建议', syncHistory: '处理历史', syncScopeAction: '调整范围',
+  },
+}
 
 // Resolve only Markdown pages inside this Wiki; the Host checks the path again.
 function wikiLink(href, pagePath) {
@@ -162,6 +175,7 @@ export function WikiView({ root, sessionId, t, target, onPageChange, uiMemory })
   const [err, setErr] = useState('')
   const [query, setQuery] = useState('')
   const [source, setSource] = useState(null) // {label, path, range?, content?, error?, loading?}
+  const [confirmUpdate, setConfirmUpdate] = useState(false)
   const pageSeq = useRef(0)
   const statusSeq = useRef(0)
   const [gen, setGen] = useState(() => uiMemory.wikiGen[root] ?? null) // {busy, message}
@@ -291,6 +305,7 @@ export function WikiView({ root, sessionId, t, target, onPageChange, uiMemory })
     statusError.code === 'WIKI_SNAPSHOT_UNREADABLE' ? h('span', null, t('wikiSavedViewUnreadable')) : h(ErrorDetails, { error: statusError, t, showRaw: false }),
     h('button', { className: 'pw-button', onClick: loadStatus }, t('retryRead')))
   const generate = async () => {
+    if (genChecked === false || gen?.busy) return
     setGenState({ busy: true, starting: true, message: t('wikiGenerating') })
     try {
       const res = await fetch('/api/project-workbench/wiki-generate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ root, sessionId }) })
@@ -319,7 +334,8 @@ export function WikiView({ root, sessionId, t, target, onPageChange, uiMemory })
   const visiblePage = !statusError && page && (!status?.viewVersion || !page.viewVersion || page.viewVersion === status.viewVersion) ? page : null
   const genError = gen?.startFailed && genMessage ? h('div', { className: 'pw-banner pw-error', role: 'alert' }, genMessage) : null
   const genBar = h('div', { className: 'pw-banner', role: 'status' },
-    h('button', { className: 'pw-button primary', onClick: generate, disabled: genChecked === false || gen?.busy }, status?.exists ? t('wikiUpdate') : t('wikiGenerate')),
+    h('button', { className: 'pw-button primary', onClick: () => status?.exists ? setConfirmUpdate(true) : generate(),
+      disabled: genChecked === false || gen?.busy }, status?.exists ? t('wikiUpdate') : t('wikiGenerate')),
     gen?.busy && h('button', { className: 'pw-button', onClick: stopGen }, t('wikiStop')),
     !genError && genMessage && h('span', { style: { marginLeft: 10 } }, genMessage))
   if (!status && !page) return h('div', { className: 'pw-init' }, readError || h('p', null, t('loading')))
@@ -335,7 +351,7 @@ export function WikiView({ root, sessionId, t, target, onPageChange, uiMemory })
   }
   const pageBtn = p => h('button', { key: p, className: 'pw-wiki-item' + (page?.path === p ? ' active' : ''), onClick: () => open(p), title: p }, p.split('/').pop())
   return h('div', { className: 'pw-wiki-wrap' }, genBar, genError,
-    h('div', { className: 'pw-note' }, t('wikiRebuildNotice')), readError,
+    readError,
     status?.viewExternalChanged ? h('div', { className: 'pw-note', role: 'status' }, t(status.viewUnavailable ? 'wikiNoSavedExternal' : 'wikiExternalChangeView'))
       : (page ? page.viewIsSnapshot : status?.viewIsSnapshot) && h('div', { className: 'pw-note', role: 'status' }, t('wikiShowingPrevious')),
     status?.viewUnprotected && h('div', { className: 'pw-note', role: 'status' }, t('wikiPreviousUnavailable')),
@@ -363,6 +379,14 @@ export function WikiView({ root, sessionId, t, target, onPageChange, uiMemory })
                 h('div', { className: 'pw-claim-ev' }, c.evidence.map(evidenceItem))))
               : h('div', { className: 'pw-empty', style: { border: 'none', padding: '4px 0' } }, t('wikiNoEvidence'))))
           : h('div', { className: 'pw-empty' }, t('wikiPages')))),
+    confirmUpdate && h(Modal, {
+      title: t('wikiUpdate'), manageFocus: true, onClose: () => setConfirmUpdate(false),
+      actions: [
+        h('button', { className: 'pw-button', 'data-modal-initial-focus': true, onClick: () => setConfirmUpdate(false) }, t('cancel')),
+        h('button', { className: 'pw-button primary', disabled: gen?.busy,
+          onClick: () => { setConfirmUpdate(false); return generate() } }, t('wikiUpdate')),
+      ],
+    }, h('p', null, t('wikiRebuildNotice'))),
     source && h(Modal, {
       title: source.path + (source.from ? ` · L${source.from}${source.to > source.from ? `–L${source.to}` : ''}` : ''),
       wide: true,
@@ -459,6 +483,12 @@ export function ArchView({ root, sessionId, t }) {
     setSource(res.ok ? { ...item, content: evidenceLines(res.data.content, item.from, item.to) } : { ...item, error: res })
   }
   const closeSource = () => { sourceSeq.current++; setSource(null) }
+  const sources = arch?.sources ?? []
+  const byFile = new Map()
+  for (const ref of sources) {
+    if (!byFile.has(ref.path)) byFile.set(ref.path, [])
+    byFile.get(ref.path).push(ref)
+  }
   return h('div', { className: 'pw-arch' },
     h('div', { className: 'pw-banner', role: 'status' },
       h('button', { className: 'pw-button primary', onClick: generate, disabled: run?.busy }, arch?.exists ? t('archRegenerate') : t('archGenerate')),
@@ -472,13 +502,16 @@ export function ArchView({ root, sessionId, t }) {
     arch?.exists
       ? h(React.Fragment, null,
         h('iframe', { className: 'pw-arch-frame', title: t('archTitle'), srcDoc: arch.html, sandbox: 'allow-scripts allow-same-origin' }),
-        h('section', { className: 'pw-evidence', 'aria-label': t('wikiEvidence') },
-          h('span', { className: 'pw-label' }, t('wikiEvidence')),
-          (arch.sources ?? []).length ? arch.sources.map((ref, index) => h('button', {
-            key: index, className: 'pw-refchip pw-reflink', title: t('sourceOpen'),
-            onClick: () => openSource(ref),
-          }, ref.label ? ref.label + ' · ' : '', ref.path, ref.from ? `#L${ref.from}${ref.to > ref.from ? `-L${ref.to}` : ''}` : ''))
-            : h('p', { className: 'pw-note' }, t('wikiNoEvidence'))))
+        h(Disclosure, { label: t('archSourcesCount').replace('{n}', String(sources.length)) },
+          h('div', { className: 'pw-arch-sources' },
+            sources.length ? [...byFile].map(([path, refs]) => h('div', { key: path, className: 'pw-claim' },
+              h('div', null, path),
+              h('div', { className: 'pw-proposal-evidence' }, refs.map((ref, index) => h('button', {
+                key: index, className: 'pw-refchip pw-reflink',
+                'aria-label': [path, ref.label, ref.from && `L${ref.from}`].filter(Boolean).join(' · '),
+                onClick: () => openSource(ref),
+              }, [ref.label, ref.from ? `L${ref.from}${ref.to > ref.from ? `–L${ref.to}` : ''}` : null].filter(Boolean).join(' · ') || t('archViewFile'))))))
+              : h('p', { className: 'pw-note' }, t('wikiNoEvidence')))))
       : !readError && h('div', { className: 'pw-init' }, h('h2', null, t('archTitle')), h('p', { className: 'pw-note' }, t(arch ? 'archEmpty' : 'loading'))),
     source && h(Modal, {
       title: source.path + (source.from ? ` · L${source.from}${source.to > source.from ? `–L${source.to}` : ''}` : ''), wide: true,

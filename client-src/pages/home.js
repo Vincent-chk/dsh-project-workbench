@@ -1,6 +1,7 @@
 import React from 'react'
 import { homeSummaryIncomplete, waitParts } from '../shell/nav-state.js'
 import { ErrorDetails } from '../shared/ui.js'
+import { shortBlocker } from '../workbench-content.js'
 
 const h = React.createElement
 
@@ -77,13 +78,13 @@ export function HomePage({ wb }) {
             else if (item.waitingKind === 'awaitingAuth' && authText) waitText = t('authRequestWait').replace('{wait}', authText)
           }
           const action = REMINDER_ACTION[item.kind] ?? REMINDER_ACTION.blocked
+          const blocker = item.kinds?.includes('blocked')
+          const reason = blocker ? shortBlocker(item.reasons?.[0]) || t('listBlockerInTask') : null
           return h('div', { key: (item.issueId ?? item.reqId) + '|' + item.kind, className: 'pw-home-item' },
             h('div', { className: 'pw-home-copy' },
               h('strong', { className: 'pw-preview' }, item.title),
-              h('span', { className: 'pw-note' },
-                item.issueId && item.reqTitle ? item.reqTitle + ' · ' : '',
-                (item.reasons ?? []).join('、'),
-                ' · ', waitText)),
+              reason && h('span', { className: 'pw-list-preview' }, reason)),
+            h('span', { className: 'pw-note pw-home-wait' }, waitText),
             h('button', { className: 'pw-button', onClick: () => go(item) }, t(action.label)))
         })),
       !incomplete && requirements.length === 0 && h('button', { className: 'pw-button primary', onClick: () => setModal({ kind: 'createRequirement' }) }, t('newRequirement'))),

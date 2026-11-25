@@ -37,10 +37,12 @@ export function RequirementLog({ entries, t, onOpenReport, onOpenReview, onOpenA
   const open = { report: onOpenReport, review: onOpenReview, acceptance: onOpenAcceptance, issue: onOpenIssue }
   return h('ul', { className: 'pw-update-list', 'aria-label': t('requirementLog'), style: { padding: 0 } }, entries.map(({ key, at, summary, target }) => {
     const onOpen = target && open[target.kind]
+    const trigger = target?.kind === 'report' ? 'pw-req-log-report-' + target.id : undefined
     return h('li', { className: 'pw-update', key },
       at ? h('time', { className: 'pw-update-ts', dateTime: at, title: at }, dateText(at))
         : h('span', { className: 'pw-update-ts' }, t('requirementLogUnknownTime')),
-      onOpen ? h('button', { type: 'button', className: 'pw-button pw-quiet pw-update-body', style: { textAlign: 'start' }, onClick: () => onOpen(target.id) }, summary)
+      onOpen ? h('button', { type: 'button', id: trigger, className: 'pw-button pw-quiet pw-update-body', style: { textAlign: 'start' },
+        onClick: () => trigger ? onOpen(target.id, trigger) : onOpen(target.id) }, summary)
         : h('span', { className: 'pw-update-body' }, summary))
   }))
 }

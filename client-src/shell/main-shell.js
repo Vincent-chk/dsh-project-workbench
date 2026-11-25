@@ -17,6 +17,7 @@ import { PrdDocuments, PrdManagement, PrdReader, notifyPrdChanged, prdCss } from
 import { PrdEditor } from '../forms/prd-form.js'
 import { SyncView } from '../pages/sync.js'
 import { DetailPanel } from '../detail/requirement-detail.js'
+import { RequirementReportReader } from '../detail/requirement-review.js'
 import { IssueDetail } from '../detail/task-detail.js'
 import { RecordDetail } from '../detail/acceptance-detail.js'
 import { requirementFormError } from '../forms/requirement-form.js'
@@ -53,7 +54,7 @@ const pageLabel = page => ({ home: 'navHome', pool: 'navPool', review: 'navRevie
 // 主工作台：全局入口 + 项目选择 + 内部菜单 + 内容区。入口不检查当前会话、
 // root 或项目初始化；浏览状态保存在插件实例内存，按项目隔离（技术方案 §8）。
 export function MainShell(props) {
-  const { t, useCurrentSession, useSessions, useWorkspaces, useSessionStatus, uiMemory, css, showConversation, enterSession, renderFactorySlot } = props
+  const { t, useCurrentSession, useSessions, useWorkspaces, useSessionStatus, uiMemory, css, showConversation, enterSession, renderFactorySlot, PreparationModal } = props
   const sessionId = useCurrentSession(v => v)
   const session = useSessions(s => sessionId === undefined ? undefined : s.byId[sessionId])
   const sessionRoot = session?.cwd
@@ -103,6 +104,7 @@ export function MainShell(props) {
   const [, setReorderRevision] = useState(0)
   const pendingReorder = reorderMemory[projectKey]
   const [focusTarget, setFocusTarget] = useState('')
+  const [preparationFocus, setPreparationFocus] = useState(null)
   const contentRef = useRef(null)
   const [editFocus, setEditFocus] = useState(null)
   const [undo, setUndo] = useState(null)
@@ -247,7 +249,7 @@ export function MainShell(props) {
     if (keyChanged || rootChanged) {
       setData(null); setError(''); setNotice(''); setHome(null); setHomeError(null); setRunFacts(null); setRunError(null)
       setBlocked({ proposals: null, deliveryFailed: [] }); setGit(null); setUndo(null); setModal(null)
-      setSaving(false); setFocusTarget(''); setEditFocus(null); setDetailDirty(false)
+      setSaving(false); setFocusTarget(''); setPreparationFocus(null); setEditFocus(null); setDetailDirty(false)
       homeStamp.current = null
       const remembered = normalizeViewState(uiMemory.views[projectKey])
       lastWritten.current = uiMemory.views[projectKey]
@@ -579,9 +581,25 @@ export function MainShell(props) {
     if (kind === 'move') return submit(undefined, false, { reviewMarker: options.reviewMarker })
     if (kind === 'reason') {
       const reprepare = req.status === 'ready'
-      setModal({ kind, title: t(reprepare ? 'returnForPreparation' : 'returnReview'), suggestion: options.suggestion,
+      const origin = navRef.current
+      const restoreFocus = options.triggerId && (saved => {
+        if (!saved && rootRef.current === root && navRef.current.params?.reqId === req.id) setFocusTarget(options.triggerId)
+      })
+      setModal({ kind, title: t(options.missingKind ? 'aiReviewReturnToPool' : reprepare ? 'returnForPreparation' : 'returnReview'),
+        suggestion: options.suggestion, initialReason: options.initialReason, confirmLabel: t('aiReviewReturnConfirm'), restoreFocus,
         body: reprepare ? t('returnForPreparationHint') : undefined,
-        onOk: reason => submit(reason, true, { confirmReviewInvalid: reprepare }) })
+        onOk: async reason => {
+          const result = await submit(reason, true, { confirmReviewInvalid: reprepare })
+          if (result.ok && mountedRef.current && rootRef.current === root && navRef.current === origin) {
+            const next = { reqId: req.id, issueId: null }
+            const view = origin.params?.reqId === req.id && !origin.params.issueId
+              ? { ...origin, page: 'pool', params: next }
+              : openDetail(origin, next, 'pool')
+            writeNav(view)
+            setPreparationFocus({ reqId: req.id, root, kind: options.missingKind })
+          }
+          return result
+        } })
       return
     }
     if (kind === 'confirmComplete') {
@@ -593,7 +611,7 @@ export function MainShell(props) {
       return
     }
     setModal({ kind, req, onOk: () => submit(undefined, true) })
-  }, [mutate, root, t, saving, modal])
+  }, [mutate, root, projectKey, t, saving, modal])
 
   const moveIssue = (req, issue, to, triggerId) => {
     const label = ISSUE_MOVES[issue.status]?.[to]
@@ -811,15 +829,19 @@ export function MainShell(props) {
     h('button', { className: 'pw-crumb', onClick: () => guardLeave(() => writeNav({ ...navRef.current, params: null, history: [] })) }, t(pageLabel(page))),
     selected && h(React.Fragment, null,
       h('span', { className: 'pw-crumb-sep' }, '/'),
-      selectedIssue || (page === 'pending' && params?.reqId && !selectedRecord)
-        ? h('button', { className: 'pw-crumb', onClick: back, title: selected.title }, t(page === 'pending' ? 'navPending' : 'backToTasks'))
+      selectedIssue || params?.reviewReport || (page === 'pending' && params?.reqId && !selectedRecord)
+        ? h('button', { className: 'pw-crumb', onClick: back, title: selected.title },
+          params?.reviewReport ? selected.title : t(page === 'pending' ? 'navPending' : 'backToTasks'))
         : h('span', { className: 'pw-crumb-current' }, selected.title)),
     selectedIssue && h(React.Fragment, null,
       h('span', { className: 'pw-crumb-sep' }, '/'),
       h('span', { className: 'pw-crumb-current' }, selectedIssue.title)),
     selectedRecord && h(React.Fragment, null,
       h('span', { className: 'pw-crumb-sep' }, '/'),
-      h('span', { className: 'pw-crumb-current' }, t('recordDetail'))))
+      h('span', { className: 'pw-crumb-current' }, t('recordDetail'))),
+    params?.reviewReport && selected && h(React.Fragment, null,
+      h('span', { className: 'pw-crumb-sep' }, '/'),
+      h('span', { className: 'pw-crumb-current' }, t('aiReviewReport'))))
 
   const selectAssociatedPrd = prdId => {
     const view = navRef.current
@@ -835,6 +857,18 @@ export function MainShell(props) {
   const openAssociatedFull = prdId => {
     setFocusTarget(null)
     openDetailAt({ prdId, fromReading: true }, 'prds')
+  }
+  const openReviewReport = (marker, returnPosition) => guardLeave(() => {
+    const view = navRef.current
+    if (view.params?.reqId !== selected.id) return
+    const origin = { ...view, params: { ...view.params, reviewReturn: returnPosition } }
+    writeNav(openDetail(origin, { reqId: selected.id, reviewReport: marker, fromDrawer: !!returnPosition.drawer }))
+  })
+  const clearReviewReturn = () => {
+    const view = navRef.current
+    if (view.params?.reqId !== selected.id || !view.params?.reviewReturn) return
+    const { reviewReturn, ...params } = view.params
+    writeNav({ ...view, params })
   }
   const prdReadingMemory = uiMemory.prdReading ??= {}
   const renderPrds = (onSummary, { readOnly, summaryOnly, manage } = {}) => h(PrdDocuments, {
@@ -856,6 +890,9 @@ export function MainShell(props) {
       : h('div', { className: 'pw-init' }, h('p', null, t('errMissing')), h('button', { className: 'pw-button', onClick: back }, missingReturnLabel))
   } else if (params?.reqId && !selected) {
     content = h('div', { className: 'pw-init' }, h('p', null, t('errMissing')), h('button', { className: 'pw-button', onClick: back }, missingReturnLabel))
+  } else if (selected && params?.reviewReport) {
+    content = h(RequirementReportReader, { key: projectKey + ':' + selected.id + ':' + params.reviewReport,
+      req: selected, root, marker: params.reviewReport, t, onBack: back, fromDrawer: params.fromDrawer })
   } else if (params?.issueId && !selectedIssue) {
     content = h('div', { className: 'pw-init' }, h('p', null, t('errMissing')), h('button', { className: 'pw-button', onClick: back }, missingReturnLabel))
   } else if (selectedIssue) {
@@ -870,11 +907,14 @@ export function MainShell(props) {
     })
   } else if (selected) {
     content = h(DetailPanel, {
-      key: projectKey + ':' + selected.id, req: selected, t, root, mutate, moveIssue, projectKey, rootRef, openDiscovery, openPreparation,
+      key: projectKey + ':' + selected.id, req: selected, t, root, mutate, moveIssue, projectKey, rootRef, openDiscovery, openPreparation, PreparationModal,
       initialPrdId: params?.prdId, restorePrds: params?.restorePrds, onClosePrds: closeAssociatedPrds, modalActive: !!modal,
       initialDelivery: page === 'pending' && selected.status === 'pending', focusTarget, renderPrds, onMove: doMove,
+      reviewReturn: params?.reviewReturn, onReviewReturnHandled: clearReviewReturn, onOpenReport: openReviewReport,
+      preparationFocus: selected.status === 'backlog' && preparationFocus?.reqId === selected.id && preparationFocus.root === root ? preparationFocus : undefined,
+      onPreparationFocusHandled: handled => setPreparationFocus(current => current === handled ? null : current),
       onApprove: reviewMarker => doMove(selected, 'ready', { reviewMarker }),
-      onReject: suggestion => doMove(selected, 'backlog', { suggestion }),
+      onReject: options => doMove(selected, 'backlog', options),
       onDirty: setDetailDirty, busy: saving || !!pendingReorder || !!modal, sessionId: sessionRoot === root ? sessionId : undefined, setModal, uiMemory,
       onDelete: () => setModal({ kind: 'delete', req: selected }),
       onOpenIssue: (id, focusAcceptance) => guardLeave(() => {

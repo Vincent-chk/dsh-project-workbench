@@ -1,7 +1,7 @@
 import React from 'react'
 import { rpc } from '../api.js'
 import { discoveryReference } from '../discovery.js'
-import { Modal } from '../shared/ui.js'
+import { Disclosure, Modal } from '../shared/ui.js'
 import { ListPage, listTitle } from '../shared/list.js'
 import { renderMarkdown } from './resources.js'
 
@@ -296,10 +296,12 @@ export function PrdReader({
         h('button', { type: 'button', className: 'pw-prd-outline-link', onClick: () => jump(index) }, title))))),
     h('article', { className: 'pw-md pw-prd-article' },
       h('h1', { className: 'pw-md-h' }, prd.title),
-      h('p', { className: 'pw-count' }, 'v' + prd.revision, ' · ', t('updated'), ' ', prdDate(prd.updated)),
-      prd.reqIds.length > 0 && h('p', { className: 'pw-note' }, t('prdRelatedRequirements'), ' · ', prd.reqIds.map(reqId => reqTitle(requirements, reqId)).join(t('fieldSeparator'))),
-      prd.discoverySources?.length > 0 && h('p', { className: 'pw-note' }, t('discoveryPrdSource'), ' · ',
-        discoveryReference(t, prd.discoverySources.map(({ reqId }) => reqTitle(requirements, reqId)), prd.discoverySources)),
+      h('div', { className: 'pw-prd-metadata' },
+        h('span', { className: 'pw-count' }, 'v' + prd.revision, ' · ', t('updated'), ' ', prdDate(prd.updated)),
+        prd.reqIds.length > 0 && h('span', { className: 'pw-count' }, t('prdRelatedRequirements'), ' · ', prd.reqIds.map(reqId => reqTitle(requirements, reqId)).join(t('fieldSeparator')))),
+      prd.discoverySources?.length > 0 && h(Disclosure, { label: t('discoveryPrdSource') },
+        h('p', { className: 'pw-note' },
+          discoveryReference(t, prd.discoverySources.map(({ reqId }) => reqTitle(requirements, reqId)), prd.discoverySources))),
       content))))
 }
 
@@ -336,6 +338,7 @@ export const prdCss = `
 .pw-prd-article{margin:0 auto;min-width:0;width:100%;box-sizing:border-box;overflow-wrap:anywhere}
 .pw-prd-article h1:first-child{margin-top:0}
 .pw-prd-article [data-prd-heading]{scroll-margin-top:14px}
+.pw-prd-metadata{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 14px;margin-block-end:10px}
 @container prd-reader (max-width:650px){
   .pw-prd-page-outline{grid-template-columns:minmax(0,1fr)}
   .pw-prd-outline{position:static;max-block-size:110px;border-inline-end:0;padding:0 0 8px;border-block-end:1px solid var(--dsw-alias-border-l3)}

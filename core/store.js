@@ -166,14 +166,14 @@ export function objectiveText(body) {
 function objectiveEvidence(content, since, savedTime) {
   const files = []
   const commands = []
-  for (const line of content.split(/\r?\n(?=- (?:改动文件|执行命令|待核实)：)/)) {
+  for (const [recordIndex, line] of content.split(/\r?\n(?=- (?:改动文件|执行命令|待核实)：)/).entries()) {
     const stamp = line.match(/，(\d{4}-\d{2}-\d{2}T[^）]+)）/)?.[1]
     const time = stamp ? Date.parse(stamp) || 0 : 0
     const file = line.match(/^- (改动文件|待核实)：(.*)（[^，]+，会话 /s)
     if (file) files.push({ path: file[2], status: file[1] === '改动文件' ? 'confirmed' : 'unconfirmed', time })
     else if (line.startsWith('- 改动文件：')) files.push({ status: 'confirmed', time })
     const command = line.match(/^- 执行命令：(.*)（结果 ([^，]+)(?:，测试结论 (passed|failed|unknown)(?:，测试摘要 [^，]*)?)?，会话 /s)
-    if (command) commands.push({ command: command[1], outcome: command[2], testConclusion: command[3], time })
+    if (command) commands.push({ command: command[1], outcome: command[2], testConclusion: command[3], time, at: stamp, recordIndex })
   }
   const current = evidenceFacts({
     files: files.filter(f => f.time > since),
@@ -203,18 +203,18 @@ function latestVerificationChecks(commands, since) {
     if (testConclusion === 'failed') status = 'failed'
     else if (isEvidenceCommand(command)) status = 'passed'
     else if (outcome === 'error' || (/^exit:-?\d+$/.test(outcome) && !isEvidenceOutcome(outcome))) status = 'failed'
-    return { command: command.command, outcome, status }
+    return { command: command.command, outcome, status, at: command.at, recordIndex: command.recordIndex }
   })
 }
 
 export function taskVerificationChecks(issue, since) {
   const { commands } = objectiveEvidence(issue.objective ?? '', since, issue.objectiveAt)
-  return latestVerificationChecks(commands, since)
+  return latestVerificationChecks(commands, since).map(({ command, outcome, status }) => ({ command, outcome, status }))
 }
 
-function verificationFor({ files, commands }, since, evidence, evidenceAt) {
+function verificationFor(files, checks, since, evidence, evidenceAt) {
   const counts = { passed: 0, failed: 0, incomplete: 0 }
-  for (const check of latestVerificationChecks(commands, since)) counts[check.status]++
+  for (const check of checks) counts[check.status]++
   const { passed, failed, incomplete } = counts
   const latestFiles = new Map()
   for (const file of files) {
@@ -427,7 +427,8 @@ function issueFromDoc(doc, path, requirementDeliveryStartedAt = 0) {
   }
   // Both result and evidence must belong to this task delivery (see freshDelivery).
   issue.resultFresh = freshDelivery(issue, since)
-  issue.verification = verificationFor({ files, commands }, since, issue.evidence, issue.evidenceAt)
+  issue.verificationChecks = latestVerificationChecks(commands, since)
+  issue.verification = verificationFor(files, issue.verificationChecks, since, issue.evidence, issue.evidenceAt)
   if (issue.status === 'done') {
     const acceptedSince = Math.max(deliveryStartedAt, issue.resultScopeAt || 0)
     issue.acceptedObjectiveAt = acceptedSince === since ? objectiveAt : objectiveEvidence(objective, acceptedSince, savedObjectiveAt).objectiveAt

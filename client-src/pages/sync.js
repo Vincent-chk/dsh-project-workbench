@@ -1,9 +1,9 @@
 import React from 'react'
 import { taskOverview } from '../../core/state.js'
 import { rpc } from '../api.js'
-import { ErrorDetails } from '../shared/ui.js'
+import { Disclosure, ErrorDetails, ReadText } from '../shared/ui.js'
 import { DraftSuggestions } from '../detail/task-content.js'
-import { isRequirementSplit } from '../workbench-content.js'
+import { draftFieldLabel, isRequirementSplit } from '../workbench-content.js'
 import { generationStartMessage } from './resources.js'
 
 const h = React.createElement
@@ -99,7 +99,6 @@ export function SyncView({ root, sessionId, t, refresh, requirements = [], onLoc
       h('button', { className: 'pw-button primary', onClick: startSync, disabled: run?.busy }, t('syncRun')),
       content.length > 0 && h('button', { className: 'pw-button', onClick: approveAll, disabled: run?.busy }, t('syncAdoptContent')),
       list && h('span', { className: 'pw-count', style: { marginLeft: 8 } }, t('syncPending').replace('{n}', String(list.length))),
-      baseline && total > 0 && h('span', { className: 'pw-count', style: { marginLeft: 8 } }, t('syncAcceptRate').replace('{rate}', String(rate)).replace('{accepted}', String(baseline.accepted ?? 0)).replace('{total}', String(total))),
       run?.message && h('span', { style: { marginLeft: 10 } }, run.message),
       run?.error && h(ErrorDetails, { error: run.error, t, showRaw: false })),
     loadError && h('div', { className: 'pw-banner pw-error', role: 'alert' },
@@ -110,25 +109,34 @@ export function SyncView({ root, sessionId, t, refresh, requirements = [], onLoc
       : h('div', { className: 'pw-sync-list' }, list.map(p => {
         const req = requirements.find(req => req.id === p.target?.reqId)
         const task = req?.issues?.find(task => task.id === p.target.issueId)
-        const state = p.kind === 'task_suggestion' && p.suggested_patch?.action === 'cancel' ? 'cancelled' : p.suggested_patch?.to
+        const patch = p.suggested_patch ?? {}
+        const state = p.kind === 'task_suggestion' && patch.action === 'cancel' ? 'cancelled' : patch.to
         const stateLabel = (p.target?.issueId ? 'st_' : 'col_') + state
         const sources = [...new Set((p.evidence ?? []).map(sourceLabel).filter(Boolean))]
         const split = isRequirementSplit(p)
+        const apply = canApply(p)
+        const change = p.kind === 'new_task' ? patch.title
+          : p.kind === 'task_suggestion' && patch.action === 'scope' ? t('syncScopeAction')
+            : ['field_draft', 'req_draft'].includes(p.kind) ? Object.keys(patch).map(field => draftFieldLabel(field, t)).join(t('fieldSeparator')) : ''
         return h('div', { key: p.id, className: 'pw-proposal' },
           h('div', { className: 'pw-proposal-head' },
             h('span', { className: 'pw-istatus st-doing' }, t('kind_' + p.kind)),
             h('strong', null, task?.title ?? req?.title ?? t(p.target?.issueId ? 'issueDetail' : 'detail')),
-            STATES.includes(state) && h('span', { className: 'pw-count' }, '→ ', t(stateLabel))),
-          (p.kind !== 'new_task' || split) && h('div', { className: 'pw-proposal-reason' }, split ? p.suggested_patch?.title : p.reason),
-          sources.length > 0 && h('div', { className: 'pw-proposal-evidence' },
-            h('span', { className: 'pw-label' }, t('syncEvidence')),
-            sources.map(source => h('span', { key: source, className: 'pw-refchip' }, source))),
-          p.kind === 'new_task' && canApply(p) ? h(DraftSuggestions, { proposals: [p], root, t, busy: run?.busy,
-            act: (method, input) => decide(p, method === 'proposal/adopt', input.patch) }) : h('div', { className: 'pw-actions' },
-            canApply(p)
-              ? h('button', { className: 'pw-button primary', onClick: () => decide(p, true), disabled: run?.busy }, t('demoAdopt'))
-              : p.target?.reqId && h('button', { className: 'pw-button', onClick: () => onLocateProposal({ ...p.target, split }) },
-                t(split ? 'splitLocate' : p.target.issueId ? 'syncLocateTask' : 'syncLocateRequirement')),
-            !split && h('button', { className: 'pw-button', onClick: () => decide(p, false), disabled: run?.busy }, t('syncDismiss'))))
-      })))
+            STATES.includes(state) && h('span', { className: 'pw-count' }, '→ ', t(stateLabel)),
+            change && h('span', { className: 'pw-list-preview' }, change)),
+          !apply && p.target?.reqId && h('div', { className: 'pw-actions' },
+            h('button', { className: 'pw-button', onClick: () => onLocateProposal({ ...p.target, split }) },
+              t(split ? 'splitLocate' : p.target.issueId ? 'syncLocateTask' : 'syncLocateRequirement'))),
+          h(Disclosure, { label: t('syncDetails') },
+            sources.length > 0 && h('div', { className: 'pw-proposal-evidence' },
+              h('span', { className: 'pw-label' }, t('syncEvidence')),
+              sources.map(source => h('span', { key: source, className: 'pw-refchip' }, source))),
+            apply ? h(DraftSuggestions, { proposals: [p], root, t, busy: run?.busy, showHeading: false,
+              act: (method, input) => decide(p, method === 'proposal/adopt', input.patch) }) : h(React.Fragment, null,
+              h(ReadText, { value: p.reason }),
+              h(ReadText, { value: patch.text }),
+              !split && h('button', { className: 'pw-button', onClick: () => decide(p, false), disabled: run?.busy }, t('syncDismiss')))))
+      })),
+    baseline && total > 0 && h(Disclosure, { label: t('syncHistory') },
+      h('p', { className: 'pw-note' }, t('syncAcceptRate').replace('{rate}', String(rate)).replace('{accepted}', String(baseline.accepted ?? 0)).replace('{total}', String(total)))))
 }

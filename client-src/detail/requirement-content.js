@@ -1,20 +1,35 @@
 import React from 'react'
 import { requirementOverview } from '../../core/state.js'
-import { activityEntry, cancellationReason, progressRecords, requirementResult, reviewRecords, taskResult, workbenchError } from '../workbench-content.js'
+import { activityEntry, cancellationReason, progressRecords, requirementResult, reviewRecords, shortRecordedText, taskLimitPreview, taskResult, workbenchError } from '../workbench-content.js'
 import { deliveryFingerprint } from '../project-state.js'
 import { rpc } from '../api.js'
 import { Disclosure, ReadText } from '../shared/ui.js'
+import { dateText } from '../shared/list.js'
 import { ReadingText, TaskResult, UpdateLog, Verification } from './task-content.js'
 
 const h = React.createElement
 const { useState } = React
 
 export const requirementContentLocale = {
-  en: { noRequirementDelivery: 'No delivery or acceptance records yet.' },
-  zh: { noRequirementDelivery: '暂无交付与验收记录。' },
+  en: {
+    noRequirementDelivery: 'No delivery or acceptance records yet.',
+    reqInformation: 'Requirement information', reqRecordedOverview: 'Requirement details recorded',
+    reqDeliverySubmitted: 'Delivery submitted', reqDeliverySnapshot: 'View delivery snapshot',
+    reqDeliveryUnfinished: '{n} tasks still need to be completed or accepted',
+    reqDeliveryGaps: '{n} tasks have verification results or limitations to check',
+    reqPlanFirstTask: 'Create the first task', reqPlanMissing: 'Missing: {fields}',
+  },
+  zh: {
+    noRequirementDelivery: '暂无交付与验收记录。',
+    reqInformation: '需求信息', reqRecordedOverview: '已记录需求信息',
+    reqDeliverySubmitted: '交付已提交', reqDeliverySnapshot: '查看交付快照',
+    reqDeliveryUnfinished: '还有 {n} 项任务待完成或验收',
+    reqDeliveryGaps: '{n} 项任务有待核对的检查结果或限制',
+    reqPlanFirstTask: '先建一项任务', reqPlanMissing: '待补{fields}',
+  },
 }
 
-export function RequirementOverview({ req, t }) {
+export function RequirementOverview({ req, t, compact = false }) {
   const overview = requirementOverview(req)
   const goal = req.goal?.trim()
   const scope = req.scope?.trim()
@@ -27,7 +42,7 @@ export function RequirementOverview({ req, t }) {
     !overview && 'requirementOverview',
   ].filter(Boolean)
   const refs = Array.isArray(req.refs) ? req.refs.join('\n') : ''
-  return h('div', { className: 'pw-reading' },
+  const full = h('div', { className: 'pw-reading' },
     h(ReadingText, { label: t('requirementOverview'), value: overview, className: 'pw-reading-lead' }),
     goal !== overview && h(ReadingText, { label: t('goal'), value: goal, className: 'pw-reading-divider' }),
     (scope || exclusions) && h('section', { className: 'pw-reading-block pw-reading-divider' },
@@ -42,6 +57,14 @@ export function RequirementOverview({ req, t }) {
       h(ReadingText, { label: t('requirementBackground'), value: req.background }),
       h(ReadingText, { label: t('decisionNotes'), value: req.decisionNotes }),
       h(ReadingText, { label: t('refs'), value: refs })))
+  if (!compact) return full
+  const purpose = shortRecordedText(goal) || shortRecordedText(overview)
+  const boundary = shortRecordedText(exclusions, 85) || shortRecordedText(scope, 85)
+  return h('div', { className: 'pw-reading' },
+    (purpose || overview || goal) && h(ReadingText, { label: t('requirementOverview'), value: purpose || t('reqRecordedOverview') }),
+    boundary && boundary !== purpose && h(ReadingText, { label: t('requirementScope'), value: boundary }),
+    missing.length > 0 && h('p', { className: 'pw-note' }, t('requirementMissing').replace('{fields}', missing.map(t).join(t('fieldSeparator')))),
+    h(Disclosure, { label: t('reqInformation') }, full))
 }
 
 export function RequirementDecisionRecords({ records, group, t }) {
@@ -54,8 +77,9 @@ export function RequirementDecisionRecords({ records, group, t }) {
     return h('details', { className: 'pw-disclosure', key: identifier || index,
       id: identifier ? `pw-requirement-record-${group}-${identifier}` : undefined },
       h('summary', null, t(label), record.at && h('span', { className: 'pw-count' }, ' · ' + String(record.at).replace('T', ' ').slice(0, 16))),
-      h(ReadingText, { label: t('reviewOpinion'), value: record.opinion || t('noOpinion') }),
-      h(ReadingText, { label: t('demoDeliverySummary'), value: record.summary }))
+      record.opinion && h(ReadingText, { label: t('reviewOpinion'), value: record.opinion }),
+      record.summary && h(Disclosure, { label: t('reqDeliverySnapshot') },
+        h(ReadingText, { label: t('demoDeliverySummary'), value: record.summary })))
   })
 }
 
@@ -83,24 +107,49 @@ export function RequirementDevelopment({ req, t, onAdd, writeOnly = false }) {
     canAdd && h(UpdateLog, { onAdd, t, kind: 'requirement', userFacing: true }))
 }
 
-export function DeliveryResult({ req, t, compact = false, userFacing = false, showAcceptance = true, foldTasks = false }) {
+export function DeliveryResult({ req, t, compact = false, userFacing = false, showAcceptance = true, foldTasks = false, children, openSnapshot }) {
   const result = requirementResult(req)
   const tasks = req.issues ?? []
   const relevant = req.status === 'pending' || req.status === 'completed'
   const hasCancelled = tasks.some(issue => issue.status === 'cancelled') || !!req.hasCancelled
   const currentImpact = hasCancelled ? result.cancelImpact : ''
   if (userFacing && relevant) {
-    const taskResults = foldTasks ? [] : tasks.map(task => h('div', { key: task.id, className: 'pw-result' },
-          h('strong', null, task.title), ' · ', t('st_' + task.status),
-          task.status === 'cancelled'
-            ? h(ReadingText, { label: t('taskCancelReason'), value: cancellationReason(task) || t('taskNoReason') })
-            : h(TaskResult, { task, t, since: req.deliveryStartedAt, userFacing: true, showAcceptance: false })))
+    const active = tasks.filter(task => task.status !== 'cancelled')
+    const confirmed = active.filter(task => task.status === 'done').length
+    const gaps = active.map(task => {
+      const item = taskResult(task, req.deliveryStartedAt)
+      return { count: item.verification.failed + item.verification.incomplete + item.verification.unconfirmedChanges,
+        limits: item.limits, preview: taskLimitPreview(task, item, req.deliveryStartedAt).text }
+    }).filter(item => item.count || item.limits || item.preview)
+    const gapPreview = gaps.find(item => item.preview)?.preview
+    const final = req.status === 'completed' && reviewRecords(req.reviews).find(record => record.kind === 'acceptance' && record.decision === 'approved')
+    const shortSummary = shortRecordedText(result.summary)
+    const snapshot = final?.summary || result.summary
+    const taskResults = tasks.map(task => h('div', { key: task.id, className: 'pw-result' },
+      h('strong', null, task.title), ' · ', t('st_' + task.status),
+      task.status === 'cancelled'
+        ? h(ReadingText, { label: t('taskCancelReason'), value: cancellationReason(task) || t('taskNoReason') })
+        : h(TaskResult, { task, t, since: req.deliveryStartedAt, userFacing: true, showAcceptance: false })))
     return h('section', { className: 'pw-reading pw-reading-delivery', 'aria-label': t('demoDeliverySummary') },
-      h(ReadingText, { label: t('demoDeliverySummary'), value: result.summary || t('missingDeliverySummary') }),
-      showAcceptance && h(ReadingText, { label: t('requirementCriteria'), value: req.acceptance?.trim() || req.q_success?.trim() || t('missingCriteria') }),
-      hasCancelled && h(ReadingText, { label: t('demoCancelImpact'), value: currentImpact || t('missingCancelImpact') }),
-      !foldTasks && taskResults.length > 0 && h('section', { className: 'pw-reading-block' },
-        h('h3', { className: 'pw-reading-label' }, t('deliveredTaskResults')), taskResults),
+      h('div', { className: 'pw-reading-block' },
+        h('strong', null, req.status === 'completed' ? t('deliveryAccepted') : shortSummary || t(result.summary ? 'reqDeliverySubmitted' : 'missingDeliverySummary')),
+        final?.at && h('time', { className: 'pw-note', dateTime: final.at }, ' · ', dateText(final.at)),
+        active.length > 0 && h('p', { className: 'pw-note' }, t('reqActiveTasks').replace('{done}', String(confirmed)).replace('{total}', String(active.length))),
+        gaps.length > 0 && h('p', { className: 'pw-text' }, t('reqDeliveryGaps').replace('{n}', String(gaps.length)),
+          gapPreview && ' · ' + gapPreview),
+        hasCancelled && currentImpact && h(ReadingText, { label: t('demoCancelImpact'), value: shortRecordedText(currentImpact) || t('reqDeliverySnapshot') }),
+        hasCancelled && !currentImpact && h('p', { className: 'pw-note' }, t('missingCancelImpact'))),
+      children,
+      h(Disclosure, { label: t('reqDeliverySnapshot'), open: openSnapshot },
+        h(ReadingText, { label: t('demoDeliverySummary'), value: snapshot || t('missingDeliverySummary') }),
+        final?.opinion && h(ReadingText, { label: t('reviewOpinion'), value: final.opinion }),
+        showAcceptance && h(ReadingText, { label: t('requirementCriteria'), value: req.acceptance?.trim() || req.q_success?.trim() || t('missingCriteria') }),
+        hasCancelled && h(ReadingText, { label: t('demoCancelImpact'), value: currentImpact || t('missingCancelImpact') }),
+        taskResults.length > 0 && h('section', { className: 'pw-reading-block' },
+          h('h3', { className: 'pw-reading-label' }, t('deliveredTaskResults')),
+          foldTasks || compact
+            ? tasks.map((task, index) => h(Disclosure, { key: task.id, label: task.title }, taskResults[index]))
+            : taskResults)),
       (result.previousSummary || result.previousCancelImpact) && h(Disclosure, { label: t('previousResult') },
         h(ReadingText, { value: result.previousSummary }),
         h(ReadingText, { label: t('demoCancelImpact'), value: result.previousCancelImpact })))

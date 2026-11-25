@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, readFile, readdir, realpath, rename } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
-import { atomicWrite, WorkbenchError } from './files.js'
+import { atomicWrite, readWorkspaceFile, WorkbenchError } from './files.js'
 import { discoveryQuestions } from './discovery-qa.js'
-import { validatePrdDraft, readPrd, savePrd, reviewPrds, requireReviewPrds, withPrdLock } from './prd.js'
+import { validatePrdDraft, readPrd, savePrd, reviewPrds, hasReviewablePrd, requireReviewPrds, withPrdLock } from './prd.js'
 import { discoverySkillName, discoverySkillMarker } from './skill.js'
 import { parseJsonOutput, projectSession, startReadOnlyChild } from './spawn.js'
 import { parseDiscoveryRecord, readDiscoveryRecords } from './review-material.js'
@@ -22,6 +22,7 @@ const digest = text => createHash('sha256').update(text).digest('hex')
 const recordName = n => n + '.md'
 const bindingName = (id, kind = 'discovery') => id + (kind === 'discovery' ? '' : '.' + kind) + '.json'
 const localParts = ['.project', '.local', 'discovery']
+const savedPrdName = (reqId, version) => reqId + '.prd-' + version + '.md'
 const recordsParts = id => ['.project', 'requirements', id, 'discovery']
 const finishPrefix = 'pwb-discovery-finish-'
 const isFinishRequest = source => source?.kind === 'user' && typeof source.rpcId === 'string' && source.rpcId.startsWith(finishPrefix)
@@ -468,7 +469,7 @@ export function installDiscovery(ctx, { readOnlyChildren }) {
     const [prds, records, prototypes] = await Promise.all([
       reviewPrds(root, reqId), readDiscoveryRecords(root, reqId), listPrototypes(root, reqId),
     ])
-    return { prds: prds.map(({ id, title, revision }) => ({ id, title, revision })),
+    return { prds: prds.map(({ id, title, revision }) => ({ id, title, revision })), hasReviewablePrd: hasReviewablePrd(prds),
       discoveryVersions: records.map(({ version }) => version), prototypes }
   }
 
@@ -597,13 +598,24 @@ export function installDiscovery(ctx, { readOnlyChildren }) {
     return draft
   }
 
-  async function preparationPanel({ root: inputRoot, sessionId, preview = false }) {
+  async function preparationPanel({ root: inputRoot, sessionId, preview = false, readSaved = false }) {
     const root = await workspaceRoot(inputRoot)
     const match = await preparationForSession(root, sessionId)
     if (!match) return { preparation: null }
     const { kind, binding } = match
     const req = await requirement(root, binding.reqId)
     const preparation = { kind, requirement: { id: req.id, title: req.title, status: req.status }, saved: binding.lastSave ?? null }
+    if (readSaved) {
+      const saved = binding.lastSave
+      if (!saved) return { preparation, record: null }
+      if (kind === 'prototype') return { preparation, record: await readPrototype(root, req.id, saved.version) }
+      if (!/^[a-f0-9]{64}$/u.test(saved.version ?? '')) throw error('INVALID_PRD', '已保存的 PRD 版本无效。')
+      const snapshot = await readWorkspaceFile(root, [...localParts, savedPrdName(req.id, saved.version)].join('/'))
+        .catch(e => { if (e.code !== 'ENOENT') throw e; return null })
+      if (snapshot) return { preparation, record: { markdown: snapshot.content, revision: saved.revision } }
+      const prd = await readPrd(root, saved.id)
+      return { preparation, record: { markdown: prd.markdown, revision: prd.revision, newer: prd.version !== saved.version } }
+    }
     if (!preview) return { preparation }
     const draft = await preparationDraft(root, sessionId, kind, binding)
     if (!draft || draft.id === binding.lastSave?.draftId) return { preparation, draft: null }
@@ -659,6 +671,8 @@ export function installDiscovery(ctx, { readOnlyChildren }) {
         }, !current && discoveries.length ? {
           discoverySources: discoveries.map(({ reqId, version }) => ({ reqId, version })),
         } : {})
+        const dir = await directory(root, localParts, true)
+        await atomicWrite(join(dir, savedPrdName(req.id, doc.version)), doc.markdown)
         saved = { id: doc.id, version: doc.version, revision: doc.revision }
       }
       const lastSave = { draftId, ...saved }

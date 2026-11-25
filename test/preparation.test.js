@@ -11,11 +11,17 @@ import { makeRoot, seedAIReview, stubSpawnHost, waitFor } from './util.js'
 
 test('a PRD with headings and comments but no content cannot enter review', async t => {
   const root = await makeRoot(t)
-  const call = (method, input) => dispatch(method, { root, ...input }, new AbortController().signal)
+  const { ctx } = stubSpawnHost(root)
+  const { routes } = installDiscovery(ctx, { readOnlyChildren: new Set() })
+  const call = (method, input) => dispatch(method, { root, ...input }, new AbortController().signal, routes)
   await call('project/init')
   const { data: { id } } = await call('requirement/create', { title: '表单保存', fields: { q_pain: '保存失败要保留输入' } })
   const prd = await call('prd/save', { reqIds: [id], markdown: '# 表单保存\n\n## 验收标准\n\n<!-- 需要补齐 -->' })
   assert.equal(prd.ok, true)
+  const options = (await call('preparation/options', { reqId: id })).data
+  assert.deepEqual(options.prds.map(({ id }) => id), [prd.data.id])
+  assert.equal(options.hasReviewablePrd, false)
+  assert.equal((await call('preparation/open', { reqId: id, kind: 'prototype' })).code, 'REVIEW_PRD_REQUIRED')
   for (const [method, input] of [['requirement/move', { to: 'reviewing' }], ['requirement/review', { action: 'submit' }]]) {
     assert.equal((await call(method, { id, ...input })).code, 'REVIEW_PRD_REQUIRED')
   }
@@ -175,12 +181,23 @@ test('preparation reuses a legacy discovery chat, saves PRD and HTML from separa
   assert.match(prompts[0].content[0].text, /保存失败保留输入并允许重试/)
   assistant(prd.sessionId, '~~~workbench-prd\n# 表单保存\n\n保存失败时保留输入并允许重试。\n~~~')
   finish(prd.sessionId, prompts[0].requestId)
-  assert.deepEqual((await ok('preparation/options', { reqId })).prds, [])
+  const beforePrdSave = await ok('preparation/options', { reqId })
+  assert.deepEqual(beforePrdSave.prds, [])
+  assert.deepEqual(beforePrdSave.discoveryVersions, [1])
+  assert.equal(beforePrdSave.hasReviewablePrd, false)
   const prdPreview = (await ok('preparation/session', { sessionId: prd.sessionId, preview: true })).draft
   const confirmedPrd = await ok('preparation/save', { sessionId: prd.sessionId, draftId: prdPreview.id, markdown: prdPreview.markdown + '\n\n用户确认需要错误提示。' })
   const linked = await readPrd(root, confirmedPrd.id)
   assert.match(linked.markdown, /用户确认需要错误提示/)
   assert.deepEqual(linked.discoverySources, [{ reqId, version: 1 }])
+  const updated = await savePrd(root, { id: linked.id, version: linked.version, reqIds: [reqId],
+    markdown: linked.markdown + '\n\n评审前另行补充。' })
+  const { record: sessionRevision } = await ok('preparation/session', { sessionId: prd.sessionId, readSaved: true })
+  assert.equal(sessionRevision.revision, confirmedPrd.revision)
+  assert.equal(sessionRevision.markdown, linked.markdown)
+  assert.notEqual(sessionRevision.markdown, updated.markdown)
+  assert.equal((await ok('preparation/session', { sessionId: prd.sessionId, preview: true })).draft, null)
+  assert.equal((await ok('preparation/options', { reqId })).hasReviewablePrd, true)
 
   const proto = await ok('preparation/open', { reqId, kind: 'prototype' })
   assert.notEqual(proto.sessionId, prd.sessionId)
@@ -196,6 +213,7 @@ test('preparation reuses a legacy discovery chat, saves PRD and HTML from separa
   assert.doesNotMatch(prototypePreview.html, /<script\b/iu)
   const saved = await ok('preparation/save', { sessionId: proto.sessionId, draftId: prototypePreview.id })
   assert.equal(saved.version, 1)
+  assert.match((await ok('preparation/session', { sessionId: proto.sessionId, readSaved: true })).record.html, /重试保存/)
   assert.deepEqual(await ok('preparation/save', { sessionId: proto.sessionId, draftId: prototypePreview.id }), saved)
   assert.deepEqual((await ok('preparation/options', { reqId })).prototypes, [1])
 

@@ -1,7 +1,7 @@
 import React from 'react'
 import { requirementOverview } from '../../core/state.js'
 import { poolItems, reviewItems, readyItems } from '../shell/nav-state.js'
-import { reviewRecords } from '../workbench-content.js'
+import { rpc } from '../api.js'
 import { ListPage, boardLocator, dateText, firstLine, listTitle } from '../shared/list.js'
 
 const h = React.createElement
@@ -32,25 +32,59 @@ export function PoolPage({ wb }) {
 }
 
 export function ReviewPage({ wb }) {
-  const { t, requirements, navigate } = wb
+  const { t, requirements, navigate, projectKey, root } = wb
+  const [snapshot, setSnapshot] = React.useState(null)
   const items = reviewItems(requirements, wb.nav.filters.review?.query)
+  const idKey = JSON.stringify(items.map(item => item.id))
+  const rows = snapshot?.root === root && snapshot?.projectKey === projectKey && snapshot?.requirements === requirements
+    && snapshot?.idKey === idKey ? snapshot.rows : null
+  React.useEffect(() => {
+    const ids = JSON.parse(idKey)
+    if (!root || ids.length === 0) return
+    let active = true
+    let loading = false
+    const load = async () => {
+      if (loading || document.hidden) return
+      loading = true
+      const response = await rpc('requirement/review/statuses', { root, ids })
+      loading = false
+      if (active) setSnapshot({
+        root, projectKey, requirements, idKey,
+        rows: new Map((response?.ok ? response.data : []).map(row => [row.id, row])),
+      })
+    }
+    load()
+    const timer = setInterval(load, 8000)
+    document.addEventListener('visibilitychange', load)
+    return () => {
+      active = false
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', load)
+    }
+  }, [root, projectKey, requirements, idKey])
+  const labelFor = row => {
+    if (!rows) return 'loading'
+    if (!row || row.unavailable || row.stage !== 'reviewing' || row.reportsUnavailable || row.prdsUnavailable) return 'listReviewUnavailable'
+    if (row.missingPreparation.length) return 'listReviewMissing'
+    if (row.state === 'running') return 'listReviewRunning'
+    if (row.state === 'failed' || row.state === 'save_failed') return 'listReviewRetry'
+    if (row.stale) return 'listReviewStale'
+    return row.hasReview ? 'listReviewDecision' : 'listReviewPending'
+  }
   return h(ListPage, {
     wb, page: 'review', title: t('navReview'), items,
-    columns: [t('listRequirement'), t('submittedAt'), t('listOpinion'), t('listActions')],
+    columns: [t('listRequirement'), t('submittedAt'), t('listCurrentReview'), t('listActions')],
     emptyText: t('reviewEmpty'),
     emptyAction: h('button', { type: 'button', className: 'pw-button', onClick: () => navigate('board') }, t('locateBoard')),
-    renderRow: req => {
-      const latest = reviewRecords(req.reviews).find(record => record.kind === 'review')
-      return {
-        key: req.id,
-        cells: [
-          openRequirement(wb, req, 'review'),
-          date(req.submittedAt),
-          h('span', { className: 'pw-list-preview pw-list-review-note' }, firstLine(latest?.opinion) || t('noOpinion')),
-          boardLocator(wb, req),
-        ],
-      }
-    },
+    renderRow: req => ({
+      key: req.id,
+      cells: [
+        openRequirement(wb, req, 'review'),
+        date(req.submittedAt),
+        h('span', { className: 'pw-list-muted' }, t(labelFor(rows?.get(req.id)))),
+        boardLocator(wb, req),
+      ],
+    }),
   })
 }
 

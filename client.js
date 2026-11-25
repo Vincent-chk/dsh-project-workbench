@@ -187,6 +187,24 @@ var __projectWorkbenchModule = (() => {
 
   // client-src/workbench-content.js
   var textOf = (value) => typeof value === "string" ? value.trim() : "";
+  function shortRecordedText(value, maxLength = 100) {
+    const text = textOf(value);
+    return text.length <= maxLength && !/[\r\n]/.test(text) ? text : "";
+  }
+  function shortBlocker(value) {
+    const reason = textOf(value);
+    const missing = reason.split(/[。！？；\n]|\.\s/).map((sentence) => sentence.match(/(?:^|[，,])\s*((?:(?:目前|当前|仍|还)?(?:缺少|缺失|缺|等待|待补齐)|(?:waiting for|missing|blocked by)\b).+)$/i)?.[1]).find(Boolean);
+    return shortRecordedText(missing, 85) || shortRecordedText(reason, 85);
+  }
+  function taskFollowUp(task, since) {
+    const roundStart = Math.max(Number(since) || 0, Number(task.deliveryStartedAt) || 0, Number(task.requirementDeliveryStartedAt) || 0);
+    return (task.activity ?? []).map((line) => activityParts(line, "issue")).find((entry) => !entry.states && Date.parse(entry.at) >= roundStart && /^(?:\[AI\]\s*|人工操作：\s*)?(?:补充.{0,30}(?:实机|测试|验证)|复验|实机验收[：:]|(?:Follow-up|Retest):)/i.test(entry.body));
+  }
+  function taskLimitPreview(task, result, since) {
+    const latest = taskFollowUp(task, since);
+    const limitation = latest?.body.split(/[。！？；\n]/).map((part) => part.split(/[，,]/)[0].trim()).find((part) => part.length <= 65 && !/(?:^|\S)已(?:解决|通过)/.test(part) && /(?:仍待核实|待核实|未实测|尚未测试|仍未验证|not (?:yet )?(?:tested|verified))$/i.test(part));
+    return limitation ? { text: limitation, date: latest.date } : { text: shortRecordedText(result.limits, 85), date: "" };
+  }
   function taskResult(issue, since = issue?.deliveryStartedAt) {
     const roundStart = Math.max(Number(since) || 0, Number(issue?.deliveryStartedAt) || 0, Number(issue?.requirementDeliveryStartedAt) || 0);
     const fullSummary = textOf(issue?.resultSummary) || textOf(issue?.result?.split(/^###[ \t]+(?:摘要|客观记录|已知限制)/m)[0]);
@@ -672,7 +690,7 @@ var __projectWorkbenchModule = (() => {
       const { at, states } = activityParts(raw, "issue");
       const [first, ...detail] = entry.text.split(/\r?\n/);
       const summary = states ? `${t("st_" + states[1])} \u2192 ${t("st_" + states[2])}` : first;
-      return { id: JSON.stringify([raw, occurrence]), date: entry.date, at, summary, detail: detail.join("\n").trim() || entry.text };
+      return { id: JSON.stringify([raw, occurrence]), date: entry.date, at, summary, event: entry.event, detail: detail.join("\n").trim() || entry.text };
     }).reverse();
   }
   function cancellationReason(task) {
@@ -847,7 +865,7 @@ var __projectWorkbenchModule = (() => {
   // client-src/shared/ui.js
   var import_react = __toESM(__require("react"), 1);
   var h = import_react.default.createElement;
-  var { useEffect } = import_react.default;
+  var { useEffect, useLayoutEffect, useRef } = import_react.default;
   function Disclosure({ label, children, open, id }) {
     return h(
       "details",
@@ -875,7 +893,31 @@ var __projectWorkbenchModule = (() => {
       showRaw && raw && h(Disclosure, { label: t("rawDetails") }, h(ReadText, { value: raw }))
     );
   }
-  function Modal({ title, children, onClose, actions, wide }) {
+  function Modal({ title, children, onClose, actions, wide, className = "", manageFocus = false }) {
+    const dialogRef = useRef(null);
+    useLayoutEffect(() => {
+      if (!manageFocus) return;
+      const dialog = dialogRef.current;
+      const returnTo = document.activeElement;
+      const controls = () => [...dialog.querySelectorAll("button, input, select, textarea, a[href], summary, [tabindex]")].filter((element) => !element.disabled && element.tabIndex !== -1 && element.getClientRects().length);
+      const initial = dialog.querySelector("[data-modal-initial-focus]:not(:disabled)") ?? controls()[0] ?? dialog;
+      initial.focus({ preventScroll: true });
+      const trapTab = (event) => {
+        if (event.key !== "Tab") return;
+        const targets = controls();
+        const index = targets.indexOf(document.activeElement);
+        if (!targets.length || index < 0 || (event.shiftKey ? index === 0 : index === targets.length - 1)) {
+          event.preventDefault();
+          const target = (event.shiftKey ? targets.at(-1) : targets[0]) ?? dialog;
+          target.focus();
+        }
+      };
+      document.addEventListener("keydown", trapTab);
+      return () => {
+        document.removeEventListener("keydown", trapTab);
+        if (returnTo?.isConnected) returnTo.focus({ preventScroll: true });
+      };
+    }, [manageFocus]);
     useEffect(() => {
       const onKey = (event) => {
         if (event.key === "Escape") onClose();
@@ -889,7 +931,15 @@ var __projectWorkbenchModule = (() => {
       h("div", { className: "pw-modal-mask", onClick: onClose }),
       h(
         "div",
-        { className: "pw-modal" + (wide ? " wide" : ""), role: "dialog", "aria-modal": true, "aria-label": title, "data-window-drag-exclude": true },
+        {
+          className: "pw-modal" + (wide ? " wide" : "") + (className ? " " + className : ""),
+          ref: dialogRef,
+          tabIndex: manageFocus ? -1 : void 0,
+          role: "dialog",
+          "aria-modal": true,
+          "aria-label": title,
+          "data-window-drag-exclude": true
+        },
         h("h3", null, title),
         wide ? h("div", { className: "pw-modal-body" }, children) : children,
         h("div", { className: "pw-modal-actions" }, actions)
@@ -907,12 +957,12 @@ var __projectWorkbenchModule = (() => {
   }
 
   // client-src/shared/modals.js
-  var import_react6 = __toESM(__require("react"), 1);
+  var import_react7 = __toESM(__require("react"), 1);
 
   // client-src/forms/task-form.js
   var import_react2 = __toESM(__require("react"), 1);
   var h2 = import_react2.default.createElement;
-  var { useEffect: useEffect2, useRef, useState } = import_react2.default;
+  var { useEffect: useEffect2, useRef: useRef2, useState } = import_react2.default;
   function EditableField({ form, name, label, rows, disabled, required, autoFocus }) {
     const props = {
       className: rows ? "pw-textarea" : "pw-input",
@@ -1040,8 +1090,8 @@ var __projectWorkbenchModule = (() => {
     const [editing, setEditing] = useState(() => !!remembered);
     const [draft, setDraft] = useState(() => draftOf(memory.drafts, draftKey, issueDraftFrom(item)));
     const [updateAvailable, setUpdateAvailable] = useState(false);
-    const base = useRef({ fields: issueDraftFrom(item), fileHash: remembered?.fileHash ?? item.hash });
-    const previousHash = useRef(item.hash);
+    const base = useRef2({ fields: issueDraftFrom(item), fileHash: remembered?.fileHash ?? item.hash });
+    const previousHash = useRef2(item.hash);
     const dirty = !!memory.drafts[draftKey] || !sameDraft(draft, base.current.fields);
     useEffect2(() => {
       if (previousHash.current === item.hash) return;
@@ -1129,7 +1179,8 @@ var __projectWorkbenchModule = (() => {
     onReadProgress,
     initialProgress,
     showTimelineHeading = true,
-    initiallyEditing = false
+    initiallyEditing = false,
+    showPreview = true
   }) {
     const [text, setText] = useState2("");
     const [detail, setDetail] = useState2("");
@@ -1212,7 +1263,7 @@ ${detail.trim()}` : value);
       if (onReadProgress) return h4(
         "section",
         { className: "pw-task-progress-preview", "aria-label": t("progressRecords") },
-        latest && h4(
+        showPreview && latest && h4(
           "div",
           null,
           h4("h3", { className: "pw-reading-label" }, t("latestProgress")),
@@ -1282,12 +1333,13 @@ ${detail.trim()}` : value);
           "summary",
           null,
           entry.date && h4("time", { dateTime: entry.at }, entry.date),
-          h4("span", { className: "pw-preview" }, entry.summary)
+          h4("span", { className: "pw-preview pw-progress-summary" }, entry.summary)
         ),
         h4(
           "div",
           { className: "pw-progress-detail" },
           entry.date && h4("p", { className: "pw-note" }, t("progressRecordedAt"), " ", entry.date),
+          !entry.event && detail !== entry.summary && h4(ReadingText, { value: entry.summary }),
           h4(ReadingText, { value: detail }),
           links.length > 0 && h4(TaskReferences, { refs: [...new Set(links)], openWikiPage })
         )
@@ -1313,7 +1365,7 @@ ${detail.trim()}` : value);
         }
       }, t(olderVisible ? "hideOldTaskProgress" : "oldTaskProgress")),
       olderVisible && rows.slice(3),
-      children?.type !== "button" && children
+      (!showTimelineHeading || children?.type !== "button") && children
     );
   }
   function ReadingText({ label, value, className }) {
@@ -1334,133 +1386,128 @@ ${detail.trim()}` : value);
       ))
     );
   }
-  function Verification({ verification, t }) {
+  function Verification({ verification, t, onReadFailure }) {
     const { passed, failed, incomplete, unconfirmedChanges, hasManualEvidence } = verification;
+    const failedLabel = t("checksFailed").replace("{n}", String(failed));
     return h4(
       "div",
       { className: "pw-reading-verification" },
-      h4("strong", null, t("verify")),
-      failed > 0 && h4("p", { className: "pw-text pw-error" }, t("checksFailed").replace("{n}", String(failed))),
-      incomplete > 0 && h4("p", { className: "pw-text pw-error" }, t("checksIncomplete")),
-      unconfirmedChanges > 0 && h4("p", { className: "pw-text pw-error" }, t("unconfirmedChanges")),
+      h4("strong", null, t("taskReviewChecks")),
+      failed > 0 && (onReadFailure ? h4("button", { type: "button", className: "pw-button pw-quiet pw-failed-checks", onClick: onReadFailure }, failedLabel) : h4("p", { className: "pw-text pw-error" }, failedLabel)),
+      incomplete > 0 && h4("p", { className: "pw-text" }, t("taskReviewIncomplete").replace("{n}", String(incomplete))),
+      unconfirmedChanges > 0 && h4("p", { className: "pw-text" }, t("taskReviewUnverified").replace("{n}", String(unconfirmedChanges))),
       passed > 0 && h4("p", { className: "pw-text" }, t("checksPassed").replace("{n}", String(passed))),
-      !passed && !failed && !incomplete && !hasManualEvidence && h4("p", { className: "pw-text" }, t("noChecks")),
+      !passed && !failed && !incomplete && !unconfirmedChanges && !hasManualEvidence && h4("p", { className: "pw-text" }, t("noChecks")),
       hasManualEvidence && h4("p", { className: "pw-text" }, t("manualEvidence"))
     );
   }
   function hasTaskVerificationRecords(task, result) {
-    return !!(result.fullSummary || result.fullLimits || task.evidence?.trim() || task.objective?.trim());
+    return !!(result.fullSummary || result.fullLimits || task.evidence?.trim() || task.objective?.trim() || task.acceptance?.trim());
   }
-  function TaskVerificationRecords({ task, t, since }) {
+  function TaskVerificationRecords({ task, t, since, focusFailedId, showCriteria = true }) {
     const result = taskResult(task, since);
     const roundStart = Math.max(Number(since) || 0, Number(task.deliveryStartedAt) || 0, Number(task.requirementDeliveryStartedAt) || 0);
+    const inScope = roundStart <= Math.max(Number(task.deliveryStartedAt) || 0, Number(task.requirementDeliveryStartedAt) || 0);
+    const checks = inScope ? task.verificationChecks ?? [] : [];
+    const records = task.objective?.split(/\r?\n(?=- (?:改动文件|执行命令|待核实)：)/) ?? [];
+    const groups = ["failed", "incomplete", "passed"];
+    const followUp = taskFollowUp(task, since);
+    const reading = (label, value) => value?.trim() && h4(Disclosure, { label: t(label) }, h4(ReadingText, { value }));
     return h4(
       "section",
       { className: "pw-task-evidence", "aria-label": t("verify") },
-      h4(ReadingText, { label: t(result.previousSummary ? "previousResultUnverified" : "fullResult"), value: result.fullSummary }),
-      h4(ReadingText, { label: t(result.unverifiedLimits ? "previousLimits" : "demoLimits"), value: result.fullLimits }),
-      h4(ReadingText, { label: t((Number(task.evidenceAt) || 0) < roundStart ? "taskPreviousEvidence" : "demoEvidence"), value: task.evidence }),
-      h4(ReadingText, { label: t("taskObjectiveRecords"), value: task.objective }),
+      groups.map((status) => {
+        const entries = checks.filter((check) => check.status === status);
+        if (!entries.length) return null;
+        return h4(
+          "section",
+          { className: "pw-task-check-group", key: status, "aria-label": t("taskCheck_" + status) },
+          h4("h3", {
+            className: "pw-reading-label",
+            id: status === "failed" ? focusFailedId : void 0,
+            "data-failed-checks": status === "failed" ? "" : void 0,
+            tabIndex: status === "failed" ? -1 : void 0
+          }, t("taskCheck_" + status)),
+          entries.map(({ at, command, outcome, recordIndex }) => h4(
+            "details",
+            { className: "pw-progress-item", key: recordIndex },
+            h4(
+              "summary",
+              null,
+              at && h4("time", { dateTime: at }, at.replace("T", " ").replace(/(?:\.\d+)?Z$/, " UTC")),
+              h4("span", { className: "pw-preview" }, command.replace(/\s+/g, " "), " \xB7 ", t("taskCheck_" + status))
+            ),
+            h4(
+              "div",
+              { className: "pw-progress-detail" },
+              h4("pre", { className: "pw-text" }, records[recordIndex] || [command, outcome].filter(Boolean).join("\n"))
+            )
+          ))
+        );
+      }),
+      followUp && h4(
+        Disclosure,
+        { label: t("taskCheckFollowUp") + " \xB7 " + followUp.date },
+        h4(ReadingText, { value: followUp.body })
+      ),
+      reading((Number(task.evidenceAt) || 0) < roundStart ? "taskPreviousEvidence" : "demoEvidence", task.evidence),
+      reading(result.previousSummary ? "previousResultUnverified" : "fullResult", result.fullSummary),
+      reading(result.unverifiedLimits ? "previousLimits" : "demoLimits", result.fullLimits),
+      showCriteria && reading("requirementCriteria", task.acceptance),
+      reading("taskObjectiveRecords", task.objective),
       !hasTaskVerificationRecords(task, result) && h4("p", { className: "pw-note" }, t("taskNoVerificationRecords"))
     );
   }
-  function TaskResult({ task, t, children, since, userFacing = false, showAcceptance = true, showSummary = true, onReadEvidence, evidenceOpen, reviewTools }) {
+  function TaskResult({ task, t, children, since, userFacing = false, showAcceptance = true, onReadEvidence, evidenceOpen, reviewTools }) {
     const result = taskResult(task, since);
     const reviewing = task.status === "in_review";
     if (userFacing) {
-      const summary = result.recordedSummary;
-      const earlier = (result.previousSummary || result.earlierSummary).replace(/\r?\n\r?\n\[AI 补充\] /g, "\n\n");
-      const criteria = showAcceptance && h4(ReadingText, {
-        label: t("requirementCriteria"),
-        value: task.acceptance?.trim() || t("missingCriteria"),
-        className: "pw-reading-criteria"
-      });
-      if (reviewTools) {
-        const { passed, failed, incomplete, unconfirmedChanges, hasManualEvidence } = result.verification;
-        const checks = [
-          failed > 0 && t("checksFailed").replace("{n}", String(failed)),
-          incomplete > 0 && t("taskReviewIncomplete").replace("{n}", String(incomplete)),
-          unconfirmedChanges > 0 && t("taskReviewUnverified").replace("{n}", String(unconfirmedChanges)),
-          passed > 0 && t("checksPassed").replace("{n}", String(passed))
-        ].filter(Boolean);
-        return h4(
-          "section",
-          { className: "pw-reading pw-reading-result pw-task-acceptance", "aria-label": t("demoResult") },
-          h4(
-            "div",
-            { className: "pw-task-review-compare" },
-            criteria,
-            h4(ReadingText, { label: t("demoResult"), value: summary || t(result.previousSummary ? "taskReviewOldResult" : "demoNoResult") })
-          ),
-          h4(ReadingText, { label: t("demoLimits"), value: result.limits, className: "pw-reading-reason pw-reading-warning" }),
-          h4(
-            "div",
-            { className: "pw-task-review-checks" },
-            h4(
-              "div",
-              null,
-              h4("h3", { className: "pw-reading-label" }, t("taskReviewChecks")),
-              h4("p", { className: "pw-note" }, checks.join(" \xB7 ") || t(hasManualEvidence ? "manualEvidence" : "noChecks"))
-            ),
-            hasTaskVerificationRecords(task, result) && h4("button", {
-              type: "button",
-              className: "pw-button",
-              onClick: onReadEvidence,
-              "aria-expanded": evidenceOpen
-            }, t("taskOpenRecords"), h4("span", { className: "pw-reading-chevron", "aria-hidden": true }, "\u203A"))
-          ),
-          reviewTools
-        );
-      }
-      if (onReadEvidence) return h4(
-        "section",
-        { className: "pw-reading pw-reading-result pw-task-acceptance", "aria-label": t("demoResult") },
-        h4(ReadingText, { label: t("demoResult"), value: summary || t("demoNoResult"), className: "pw-reading-lead" }),
-        h4(
-          "div",
-          { className: "pw-task-verification-pair" },
-          criteria,
-          h4(
-            "div",
-            { className: "pw-task-verification" },
-            h4(Verification, { verification: result.verification, t }),
-            hasTaskVerificationRecords(task, result) && h4("button", { type: "button", className: "pw-button pw-quiet", onClick: onReadEvidence }, t("verifyRecords"))
-          )
-        ),
-        (summary && !result.summary || !summary && result.previousSummary) && h4("p", { className: "pw-note" }, t(summary ? "resultUnverified" : "previousResultUnverified")),
-        h4(ReadingText, {
-          label: t("demoLimits"),
-          value: result.limits || t(result.unverifiedLimits ? "limitsUnverified" : "noLimits"),
-          className: result.limits || result.unverifiedLimits ? "pw-reading-reason pw-reading-warning" : ""
-        }),
-        children
-      );
+      const shortSummary = shortRecordedText(result.recordedSummary);
+      const summary = shortSummary || t(result.recordedSummary ? "taskRecordedResult" : result.previousSummary ? "previousResultUnverified" : "demoNoResult");
+      const limits = taskLimitPreview(task, result, since);
+      const hasRecords = hasTaskVerificationRecords(task, result);
+      const readFailure = (event) => {
+        if (onReadEvidence) return onReadEvidence(event, true);
+        const reader = event.currentTarget.closest(".pw-task-acceptance")?.querySelector(".pw-task-inline-evidence");
+        if (!reader) return;
+        reader.open = true;
+        const target = reader.querySelector("[data-failed-checks]") || reader.querySelector("summary");
+        target?.focus();
+      };
       return h4(
         "section",
         {
-          className: "pw-reading pw-reading-result" + (showSummary ? "" : " pw-sidebar-review"),
-          "aria-label": t(showSummary ? "demoResult" : "sidebarReviewDetails")
+          className: "pw-reading pw-reading-result pw-task-acceptance",
+          "aria-label": t("demoResult"),
+          id: reviewing && onReadEvidence ? "pw-task-acceptance" : void 0,
+          tabIndex: reviewing && onReadEvidence ? -1 : void 0
         },
-        showSummary && h4(ReadingText, { label: t("demoResult"), value: summary || t("demoNoResult"), className: "pw-reading-lead" }),
-        criteria,
-        h4(Verification, { verification: result.verification, t }),
-        result.verification.hasManualEvidence && h4(ReadingText, { label: t("demoEvidence"), value: task.evidence }),
-        task.hasObjective && !result.verification.hasManualEvidence && result.summary && h4("p", { className: "pw-note pw-evidence-note" }, t("useRecordedEvidence")),
-        summary && !result.summary && h4("p", { className: "pw-note" }, t("resultUnverified")),
-        h4(ReadingText, { label: t("demoLimits"), value: result.limits || t(result.unverifiedLimits ? "limitsUnverified" : "noLimits") }),
-        earlier && !showSummary && h4("p", { className: "pw-note" }, t("previousResultUnverified")),
-        earlier && showSummary && h4(
-          Disclosure,
-          { label: t("previousResultUnverified") },
-          h4(ReadingText, { value: earlier }),
-          result.unverifiedLimits && h4(ReadingText, { label: t("previousLimits"), value: result.unverifiedLimits })
+        h4(ReadingText, { label: t("demoResult"), value: summary, className: "pw-reading-lead" }),
+        shortSummary && !result.summary && h4("p", { className: "pw-note" }, t("resultUnverified")),
+        h4(Verification, { verification: result.verification, t, onReadFailure: hasRecords && readFailure }),
+        limits.text ? h4(
+          "div",
+          { className: "pw-task-limits" },
+          h4(ReadingText, { label: t("demoLimits"), value: limits.text }),
+          limits.date && h4("time", { className: "pw-note" }, limits.date)
+        ) : (result.limits || result.unverifiedLimits) && h4(
+          "p",
+          { className: "pw-note" },
+          t(result.limits ? "taskReadLimits" : "limitsUnverified")
         ),
-        (!earlier || !showSummary) && result.unverifiedLimits && h4(
-          Disclosure,
-          { label: t("previousLimits") },
-          h4(ReadingText, { value: result.unverifiedLimits })
-        ),
-        children
+        children,
+        hasRecords && (onReadEvidence ? h4("button", {
+          type: "button",
+          className: "pw-button pw-quiet pw-task-read-evidence",
+          onClick: onReadEvidence,
+          "aria-expanded": evidenceOpen
+        }, t("taskOpenRecords"), h4("span", { className: "pw-reading-chevron", "aria-hidden": true }, "\u203A")) : h4(
+          "details",
+          { className: "pw-disclosure pw-task-inline-evidence" },
+          h4("summary", null, t("taskOpenRecords")),
+          h4(TaskVerificationRecords, { task, t, since, showCriteria: showAcceptance })
+        )),
+        reviewTools
       );
     }
     const showResult = reviewing || !!result.summary;
@@ -1512,74 +1559,54 @@ ${detail.trim()}` : value);
     onReadEvidence,
     evidenceOpen,
     reviewTools,
-    hidePriorResult
+    hidePriorResult,
+    running
   }) {
     const resultFirst = ["in_review", "done"].includes(task.status);
+    const blocked = task.status === "blocked";
+    const cancelled = task.status === "cancelled";
     const result = taskResult(task, since);
     const hasResult = result.fullSummary || result.fullLimits || result.verification.failed || result.verification.incomplete || result.verification.unconfirmedChanges;
-    if (sidebar) {
-      const overview = taskOverview(task);
-      const description = task.description?.trim();
-      const supplementary = description !== overview ? description : "";
-      const scope = requirement?.scope?.trim();
-      const exclusions = requirement?.q_out?.trim();
-      return h4(
-        "div",
-        { className: "pw-reading" },
-        task.status === "blocked" && h4(ReadingText, {
-          label: t("blockedReason"),
-          value: task.blocked_reason?.trim() || t("taskNoReason"),
-          className: "pw-reading-reason pw-reading-warning"
-        }),
-        task.status === "cancelled" && h4(ReadingText, {
-          label: t("taskCancelReason"),
-          value: cancellationReason(task) || t("taskNoReason"),
-          className: "pw-reading-reason"
-        }),
-        h4(ReadingText, { label: t("sidebarTaskDescription"), value: overview || t("taskMissing"), className: "pw-reading-lead" }),
-        h4(ReadingText, {
-          label: t("sidebarFinding"),
-          value: task.rootCause?.trim() || t("sidebarNotRecorded"),
-          className: task.rootCause?.trim() ? void 0 : "pw-sidebar-empty-field"
-        }),
-        h4(ReadingText, { label: t("taskSteps"), value: task.triggerPath }),
-        requirement && h4(
-          "section",
-          { className: "pw-reading-block pw-reading-divider" },
-          h4("h3", { className: "pw-reading-label" }, t("sidebarRequirementScope")),
-          h4(ReadingText, { value: scope || !exclusions && t("sidebarNotRecorded") }),
-          h4(ReadingText, { label: t("q_out"), value: exclusions })
-        ),
-        !resultFirst && h4(ReadingText, { label: t("requirementCriteria"), value: task.acceptance, className: "pw-reading-criteria" }),
-        resultFirst && h4(TaskResult, { task, t, since, userFacing: true, showSummary: false }, resultActions),
-        !resultFirst && task.status !== "cancelled" && !!hasResult && h4(TaskResult, { task, t, since, userFacing: true, showAcceptance: false, showSummary: false }),
-        children,
-        (supplementary || task.refs?.length > 0) && h4(
-          Disclosure,
-          { label: t("taskAdditional") },
-          h4(ReadingText, { label: t("taskSupplement"), value: supplementary }),
-          task.refs?.length > 0 && h4(TaskReferences, { refs: task.refs, openWikiPage })
-        )
-      );
-    }
-    const progress = h4(UpdateLog, { activity: task.activity, t, onAdd: ["done", "cancelled"].includes(task.status) ? null : onAdd, userFacing: true, onReadProgress });
+    const reason = blocked ? task.blocked_reason?.trim() : cancelled ? cancellationReason(task) : "";
+    const reasonPreview = (blocked ? shortBlocker(reason) : shortRecordedText(reason)) || t(reason ? "taskReadReason" : "taskNoReason");
+    const overview = taskOverview(task);
+    const description = task.description?.trim();
+    const supplementary = description !== overview ? description : "";
+    const scope = requirement?.scope?.trim();
+    const exclusions = requirement?.q_out?.trim();
+    const context = sidebar && (overview || task.rootCause?.trim() || task.triggerPath?.trim() || scope || exclusions || task.acceptance?.trim() || supplementary || task.refs?.length || reason);
+    const terminal = ["done", "cancelled"].includes(task.status);
+    const progress = !sidebar && !terminal && h4(UpdateLog, { activity: task.activity, t, onAdd, userFacing: true, onReadProgress, showPreview: !blocked });
     return h4(
       "div",
-      { className: "pw-reading pw-task-reading" },
-      task.status === "blocked" && h4(ReadingText, {
-        label: t("blockedReason"),
-        value: task.blocked_reason?.trim() || t("taskNoReason"),
-        className: "pw-reading-reason pw-reading-warning"
+      { className: sidebar ? "pw-reading" : "pw-reading pw-task-reading" },
+      (blocked || cancelled) && h4(ReadingText, {
+        label: t(blocked ? "blockedReason" : "taskCancelReason"),
+        value: reasonPreview,
+        className: "pw-reading-reason" + (blocked ? " pw-reading-warning" : "")
       }),
-      task.status === "cancelled" && h4(ReadingText, {
-        label: t("taskCancelReason"),
-        value: cancellationReason(task) || t("taskNoReason"),
-        className: "pw-reading-reason"
-      }),
+      sidebar && !resultFirst && !blocked && !cancelled && !running && overview && h4("p", { className: "pw-text pw-preview pw-task-current-goal" }, overview),
       resultFirst && h4(TaskResult, { task, t, since, userFacing: true, onReadEvidence, evidenceOpen, reviewTools }, resultActions),
-      !resultFirst && h4(ReadingText, { label: t("requirementCriteria"), value: task.acceptance?.trim() || t("missingCriteria"), className: "pw-reading-criteria" }),
-      !resultFirst && task.status !== "cancelled" && !hidePriorResult && !!hasResult && h4(TaskResult, { task, t, since, userFacing: true, showAcceptance: false, onReadEvidence }),
       children,
+      !sidebar && !resultFirst && !blocked && !cancelled && !!shortRecordedText(task.acceptance, 160) && h4(ReadingText, { label: t("requirementCriteria"), value: shortRecordedText(task.acceptance, 160), className: "pw-reading-criteria" }),
+      !resultFirst && !cancelled && !hidePriorResult && !!hasResult && h4(
+        Disclosure,
+        { label: t("previousResult") },
+        h4(TaskResult, { task, t, since, userFacing: true, onReadEvidence })
+      ),
+      context && h4(
+        Disclosure,
+        { label: t("taskInfo") },
+        reason && reason !== reasonPreview && h4(ReadingText, { label: t(blocked ? "blockedReason" : "taskCancelReason"), value: reason }),
+        h4(ReadingText, { label: t("sidebarTaskDescription"), value: overview }),
+        task.rootCause?.trim() && h4(ReadingText, { label: t("sidebarFinding"), value: task.rootCause }),
+        h4(ReadingText, { label: t("taskSteps"), value: task.triggerPath }),
+        h4(ReadingText, { label: t("sidebarRequirementScope"), value: scope }),
+        h4(ReadingText, { label: t("q_out"), value: exclusions }),
+        h4(ReadingText, { label: t("requirementCriteria"), value: task.acceptance }),
+        h4(ReadingText, { label: t("taskSupplement"), value: supplementary }),
+        task.refs?.length > 0 && h4(TaskReferences, { refs: task.refs, openWikiPage })
+      ),
       progress
     );
   }
@@ -1628,14 +1655,219 @@ ${detail.trim()}` : value);
   }
 
   // client-src/detail/requirement-content.js
+  var import_react6 = __toESM(__require("react"), 1);
+
+  // client-src/shared/list.js
   var import_react5 = __toESM(__require("react"), 1);
   var h5 = import_react5.default.createElement;
-  var { useState: useState3 } = import_react5.default;
-  var requirementContentLocale = {
-    en: { noRequirementDelivery: "No delivery or acceptance records yet." },
-    zh: { noRequirementDelivery: "\u6682\u65E0\u4EA4\u4ED8\u4E0E\u9A8C\u6536\u8BB0\u5F55\u3002" }
+  var { useLayoutEffect: useLayoutEffect2, useRef: useRef3 } = import_react5.default;
+  var listLocale = {
+    en: {
+      listRequirement: "Requirement",
+      listTask: "Task",
+      listActions: "Actions",
+      listPriority: "Order",
+      listEffectiveProgress: "Done / active tasks",
+      listAttention: "Needs attention",
+      listReason: "Reason",
+      listDelivery: "Delivery summary",
+      listOpinion: "Decision notes",
+      listDocument: "Document",
+      listRevision: "Revision",
+      listReorder: "Change order",
+      listFinishReorder: "Done reordering",
+      listNoAlerts: "No alerts",
+      listCurrentReview: "This review",
+      listReviewUnavailable: "Status unavailable",
+      listReviewPending: "Awaiting review",
+      listReviewStale: "Materials updated",
+      listReviewDecision: "Awaiting your decision",
+      listReviewMissing: "Missing preparation",
+      listReviewRunning: "AI review running",
+      listReviewRetry: "Review needs attention",
+      listDeliveryReady: "Delivery submitted",
+      listDeliveryConfirmed: "{done}/{total} tasks confirmed",
+      listDeliveryNeedsChecking: "{n} task results to check",
+      listBlockerInTask: "Blocked \xB7 view details",
+      listRiskInTask: "View risk note",
+      reqReadonlySnapshot: "Read-only snapshot"
+    },
+    zh: {
+      listRequirement: "\u9700\u6C42",
+      listTask: "\u4EFB\u52A1",
+      listActions: "\u64CD\u4F5C",
+      listPriority: "\u987A\u4F4D",
+      listEffectiveProgress: "\u5DF2\u5B8C\u6210 / \u6709\u6548\u4EFB\u52A1",
+      listAttention: "\u9700\u8981\u5173\u6CE8",
+      listReason: "\u539F\u56E0",
+      listDelivery: "\u4EA4\u4ED8\u6458\u8981",
+      listOpinion: "\u51B3\u5B9A\u610F\u89C1",
+      listDocument: "\u6587\u6863\u540D\u79F0",
+      listRevision: "\u4FEE\u8BA2\u53F7",
+      listReorder: "\u8C03\u6574\u987A\u4F4D",
+      listFinishReorder: "\u7ED3\u675F\u6392\u5E8F",
+      listNoAlerts: "\u6682\u65E0\u5F02\u5E38",
+      listCurrentReview: "\u672C\u8F6E\u8BC4\u5BA1",
+      listReviewUnavailable: "\u6682\u65E0\u6CD5\u8BFB\u53D6\u72B6\u6001",
+      listReviewPending: "\u5F85\u8BC4\u5BA1",
+      listReviewStale: "\u8D44\u6599\u5DF2\u66F4\u65B0",
+      listReviewDecision: "\u5F85\u4EBA\u5DE5\u51B3\u5B9A",
+      listReviewMissing: "\u6750\u6599\u5F85\u8865\u9F50",
+      listReviewRunning: "AI \u8BC4\u5BA1\u4E2D",
+      listReviewRetry: "\u8BC4\u5BA1\u5F85\u5904\u7406",
+      listDeliveryReady: "\u4EA4\u4ED8\u5DF2\u63D0\u4EA4",
+      listDeliveryConfirmed: "{done}/{total} \u9879\u4EFB\u52A1\u5DF2\u786E\u8BA4",
+      listDeliveryNeedsChecking: "{n} \u9879\u4EFB\u52A1\u7ED3\u679C\u5F85\u6838\u5BF9",
+      listBlockerInTask: "\u4EFB\u52A1\u963B\u585E \xB7 \u8BE6\u60C5\u89C1\u539F\u4EFB\u52A1",
+      listRiskInTask: "\u67E5\u770B\u98CE\u9669\u8BF4\u660E",
+      reqReadonlySnapshot: "\u53EA\u8BFB\u5FEB\u7167"
+    }
   };
-  function RequirementOverview({ req, t }) {
+  function useListScroll(wb, page, waiting = false) {
+    const ref = useRef3(null);
+    const memory = wb.uiMemory && (wb.uiMemory.listScroll ??= {});
+    const key = wb.projectKey && JSON.stringify([wb.projectKey, page]);
+    const filter = JSON.stringify(wb.nav.filters[page] ?? {});
+    useLayoutEffect2(() => {
+      const saved = key && memory?.[key];
+      if (ref.current && !waiting) ref.current.scrollTop = saved?.filter === filter ? saved.top : 0;
+    }, [key, filter, waiting, memory]);
+    return {
+      ref,
+      onScroll: key && memory && !waiting ? (event) => {
+        memory[key] = { filter, top: event.currentTarget.scrollTop };
+      } : void 0
+    };
+  }
+  function listTable(columns, rows, label, hasActions = true) {
+    return h5(
+      "table",
+      { className: "pw-list-table" + (hasActions ? " pw-list-table-actions" : ""), role: "table", "aria-label": label },
+      h5(
+        "thead",
+        { role: "rowgroup" },
+        h5("tr", { role: "row" }, columns.map((column, index) => h5("th", { key: index, scope: "col", role: "columnheader" }, column)))
+      ),
+      h5("tbody", { role: "rowgroup" }, rows.map(({ key, cells }) => h5(
+        "tr",
+        { key, role: "row" },
+        cells.map((cell, index) => h5(
+          "td",
+          { key: index, role: "cell" },
+          index > 0 && h5("span", { className: "pw-list-inline-label", "aria-hidden": true }, columns[index]),
+          cell
+        ))
+      )))
+    );
+  }
+  function listTitle(title, id, onClick) {
+    return onClick ? h5("button", { type: "button", id: "pw-list-item-" + id, className: "pw-list-title", onClick }, title) : h5("strong", { className: "pw-list-name" }, title);
+  }
+  function boardLocator(wb, req) {
+    return h5("button", { type: "button", className: "pw-button pw-quiet pw-list-locate", onClick: () => wb.locateBoard(req) }, wb.t("locateBoard"));
+  }
+  function ListPage({ wb, page, title, items, columns, renderRow, emptyText, emptyAction, toolbar, waiting, filtersActive, onClear, hasActions }) {
+    const { t, setFilter } = wb;
+    const query = (wb.nav.filters[page] ?? {}).query ?? "";
+    const filtered = !!query.trim() || filtersActive;
+    const scroll = useListScroll(wb, page, waiting);
+    return h5(
+      "section",
+      { ...scroll, className: "pw-list pw-list-catalog", "aria-busy": waiting || void 0 },
+      h5("header", { className: "pw-list-header" }, h5("h2", null, title)),
+      h5(
+        "div",
+        { className: "pw-list-toolbar" },
+        h5("input", { type: "search", className: "pw-input pw-list-search", placeholder: t("search"), value: query, "aria-label": t("search"), onChange: (e) => setFilter(page, { query: e.target.value }) }),
+        toolbar,
+        filtered && items.length === 0 && !waiting && h5("button", {
+          type: "button",
+          className: "pw-button pw-quiet",
+          onClick: onClear || (() => setFilter(page, { query: "" }))
+        }, t("clearFilter"))
+      ),
+      items.length > 0 ? listTable(columns, items.map(renderRow), title, hasActions) : waiting ? h5("p", { className: "pw-note", role: "status" }, t("loading")) : emptyText && h5("div", { className: "pw-empty" }, filtered ? t("noResults") : emptyText, !filtered && emptyAction)
+    );
+  }
+  var dateText = (value) => String(value ?? "").replace("T", " ").slice(0, 16);
+  var firstLine = (value) => String(value ?? "").split(/\r?\n/).find((line) => line.trim())?.trim() ?? "";
+  var listCss = `
+.pw-list-catalog{container:list-catalog / inline-size;min-width:0;gap:14px}
+.pw-list-header{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.pw-list-header h2{margin:0;font-size:20px;font-weight:650;line-height:1.4}
+.pw-list-catalog .pw-list-search{width:220px;max-width:100%;box-sizing:border-box}
+.pw-list-table{width:100%;table-layout:auto;border-collapse:separate;border-spacing:0;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l3);border-radius:8px;text-align:start}
+.pw-list-table th,.pw-list-table td{padding:8px 12px;vertical-align:middle;text-align:start;overflow-wrap:anywhere;border-bottom:1px solid var(--dsw-alias-border-l3)}
+.pw-list-table th{color:var(--dsw-alias-label-secondary);font-size:12px;font-weight:500}
+.pw-list-table tbody tr:last-child td{border-bottom:0}
+.pw-list-table th:first-child{width:30%}
+.pw-list-table-actions th:last-child{width:1%;min-width:6em}
+.pw-list-table-actions td:last-child{min-width:6em}
+.pw-list-table-actions .pw-list-locate{white-space:nowrap;overflow-wrap:normal}
+.pw-list-table td:first-child{padding-block:1px}
+.pw-list-table td .pw-istatus,.pw-list-table td .pw-flag{display:inline-flex;width:max-content;max-width:100%;white-space:normal}
+.pw-list-table td .pw-istatus{pointer-events:none}
+.pw-list-title{display:block;width:100%;min-height:44px;padding:6px 0;border:0;background:none;color:var(--dsw-alias-label-primary);font:inherit;font-weight:600;text-align:start;cursor:pointer;overflow-wrap:anywhere}
+.pw-list-title:hover{text-decoration:underline;color:var(--dsw-alias-brand-primary)}
+.pw-list-title:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px;border-radius:4px}
+.pw-list-name{display:block;padding-block:8px;overflow-wrap:anywhere}
+.pw-list-value{font-variant-numeric:tabular-nums}
+.pw-list-muted,.pw-list-preview,.pw-list-parent{color:var(--dsw-alias-label-secondary)}
+.pw-list-parent{display:block;margin-block:2px 7px;font-size:12px}
+.pw-list-preview{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.pw-list-alerts,.pw-list-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.pw-list-actions .pw-button{min-height:32px}
+.pw-list-actions .pw-orderbtn{min-height:32px;min-width:32px}
+.pw-list-actions .pw-orderbtn:focus-visible,.pw-list-menu>summary:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
+.pw-list-inline-label{display:none}
+.pw-list-risk{min-width:0}
+.pw-list-risk h3{margin:8px 0;font-size:15px}
+.pw-list-menu summary{min-height:32px;box-sizing:border-box;white-space:nowrap}
+.pw-list-menu .pw-list-actions{padding-top:6px}
+@container list-catalog (max-width:710px){
+  .pw-list-table,.pw-list-table tbody{display:block}
+  .pw-list-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+  .pw-list-table tbody tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:4px 14px;padding:8px 12px}
+  .pw-list-table tbody tr+tr{border-top:1px solid var(--dsw-alias-border-l3)}
+  .pw-list-table td{display:block;min-width:0;padding:2px 0;border:0}
+  .pw-list-table td:first-child,.pw-list-table-actions td:last-child{grid-column:1 / -1}
+  .pw-list-table td:last-child:empty{display:none}
+  .pw-list-table-actions td:last-child>.pw-list-inline-label{display:none}
+  .pw-list-inline-label{display:block;color:var(--dsw-alias-label-secondary);font-size:12px;margin-bottom:2px}
+}
+@container list-catalog (max-width:400px){
+  .pw-list-table tbody tr{grid-template-columns:minmax(0,1fr)}
+}
+`;
+
+  // client-src/detail/requirement-content.js
+  var h6 = import_react6.default.createElement;
+  var { useState: useState3 } = import_react6.default;
+  var requirementContentLocale = {
+    en: {
+      noRequirementDelivery: "No delivery or acceptance records yet.",
+      reqInformation: "Requirement information",
+      reqRecordedOverview: "Requirement details recorded",
+      reqDeliverySubmitted: "Delivery submitted",
+      reqDeliverySnapshot: "View delivery snapshot",
+      reqDeliveryUnfinished: "{n} tasks still need to be completed or accepted",
+      reqDeliveryGaps: "{n} tasks have verification results or limitations to check",
+      reqPlanFirstTask: "Create the first task",
+      reqPlanMissing: "Missing: {fields}"
+    },
+    zh: {
+      noRequirementDelivery: "\u6682\u65E0\u4EA4\u4ED8\u4E0E\u9A8C\u6536\u8BB0\u5F55\u3002",
+      reqInformation: "\u9700\u6C42\u4FE1\u606F",
+      reqRecordedOverview: "\u5DF2\u8BB0\u5F55\u9700\u6C42\u4FE1\u606F",
+      reqDeliverySubmitted: "\u4EA4\u4ED8\u5DF2\u63D0\u4EA4",
+      reqDeliverySnapshot: "\u67E5\u770B\u4EA4\u4ED8\u5FEB\u7167",
+      reqDeliveryUnfinished: "\u8FD8\u6709 {n} \u9879\u4EFB\u52A1\u5F85\u5B8C\u6210\u6216\u9A8C\u6536",
+      reqDeliveryGaps: "{n} \u9879\u4EFB\u52A1\u6709\u5F85\u6838\u5BF9\u7684\u68C0\u67E5\u7ED3\u679C\u6216\u9650\u5236",
+      reqPlanFirstTask: "\u5148\u5EFA\u4E00\u9879\u4EFB\u52A1",
+      reqPlanMissing: "\u5F85\u8865{fields}"
+    }
+  };
+  function RequirementOverview({ req, t, compact = false }) {
     const overview = requirementOverview(req);
     const goal = req.goal?.trim();
     const scope = req.scope?.trim();
@@ -1648,28 +1880,39 @@ ${detail.trim()}` : value);
       !overview && "requirementOverview"
     ].filter(Boolean);
     const refs = Array.isArray(req.refs) ? req.refs.join("\n") : "";
-    return h5(
+    const full = h6(
       "div",
       { className: "pw-reading" },
-      h5(ReadingText, { label: t("requirementOverview"), value: overview, className: "pw-reading-lead" }),
-      goal !== overview && h5(ReadingText, { label: t("goal"), value: goal, className: "pw-reading-divider" }),
-      (scope || exclusions) && h5(
+      h6(ReadingText, { label: t("requirementOverview"), value: overview, className: "pw-reading-lead" }),
+      goal !== overview && h6(ReadingText, { label: t("goal"), value: goal, className: "pw-reading-divider" }),
+      (scope || exclusions) && h6(
         "section",
         { className: "pw-reading-block pw-reading-divider" },
-        h5("h3", { className: "pw-reading-label" }, t("requirementScope")),
-        h5(ReadingText, { value: scope }),
-        h5(ReadText, { label: t("q_out"), value: exclusions })
+        h6("h3", { className: "pw-reading-label" }, t("requirementScope")),
+        h6(ReadingText, { value: scope }),
+        h6(ReadText, { label: t("q_out"), value: exclusions })
       ),
-      req.status === "backlog" && missing.length > 0 && h5("p", { className: "pw-note" }, t("requirementMissing").replace("{fields}", missing.map(t).join(t("fieldSeparator")))),
-      (req.q_who?.trim() || criteria || req.background?.trim() || req.decisionNotes?.trim() || refs) && h5(
+      req.status === "backlog" && missing.length > 0 && h6("p", { className: "pw-note" }, t("requirementMissing").replace("{fields}", missing.map(t).join(t("fieldSeparator")))),
+      (req.q_who?.trim() || criteria || req.background?.trim() || req.decisionNotes?.trim() || refs) && h6(
         Disclosure,
         { label: t("requirementExtra") },
-        h5(ReadingText, { label: t("q_who"), value: req.q_who }),
-        h5(ReadingText, { label: t("requirementCriteria"), value: criteria, className: "pw-reading-criteria" }),
-        h5(ReadingText, { label: t("requirementBackground"), value: req.background }),
-        h5(ReadingText, { label: t("decisionNotes"), value: req.decisionNotes }),
-        h5(ReadingText, { label: t("refs"), value: refs })
+        h6(ReadingText, { label: t("q_who"), value: req.q_who }),
+        h6(ReadingText, { label: t("requirementCriteria"), value: criteria, className: "pw-reading-criteria" }),
+        h6(ReadingText, { label: t("requirementBackground"), value: req.background }),
+        h6(ReadingText, { label: t("decisionNotes"), value: req.decisionNotes }),
+        h6(ReadingText, { label: t("refs"), value: refs })
       )
+    );
+    if (!compact) return full;
+    const purpose = shortRecordedText(goal) || shortRecordedText(overview);
+    const boundary = shortRecordedText(exclusions, 85) || shortRecordedText(scope, 85);
+    return h6(
+      "div",
+      { className: "pw-reading" },
+      (purpose || overview || goal) && h6(ReadingText, { label: t("requirementOverview"), value: purpose || t("reqRecordedOverview") }),
+      boundary && boundary !== purpose && h6(ReadingText, { label: t("requirementScope"), value: boundary }),
+      missing.length > 0 && h6("p", { className: "pw-note" }, t("requirementMissing").replace("{fields}", missing.map(t).join(t("fieldSeparator")))),
+      h6(Disclosure, { label: t("reqInformation") }, full)
     );
   }
   function RequirementDecisionRecords({ records, group, t }) {
@@ -1677,142 +1920,181 @@ ${detail.trim()}` : value);
     return records.map((record, index) => {
       const identifier = record.marker || record.round;
       const label = record.kind === "review" ? record.decision === "approved" ? "reviewApproved" : "reviewReturned" : record.decision === "approved" ? "deliveryAccepted" : "deliveryReturned";
-      return h5(
+      return h6(
         "details",
         {
           className: "pw-disclosure",
           key: identifier || index,
           id: identifier ? `pw-requirement-record-${group}-${identifier}` : void 0
         },
-        h5("summary", null, t(label), record.at && h5("span", { className: "pw-count" }, " \xB7 " + String(record.at).replace("T", " ").slice(0, 16))),
-        h5(ReadingText, { label: t("reviewOpinion"), value: record.opinion || t("noOpinion") }),
-        h5(ReadingText, { label: t("demoDeliverySummary"), value: record.summary })
+        h6("summary", null, t(label), record.at && h6("span", { className: "pw-count" }, " \xB7 " + String(record.at).replace("T", " ").slice(0, 16))),
+        record.opinion && h6(ReadingText, { label: t("reviewOpinion"), value: record.opinion }),
+        record.summary && h6(
+          Disclosure,
+          { label: t("reqDeliverySnapshot") },
+          h6(ReadingText, { label: t("demoDeliverySummary"), value: record.summary })
+        )
       );
     });
   }
   function RequirementReviewDecisions({ req, t }) {
     const records = reviewRecords(req.reviews).filter((record) => record.kind === "review");
-    return h5(RequirementDecisionRecords, { records, group: "review", t });
+    return h6(RequirementDecisionRecords, { records, group: "review", t });
   }
   function RequirementDevelopment({ req, t, onAdd, writeOnly = false }) {
     const notes = progressRecords(req.activity, t, "requirement").filter((entry) => !entry.event);
     const canAdd = !req.pendingReopen && !["pending", "completed"].includes(req.status) && onAdd;
-    if (writeOnly) return canAdd ? h5(UpdateLog, { onAdd, t, kind: "requirement", userFacing: true, initiallyEditing: true }) : null;
+    if (writeOnly) return canAdd ? h6(UpdateLog, { onAdd, t, kind: "requirement", userFacing: true, initiallyEditing: true }) : null;
     const occurrences = /* @__PURE__ */ new Map();
     const disclosures = notes.reverse().map((note) => {
       const raw = req.activity[note.key];
       const count = (occurrences.get(raw) ?? 0) + 1;
       occurrences.set(raw, count);
-      return h5(
+      return h6(
         Disclosure,
         {
           key: JSON.stringify([raw, count]),
-          label: h5("span", { className: "pw-preview" }, note.date && h5("time", { className: "pw-count" }, note.date, " \xB7 "), note.text.split("\n")[0])
+          label: h6("span", { className: "pw-preview" }, note.date && h6("time", { className: "pw-count" }, note.date, " \xB7 "), note.text.split("\n")[0])
         },
-        h5(ReadingText, { value: note.text })
+        h6(ReadingText, { value: note.text })
       );
     }).reverse();
-    return h5(
-      import_react5.default.Fragment,
+    return h6(
+      import_react6.default.Fragment,
       null,
-      disclosures.length === 0 && h5("p", { className: "pw-note" }, t("reqNoDevelopment")),
+      disclosures.length === 0 && h6("p", { className: "pw-note" }, t("reqNoDevelopment")),
       disclosures,
-      canAdd && h5(UpdateLog, { onAdd, t, kind: "requirement", userFacing: true })
+      canAdd && h6(UpdateLog, { onAdd, t, kind: "requirement", userFacing: true })
     );
   }
-  function DeliveryResult({ req, t, compact = false, userFacing = false, showAcceptance = true, foldTasks = false }) {
+  function DeliveryResult({ req, t, compact = false, userFacing = false, showAcceptance = true, foldTasks = false, children, openSnapshot }) {
     const result = requirementResult(req);
     const tasks = req.issues ?? [];
     const relevant = req.status === "pending" || req.status === "completed";
     const hasCancelled = tasks.some((issue) => issue.status === "cancelled") || !!req.hasCancelled;
     const currentImpact = hasCancelled ? result.cancelImpact : "";
     if (userFacing && relevant) {
-      const taskResults = foldTasks ? [] : tasks.map((task) => h5(
+      const active = tasks.filter((task) => task.status !== "cancelled");
+      const confirmed = active.filter((task) => task.status === "done").length;
+      const gaps = active.map((task) => {
+        const item = taskResult(task, req.deliveryStartedAt);
+        return {
+          count: item.verification.failed + item.verification.incomplete + item.verification.unconfirmedChanges,
+          limits: item.limits,
+          preview: taskLimitPreview(task, item, req.deliveryStartedAt).text
+        };
+      }).filter((item) => item.count || item.limits || item.preview);
+      const gapPreview = gaps.find((item) => item.preview)?.preview;
+      const final = req.status === "completed" && reviewRecords(req.reviews).find((record) => record.kind === "acceptance" && record.decision === "approved");
+      const shortSummary = shortRecordedText(result.summary);
+      const snapshot = final?.summary || result.summary;
+      const taskResults = tasks.map((task) => h6(
         "div",
         { key: task.id, className: "pw-result" },
-        h5("strong", null, task.title),
+        h6("strong", null, task.title),
         " \xB7 ",
         t("st_" + task.status),
-        task.status === "cancelled" ? h5(ReadingText, { label: t("taskCancelReason"), value: cancellationReason(task) || t("taskNoReason") }) : h5(TaskResult, { task, t, since: req.deliveryStartedAt, userFacing: true, showAcceptance: false })
+        task.status === "cancelled" ? h6(ReadingText, { label: t("taskCancelReason"), value: cancellationReason(task) || t("taskNoReason") }) : h6(TaskResult, { task, t, since: req.deliveryStartedAt, userFacing: true, showAcceptance: false })
       ));
-      return h5(
+      return h6(
         "section",
         { className: "pw-reading pw-reading-delivery", "aria-label": t("demoDeliverySummary") },
-        h5(ReadingText, { label: t("demoDeliverySummary"), value: result.summary || t("missingDeliverySummary") }),
-        showAcceptance && h5(ReadingText, { label: t("requirementCriteria"), value: req.acceptance?.trim() || req.q_success?.trim() || t("missingCriteria") }),
-        hasCancelled && h5(ReadingText, { label: t("demoCancelImpact"), value: currentImpact || t("missingCancelImpact") }),
-        !foldTasks && taskResults.length > 0 && h5(
-          "section",
+        h6(
+          "div",
           { className: "pw-reading-block" },
-          h5("h3", { className: "pw-reading-label" }, t("deliveredTaskResults")),
-          taskResults
+          h6("strong", null, req.status === "completed" ? t("deliveryAccepted") : shortSummary || t(result.summary ? "reqDeliverySubmitted" : "missingDeliverySummary")),
+          final?.at && h6("time", { className: "pw-note", dateTime: final.at }, " \xB7 ", dateText(final.at)),
+          active.length > 0 && h6("p", { className: "pw-note" }, t("reqActiveTasks").replace("{done}", String(confirmed)).replace("{total}", String(active.length))),
+          gaps.length > 0 && h6(
+            "p",
+            { className: "pw-text" },
+            t("reqDeliveryGaps").replace("{n}", String(gaps.length)),
+            gapPreview && " \xB7 " + gapPreview
+          ),
+          hasCancelled && currentImpact && h6(ReadingText, { label: t("demoCancelImpact"), value: shortRecordedText(currentImpact) || t("reqDeliverySnapshot") }),
+          hasCancelled && !currentImpact && h6("p", { className: "pw-note" }, t("missingCancelImpact"))
         ),
-        (result.previousSummary || result.previousCancelImpact) && h5(
+        children,
+        h6(
+          Disclosure,
+          { label: t("reqDeliverySnapshot"), open: openSnapshot },
+          h6(ReadingText, { label: t("demoDeliverySummary"), value: snapshot || t("missingDeliverySummary") }),
+          final?.opinion && h6(ReadingText, { label: t("reviewOpinion"), value: final.opinion }),
+          showAcceptance && h6(ReadingText, { label: t("requirementCriteria"), value: req.acceptance?.trim() || req.q_success?.trim() || t("missingCriteria") }),
+          hasCancelled && h6(ReadingText, { label: t("demoCancelImpact"), value: currentImpact || t("missingCancelImpact") }),
+          taskResults.length > 0 && h6(
+            "section",
+            { className: "pw-reading-block" },
+            h6("h3", { className: "pw-reading-label" }, t("deliveredTaskResults")),
+            foldTasks || compact ? tasks.map((task, index) => h6(Disclosure, { key: task.id, label: task.title }, taskResults[index])) : taskResults
+          )
+        ),
+        (result.previousSummary || result.previousCancelImpact) && h6(
           Disclosure,
           { label: t("previousResult") },
-          h5(ReadingText, { value: result.previousSummary }),
-          h5(ReadingText, { label: t("demoCancelImpact"), value: result.previousCancelImpact })
+          h6(ReadingText, { value: result.previousSummary }),
+          h6(ReadingText, { label: t("demoCancelImpact"), value: result.previousCancelImpact })
         )
       );
     }
     if (userFacing) {
       const priorSummary = result.previousSummary || result.summary;
       const priorImpact = result.previousCancelImpact || result.cancelImpact;
-      return priorSummary || priorImpact ? h5(
+      return priorSummary || priorImpact ? h6(
         Disclosure,
         { label: t("previousResult") },
-        h5(ReadingText, { value: priorSummary }),
-        h5(ReadingText, { label: t("demoCancelImpact"), value: priorImpact })
+        h6(ReadingText, { value: priorSummary }),
+        h6(ReadingText, { label: t("demoCancelImpact"), value: priorImpact })
       ) : null;
     }
     if (!result.summary && !result.previousSummary && !result.cancelImpact && !result.previousCancelImpact && req.status !== "pending") return null;
-    if (compact) return h5(
+    if (compact) return h6(
       "section",
       { className: "pw-result", "aria-label": t("demoPendingAcceptance") },
-      h5("strong", null, t("demoPendingAcceptance")),
-      h5(ReadText, { value: result.summary.split(/\r?\n/)[0] }),
-      h5(ReadText, { label: t("demoCancelImpact"), value: currentImpact })
+      h6("strong", null, t("demoPendingAcceptance")),
+      h6(ReadText, { value: result.summary.split(/\r?\n/)[0] }),
+      h6(ReadText, { label: t("demoCancelImpact"), value: currentImpact })
     );
-    return h5(
+    return h6(
       "section",
       { className: "pw-result", "aria-label": t("demoDeliverySummary") },
-      h5(ReadText, { label: t("demoDeliverySummary"), value: result.summary }),
-      relevant && h5(ReadText, { label: t("acceptanceField"), value: req.acceptance || req.q_success }),
-      relevant && h5(ReadText, { label: t("demoCancelImpact"), value: currentImpact }),
+      h6(ReadText, { label: t("demoDeliverySummary"), value: result.summary }),
+      relevant && h6(ReadText, { label: t("acceptanceField"), value: req.acceptance || req.q_success }),
+      relevant && h6(ReadText, { label: t("demoCancelImpact"), value: currentImpact }),
       relevant && tasks.map((task) => {
         const item = taskResult(task, Math.max(req.deliveryStartedAt || 0, task.deliveryStartedAt || 0));
         const cancelled = task.status === "cancelled";
-        return h5(
+        return h6(
           "div",
           { key: task.id, className: "pw-result" },
-          h5("strong", null, task.title),
+          h6("strong", null, task.title),
           " \xB7 ",
           t("st_" + task.status),
-          cancelled ? null : h5(
-            import_react5.default.Fragment,
+          cancelled ? null : h6(
+            import_react6.default.Fragment,
             null,
-            h5(ReadText, { value: item.summary }),
-            h5(Verification, { verification: item.verification, t }),
-            h5(ReadText, { label: t("demoLimits"), value: item.limits })
+            h6(ReadText, { value: item.summary }),
+            h6(Verification, { verification: item.verification, t }),
+            h6(ReadText, { label: t("demoLimits"), value: item.limits })
           ),
-          (item.fullSummary !== item.summary || item.fullLimits !== item.limits || task.evidence || task.objective || cancelled) && h5(
+          (item.fullSummary !== item.summary || item.fullLimits !== item.limits || task.evidence || task.objective || cancelled) && h6(
             Disclosure,
             { label: t(cancelled ? "history" : "verifyRecords") },
-            cancelled ? h5(ReadText, { value: (task.activity ?? []).map((line) => activityEntry(line, t, "issue").text).join("\n") }) : h5(
-              import_react5.default.Fragment,
+            cancelled ? h6(ReadText, { value: (task.activity ?? []).map((line) => activityEntry(line, t, "issue").text).join("\n") }) : h6(
+              import_react6.default.Fragment,
               null,
-              h5(ReadText, { label: t(item.previousSummary ? "previousResult" : "demoResult"), value: item.fullSummary }),
-              h5(ReadText, { value: task.evidence }),
-              h5(ReadText, { value: task.objective })
+              h6(ReadText, { label: t(item.previousSummary ? "previousResult" : "demoResult"), value: item.fullSummary }),
+              h6(ReadText, { value: task.evidence }),
+              h6(ReadText, { value: task.objective })
             )
           )
         );
       }),
-      (result.previousSummary || result.previousCancelImpact) && h5(
+      (result.previousSummary || result.previousCancelImpact) && h6(
         Disclosure,
         { label: t("previousResult") },
-        h5(ReadText, { value: result.previousSummary }),
-        h5(ReadText, { label: t("demoCancelImpact"), value: result.previousCancelImpact })
+        h6(ReadText, { value: result.previousSummary }),
+        h6(ReadText, { label: t("demoCancelImpact"), value: result.previousCancelImpact })
       )
     );
   }
@@ -1831,7 +2113,7 @@ ${detail.trim()}` : value);
       if (nextSummary || nextImpact) draftMemory[draftKey] = { summary: nextSummary, impact: nextImpact, reviewReq: reviewed };
       else delete draftMemory[draftKey];
     };
-    return h5(
+    return h6(
       "form",
       { className: "pw-result", onSubmit: async (event) => {
         event.preventDefault();
@@ -1862,50 +2144,50 @@ ${detail.trim()}` : value);
           setSubmitting(false);
         }
       } },
-      statusChanged && h5(DeliveryResult, { req: currentReq, t, userFacing: true }),
-      statusChanged && !error && h5("p", { className: "pw-error", role: "alert" }, t("errDeliveryStatusChanged")),
-      !statusChanged && !error && (tasks.length === 0 || tasks.some((task) => task.status !== "done")) && h5("p", { className: "pw-error", role: "alert" }, t(tasks.length === 0 ? "errNoTasks" : "errTasksNotAccepted")),
-      h5(ReadingText, { label: t("requirementCriteria"), value: reviewReq.acceptance?.trim() || reviewReq.q_success?.trim() || t("missingCriteria") }),
-      tasks.map((task) => h5(
+      statusChanged && h6(DeliveryResult, { req: currentReq, t, userFacing: true }),
+      statusChanged && !error && h6("p", { className: "pw-error", role: "alert" }, t("errDeliveryStatusChanged")),
+      !statusChanged && !error && (tasks.length === 0 || tasks.some((task) => task.status !== "done")) && h6("p", { className: "pw-error", role: "alert" }, t(tasks.length === 0 ? "errNoTasks" : "errTasksNotAccepted")),
+      h6(ReadingText, { label: t("requirementCriteria"), value: reviewReq.acceptance?.trim() || reviewReq.q_success?.trim() || t("missingCriteria") }),
+      tasks.map((task) => h6(
         "div",
         { key: task.id, className: "pw-result" },
-        h5("strong", null, task.title),
+        h6("strong", null, task.title),
         " \xB7 ",
         t("st_" + task.status),
-        task.status === "cancelled" ? h5(ReadingText, { label: t("taskCancelReason"), value: cancellationReason(task) || t("taskNoReason") }) : h5(TaskResult, { task, t, since: reviewReq.deliveryStartedAt, userFacing: true, showAcceptance: false })
+        task.status === "cancelled" ? h6(ReadingText, { label: t("taskCancelReason"), value: cancellationReason(task) || t("taskNoReason") }) : h6(TaskResult, { task, t, since: reviewReq.deliveryStartedAt, userFacing: true, showAcceptance: false })
       )),
-      h5(
+      h6(
         "label",
         { className: "pw-field" },
         t("demoDeliverySummary"),
-        h5("textarea", { className: "pw-textarea", rows: 3, readOnly: waiting, value: summary, onChange: (event) => {
+        h6("textarea", { className: "pw-textarea", rows: 3, readOnly: waiting, value: summary, onChange: (event) => {
           const value = event.target.value;
           setSummary(value);
           remember(value, impact);
           onDraftChange?.(!!value || !!impact);
         } })
       ),
-      impact && h5(
+      impact && h6(
         "label",
         { className: "pw-field" },
         t("demoCancelImpact"),
-        h5("textarea", { className: "pw-textarea", rows: 2, readOnly: waiting, value: impact, onChange: (event) => {
+        h6("textarea", { className: "pw-textarea", rows: 2, readOnly: waiting, value: impact, onChange: (event) => {
           const value = event.target.value;
           setImpact(value);
           remember(summary, value);
           onDraftChange?.(!!summary || !!value);
         } })
       ),
-      error && h5("p", { className: "pw-error", role: "alert" }, error),
-      h5("button", { type: "submit", className: "pw-button primary", disabled: waiting || statusChanged || !summary.trim() }, t("demoSubmitAcceptance"))
+      error && h6("p", { className: "pw-error", role: "alert" }, error),
+      h6("button", { type: "submit", className: "pw-button primary", disabled: waiting || statusChanged || !summary.trim() }, t("demoSubmitAcceptance"))
     );
   }
 
   // client-src/shared/modals.js
-  var h6 = import_react6.default.createElement;
-  var { useEffect: useEffect3, useState: useState4 } = import_react6.default;
+  var h7 = import_react7.default.createElement;
+  var { useEffect: useEffect3, useRef: useRef4, useState: useState4 } = import_react7.default;
   function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, reopenState, requirements, newDraft, changeNewDraft, createReq, clearNewDraft, locatePrdLink, openReady }) {
-    const [value, setValue] = useState4("");
+    const [value, setValue] = useState4(() => modal.initialReason ?? "");
     const [checked, setChecked] = useState4([]);
     const [newTask, setNewTask] = useState4(issueDraftFrom);
     const [addingTask, setAddingTask] = useState4(false);
@@ -1913,6 +2195,7 @@ ${detail.trim()}` : value);
     const [reviewReq, setReviewReq] = useState4(modal.req);
     const [busy, setBusy] = useState4(false);
     const [error, setError] = useState4(null);
+    const submitting = useRef4(false);
     const [deliveryFailed, setDeliveryFailed] = useState4(false);
     useEffect3(() => {
       if (modal.kind !== "submitDelivery") return;
@@ -1930,20 +2213,22 @@ ${detail.trim()}` : value);
     };
     const liveReq = modal.req && requirements ? requirements.find((r) => r.id === modal.req.id) ?? modal.req : modal.req;
     const cancel = () => {
-      if (!busy) close();
+      if (!busy && !submitting.current) close();
     };
     const run = async (action) => {
-      if (busy) return;
+      if (busy || submitting.current) return;
+      submitting.current = true;
       setBusy(true);
       setError(null);
       const res = await action();
       if (res.ok) close(true);
       else {
+        submitting.current = false;
         setError(res);
         setBusy(false);
       }
     };
-    const errorView = h6(ErrorDetails, { error, t, showRaw: false });
+    const errorView = h7(ErrorDetails, { error, t, showRaw: false });
     const taskForm = { draft: newTask, change: (name, value2) => {
       setError(null);
       setNewTask((draft) => ({ ...draft, [name]: value2 }));
@@ -1954,8 +2239,8 @@ ${detail.trim()}` : value);
         setError(null);
         changeNewDraft(name, value2);
       } };
-      return h6(Modal, { title: t("newRequirement"), onClose: cancel, wide: true, actions: [
-        h6("button", {
+      return h7(Modal, { title: t("newRequirement"), onClose: cancel, wide: true, actions: [
+        h7("button", {
           type: "button",
           className: "pw-button",
           disabled: busy,
@@ -1964,14 +2249,14 @@ ${detail.trim()}` : value);
             cancel();
           }
         }, t("cancel")),
-        h6("button", { type: "submit", form: formId, className: "pw-button primary", disabled: busy }, t("save"))
-      ] }, h6(
+        h7("button", { type: "submit", form: formId, className: "pw-button primary", disabled: busy }, t("save"))
+      ] }, h7(
         "form",
         { id: formId, noValidate: true, onSubmit: (e) => {
           e.preventDefault();
           run(createReq);
         } },
-        h6(RequirementFields, { form, t, busy, autoFocus: true }),
+        h7(RequirementFields, { form, t, busy, autoFocus: true }),
         errorView
       ));
     }
@@ -1983,48 +2268,49 @@ ${detail.trim()}` : value);
         if (result.ok) modal.onCreated(result.data.id);
         return result;
       };
-      return h6(
+      return h7(
         Modal,
         { title: t("newTask"), onClose: cancel, wide: true, actions: [] },
-        h6("p", { className: "pw-note" }, modal.req.title),
-        h6(TaskForm, { form: taskForm, t, busy, error, onSave: () => run(create), onCancel: cancel })
+        h7("p", { className: "pw-note" }, modal.req.title),
+        h7(TaskForm, { form: taskForm, t, busy, error, onSave: () => run(create), onCancel: cancel })
       );
     }
     if (modal.kind === "moveError") {
       const needsPrd = modal.error?.code === "REVIEW_PRD_REQUIRED" && !!modal.reqId;
       const needsTasks = !!modal.reqId && ["DEV_TASKS_REQUIRED", "DEV_TASK_FIELDS_REQUIRED"].includes(modal.error?.code);
-      return h6(Modal, { title: t("moveRejectedTitle"), onClose: close, actions: [
-        h6("button", { key: "close", className: "pw-button" + (needsPrd || needsTasks ? "" : " primary"), onClick: close }, t("ok")),
-        needsPrd && h6("button", { key: "prd", className: "pw-button primary", onClick: () => {
+      return h7(Modal, { title: t("moveRejectedTitle"), onClose: close, actions: [
+        h7("button", { key: "close", className: "pw-button" + (needsPrd || needsTasks ? "" : " primary"), onClick: close }, t("ok")),
+        needsPrd && h7("button", { key: "prd", className: "pw-button primary", onClick: () => {
           close();
           locatePrdLink(modal.reqId);
         } }, t("prdGoLink")),
-        needsTasks && h6("button", { key: "tasks", className: "pw-button primary", onClick: () => {
+        needsTasks && h7("button", { key: "tasks", className: "pw-button primary", onClick: () => {
           close();
           openReady(modal.reqId);
         } }, t("goPlanTasks"))
-      ] }, needsPrd ? h6("p", { role: "alert" }, t("reviewPrdRequired")) : h6(ErrorDetails, { error: modal.error ?? { message: modal.message }, t, showRaw: false }));
+      ] }, needsPrd ? h7("p", { role: "alert" }, t("reviewPrdRequired")) : h7(ErrorDetails, { error: modal.error ?? { message: modal.message }, t, showRaw: false }));
     }
     if (modal.kind === "reason") {
       const submit = () => {
         if (value.trim()) return run(() => modal.onOk(value.trim()));
       };
-      return h6(
+      return h7(
         Modal,
-        { title: modal.title ?? t("reasonTitle"), onClose: cancel, actions: [
-          h6("button", { className: "pw-button", disabled: busy, onClick: cancel }, t("cancel")),
-          h6("button", { className: "pw-button primary", disabled: busy || !value.trim(), onClick: submit }, t("ok"))
+        { title: modal.title ?? t("reasonTitle"), onClose: cancel, manageFocus: !!modal.confirmLabel, actions: [
+          h7("button", { className: "pw-button", disabled: busy, onClick: cancel }, t("cancel")),
+          h7("button", { className: "pw-button primary", disabled: busy || !value.trim(), onClick: submit }, modal.confirmLabel ?? t("ok"))
         ] },
-        modal.body && h6("p", null, modal.body),
-        modal.suggestion && h6("button", {
+        modal.body && h7("p", null, modal.body),
+        modal.suggestion && h7("button", {
           type: "button",
           className: "pw-button pw-quiet",
           disabled: busy,
           onClick: () => setValue(modal.suggestion)
         }, t("aiReviewUseSuggestion")),
-        h6("input", {
+        h7("input", {
           className: "pw-input",
-          autoFocus: true,
+          autoFocus: !modal.confirmLabel,
+          "data-modal-initial-focus": "",
           readOnly: busy,
           "aria-label": t("reasonTitle"),
           placeholder: t("reasonPlaceholder"),
@@ -2040,18 +2326,18 @@ ${detail.trim()}` : value);
     if (modal.kind === "rejectTaskAcceptance") {
       const { issue, reqId } = modal;
       const reject2 = () => mutate("issue/continue", { root, reqId, id: issue.id, text: value.trim(), fileHash: issue.hash }, { inlineError: true });
-      return h6(
+      return h7(
         Modal,
         { title: t("taskReject"), onClose: cancel, actions: [
-          h6("button", { type: "button", className: "pw-button", disabled: busy, onClick: cancel }, t("cancel")),
-          h6("button", { type: "button", className: "pw-button primary", disabled: busy || !value.trim(), onClick: () => run(reject2) }, t("taskConfirmReject"))
+          h7("button", { type: "button", className: "pw-button", disabled: busy, onClick: cancel }, t("cancel")),
+          h7("button", { type: "button", className: "pw-button primary", disabled: busy || !value.trim(), onClick: () => run(reject2) }, t("taskConfirmReject"))
         ] },
-        h6("p", null, issue.title),
-        h6(
+        h7("p", null, issue.title),
+        h7(
           "label",
           { className: "pw-field" },
-          h6("span", { className: "pw-label" }, t("askFix")),
-          h6("textarea", {
+          h7("span", { className: "pw-label" }, t("askFix")),
+          h7("textarea", {
             className: "pw-textarea",
             rows: 3,
             autoFocus: true,
@@ -2062,7 +2348,7 @@ ${detail.trim()}` : value);
             onChange: (e) => setValue(e.target.value)
           })
         ),
-        h6("p", { className: "pw-note" }, t("taskRejectEffect")),
+        h7("p", { className: "pw-note" }, t("taskRejectEffect")),
         errorView
       );
     }
@@ -2073,14 +2359,14 @@ ${detail.trim()}` : value);
         if (!res.ok) setBusy(false);
         return res;
       };
-      return h6(
+      return h7(
         Modal,
         { title: t("submit"), onClose: cancel, wide: true, actions: [
-          h6("button", { className: "pw-button", disabled: busy, onClick: cancel }, t("cancel"))
+          h7("button", { className: "pw-button", disabled: busy, onClick: cancel }, t("cancel"))
         ] },
-        h6("p", null, liveReq.title),
-        deliveryFailed && h6("p", { className: "pw-error" }, t("demoDeliveryFailed")),
-        h6(ManualDelivery, { req: liveReq, t, act: submit, root, busy, userFacing: true, onSuccess: close })
+        h7("p", null, liveReq.title),
+        deliveryFailed && h7("p", { className: "pw-error" }, t("demoDeliveryFailed")),
+        h7(ManualDelivery, { req: liveReq, t, act: submit, root, busy, userFacing: true, onSuccess: close })
       );
     }
     if (modal.kind === "confirmComplete" || modal.kind === "confirmIssue") {
@@ -2106,18 +2392,18 @@ ${detail.trim()}` : value);
         }
         return res;
       };
-      return h6(
+      return h7(
         Modal,
         { title: t(issue ? "taskConfirmAccept" : "confirmCompleteTitle"), onClose: cancel, wide: true, actions: [
-          h6("button", { className: "pw-button", autoFocus: !!issue, disabled: busy, onClick: cancel }, t("cancel")),
-          h6("button", {
+          h7("button", { className: "pw-button", autoFocus: !!issue, disabled: busy, onClick: cancel }, t("cancel")),
+          h7("button", {
             className: "pw-button primary",
             disabled: busy || issue && (issue.status !== "in_review" || !taskResult(issue, reviewReq?.deliveryStartedAt).summary || !String(effectiveEvidence(issue)).trim()),
             onClick: () => run(issue ? confirm : confirmRequirement)
           }, t(issue ? "taskAccept" : "acceptRequirement"))
         ] },
-        h6("p", null, issue?.title ?? reviewReq.title),
-        issue ? h6(TaskResult, { task: issue, since: reviewReq?.deliveryStartedAt, t, userFacing: true }) : h6(DeliveryResult, { req: reviewReq, t, userFacing: true }),
+        h7("p", null, issue?.title ?? reviewReq.title),
+        issue ? h7(TaskResult, { task: issue, since: reviewReq?.deliveryStartedAt, t, userFacing: true }) : h7(DeliveryResult, { req: reviewReq, t, userFacing: true, openSnapshot: true }),
         errorView
       );
     }
@@ -2136,24 +2422,24 @@ ${detail.trim()}` : value);
           fileHash: req.hash
         }, { inlineError: true });
       });
-      return h6(
+      return h7(
         Modal,
         { title: t(retry ? "resumeReopen" : req.status === "completed" ? "reopen" : "sendBack"), onClose: cancel, actions: [
-          h6("button", { className: "pw-button", disabled: busy, onClick: close }, t("cancel")),
-          h6("button", { className: "pw-button primary", disabled: busy || !retry && (!value.trim() || !checked.length && !addingTask), onClick: submit }, t(retry ? "retry" : req.status === "completed" ? "reopen" : "sendBack"))
+          h7("button", { className: "pw-button", disabled: busy, onClick: close }, t("cancel")),
+          h7("button", { className: "pw-button primary", disabled: busy || !retry && (!value.trim() || !checked.length && !addingTask), onClick: submit }, t(retry ? "retry" : req.status === "completed" ? "reopen" : "sendBack"))
         ] },
-        h6("p", null, req.title),
-        retry && h6("p", null, t("reopenProgress").replace("{done}", String(retry.items.filter((item) => item.done).length)).replace("{total}", String(retry.items.length))),
-        !retry && h6(
-          import_react6.default.Fragment,
+        h7("p", null, req.title),
+        retry && h7("p", null, t("reopenProgress").replace("{done}", String(retry.items.filter((item) => item.done).length)).replace("{total}", String(retry.items.length))),
+        !retry && h7(
+          import_react7.default.Fragment,
           null,
-          h6("textarea", { className: "pw-textarea", "aria-label": t("askFix"), placeholder: t("askFix"), value, readOnly: busy, onChange: (e) => setValue(e.target.value) }),
-          h6("p", null, t("pickReopen")),
-          (req.issues ?? []).filter((i) => ["done", "cancelled"].includes(i.status)).map((i) => h6("label", { key: i.id }, h6("input", { type: "checkbox", disabled: busy, checked: checked.includes(i.id), onChange: (e) => {
+          h7("textarea", { className: "pw-textarea", "aria-label": t("askFix"), placeholder: t("askFix"), value, readOnly: busy, onChange: (e) => setValue(e.target.value) }),
+          h7("p", null, t("pickReopen")),
+          (req.issues ?? []).filter((i) => ["done", "cancelled"].includes(i.status)).map((i) => h7("label", { key: i.id }, h7("input", { type: "checkbox", disabled: busy, checked: checked.includes(i.id), onChange: (e) => {
             const selected = e.target.checked;
             setChecked((prev) => selected ? [...prev, i.id] : prev.filter((id) => id !== i.id));
           } }), i.title)),
-          h6("label", { className: "pw-field" }, h6("input", {
+          h7("label", { className: "pw-field" }, h7("input", {
             type: "checkbox",
             checked: addingTask,
             disabled: busy,
@@ -2162,20 +2448,20 @@ ${detail.trim()}` : value);
               setAddingTask(event.target.checked);
             }
           }), " ", t("newTask")),
-          addingTask && h6(TaskFields, { form: taskForm, t, busy, requireAcceptance: true })
+          addingTask && h7(TaskFields, { form: taskForm, t, busy, requireAcceptance: true })
         ),
         errorView
       );
     }
     if (modal.kind === "delete") {
       const n = (modal.req.issues ?? []).length;
-      return h6(Modal, { title: t("deleteTitle"), onClose: close, actions: [
-        h6("button", { className: "pw-button", onClick: close }, t("cancel")),
-        h6("button", { className: "pw-button danger", onClick: () => {
+      return h7(Modal, { title: t("deleteTitle"), onClose: close, actions: [
+        h7("button", { className: "pw-button", onClick: close }, t("cancel")),
+        h7("button", { className: "pw-button danger", onClick: () => {
           setModal(null);
           trashWithUndo("requirement", modal.req.id, void 0, modal.req.title);
         } }, t("delete"))
-      ] }, h6("p", null, t("deleteBody").replace("{title}", modal.req.title).replace("{n}", String(n))));
+      ] }, h7("p", null, t("deleteBody").replace("{title}", modal.req.title).replace("{n}", String(n))));
     }
     return null;
   }
@@ -2420,8 +2706,8 @@ ${detail.trim()}` : value);
   }
 
   // client-src/pages/home.js
-  var import_react7 = __toESM(__require("react"), 1);
-  var h7 = import_react7.default.createElement;
+  var import_react8 = __toESM(__require("react"), 1);
+  var h8 = import_react8.default.createElement;
   var REMINDER_ACTION = {
     blocked: { label: "homeGoHandle", target: "task" },
     awaitingAuth: { label: "homeGoHandle", target: "session" },
@@ -2440,15 +2726,15 @@ ${detail.trim()}` : value);
   function HomePage({ wb }) {
     const { t, home, homeError, runError, requirements, refreshHome, setModal, navigate, openDetail: openDetail2, openTaskSession, awaitingAuthSessions: awaitingAuthSessions2 } = wb;
     if (homeError && !home) {
-      return h7(
+      return h8(
         "div",
         { className: "pw-init" },
-        h7("h2", null, t("readFailedTitle")),
-        h7(ErrorDetails, { error: homeError, t, showRaw: false }),
-        h7("button", { className: "pw-button primary", onClick: refreshHome }, t("retry"))
+        h8("h2", null, t("readFailedTitle")),
+        h8(ErrorDetails, { error: homeError, t, showRaw: false }),
+        h8("button", { className: "pw-button primary", onClick: refreshHome }, t("retry"))
       );
     }
-    if (!home) return h7("div", { className: "pw-init" }, h7("p", null, t("loading")));
+    if (!home) return h8("div", { className: "pw-init" }, h8("p", null, t("loading")));
     const go = (item) => {
       const action = REMINDER_ACTION[item.kind] ?? REMINDER_ACTION.blocked;
       if (item.kind === "awaitingAuth" || item.kinds?.includes("awaitingAuth")) {
@@ -2463,26 +2749,26 @@ ${detail.trim()}` : value);
     const reminders = home.reminders ?? [];
     const counts = home.counts ?? {};
     const incomplete = homeSummaryIncomplete(home, homeError);
-    return h7(
+    return h8(
       "div",
       { className: "pw-home" },
-      h7(
+      h8(
         "section",
         { className: "pw-subpage", "aria-label": t("homeNeedsYou") },
-        h7("h2", { className: "pw-home-title" }, t("homeNeedsYou")),
-        incomplete && h7(
+        h8("h2", { className: "pw-home-title" }, t("homeNeedsYou")),
+        incomplete && h8(
           "div",
           { className: "pw-banner pw-warn", role: "status" },
-          h7("span", null, t(runError ? "runFactsUnavailable" : "homeIncomplete")),
-          h7("button", { className: "pw-button", onClick: refreshHome }, t("retryRead"))
+          h8("span", null, t(runError ? "runFactsUnavailable" : "homeIncomplete")),
+          h8("button", { className: "pw-button", onClick: refreshHome }, t("retryRead"))
         ),
-        home.authRefreshing && h7(
+        home.authRefreshing && h8(
           "div",
           { className: "pw-banner pw-warn", role: "status" },
-          h7("span", null, t("authRemindersRefreshing")),
-          h7("button", { className: "pw-button", onClick: refreshHome }, t("retryRead"))
+          h8("span", null, t("authRemindersRefreshing")),
+          h8("button", { className: "pw-button", onClick: refreshHome }, t("retryRead"))
         ),
-        reminders.length === 0 ? !incomplete && !home.authRefreshing && h7("p", { className: "pw-note" }, requirements.length === 0 ? t("homeFirstRequirement") : t("homeNothing")) : h7("div", { className: "pw-home-list" }, reminders.map((item) => {
+        reminders.length === 0 ? !incomplete && !home.authRefreshing && h8("p", { className: "pw-note" }, requirements.length === 0 ? t("homeFirstRequirement") : t("homeNothing")) : h8("div", { className: "pw-home-list" }, reminders.map((item) => {
           const wait = item.waitingSince == null ? null : waitParts(item.waitingSince);
           const hasAuth = item.kind === "awaitingAuth" || item.kinds?.includes("awaitingAuth");
           let waitText = wait ? t(wait.key).replace("{n}", String(wait.n)) : t("waitUnknown");
@@ -2498,36 +2784,32 @@ ${detail.trim()}` : value);
             else if (item.waitingKind === "awaitingAuth" && authText) waitText = t("authRequestWait").replace("{wait}", authText);
           }
           const action = REMINDER_ACTION[item.kind] ?? REMINDER_ACTION.blocked;
-          return h7(
+          const blocker = item.kinds?.includes("blocked");
+          const reason = blocker ? shortBlocker(item.reasons?.[0]) || t("listBlockerInTask") : null;
+          return h8(
             "div",
             { key: (item.issueId ?? item.reqId) + "|" + item.kind, className: "pw-home-item" },
-            h7(
+            h8(
               "div",
               { className: "pw-home-copy" },
-              h7("strong", { className: "pw-preview" }, item.title),
-              h7(
-                "span",
-                { className: "pw-note" },
-                item.issueId && item.reqTitle ? item.reqTitle + " \xB7 " : "",
-                (item.reasons ?? []).join("\u3001"),
-                " \xB7 ",
-                waitText
-              )
+              h8("strong", { className: "pw-preview" }, item.title),
+              reason && h8("span", { className: "pw-list-preview" }, reason)
             ),
-            h7("button", { className: "pw-button", onClick: () => go(item) }, t(action.label))
+            h8("span", { className: "pw-note pw-home-wait" }, waitText),
+            h8("button", { className: "pw-button", onClick: () => go(item) }, t(action.label))
           );
         })),
-        !incomplete && requirements.length === 0 && h7("button", { className: "pw-button primary", onClick: () => setModal({ kind: "createRequirement" }) }, t("newRequirement"))
+        !incomplete && requirements.length === 0 && h8("button", { className: "pw-button primary", onClick: () => setModal({ kind: "createRequirement" }) }, t("newRequirement"))
       ),
-      h7(
+      h8(
         "section",
         { className: "pw-subpage", "aria-label": t("homeProgress") },
-        h7("h2", { className: "pw-home-title" }, t("homeProgress")),
-        h7("div", { className: "pw-home-counts" }, COUNT_PAGES.map(({ key, page, label }) => h7(
+        h8("h2", { className: "pw-home-title" }, t("homeProgress")),
+        h8("div", { className: "pw-home-counts" }, COUNT_PAGES.map(({ key, page, label }) => h8(
           "button",
           { key, className: "pw-home-count", onClick: () => navigate(page) },
-          h7("strong", null, incomplete ? "\u2014" : String(counts[key] ?? 0)),
-          h7("span", null, t(label))
+          h8("strong", null, incomplete ? "\u2014" : String(counts[key] ?? 0)),
+          h8("span", null, t(label))
         )))
       )
     );
@@ -2535,162 +2817,6 @@ ${detail.trim()}` : value);
 
   // client-src/pages/requirements.js
   var import_react9 = __toESM(__require("react"), 1);
-
-  // client-src/shared/list.js
-  var import_react8 = __toESM(__require("react"), 1);
-  var h8 = import_react8.default.createElement;
-  var { useLayoutEffect, useRef: useRef2 } = import_react8.default;
-  var listLocale = {
-    en: {
-      listRequirement: "Requirement",
-      listTask: "Task",
-      listActions: "Actions",
-      listPriority: "Order",
-      listEffectiveProgress: "Done / active tasks",
-      listAttention: "Needs attention",
-      listReason: "Reason",
-      listDelivery: "Delivery summary",
-      listOpinion: "Decision notes",
-      listDocument: "Document",
-      listRevision: "Revision",
-      listReorder: "Change order",
-      listFinishReorder: "Done reordering",
-      listNoAlerts: "No alerts"
-    },
-    zh: {
-      listRequirement: "\u9700\u6C42",
-      listTask: "\u4EFB\u52A1",
-      listActions: "\u64CD\u4F5C",
-      listPriority: "\u987A\u4F4D",
-      listEffectiveProgress: "\u5DF2\u5B8C\u6210 / \u6709\u6548\u4EFB\u52A1",
-      listAttention: "\u9700\u8981\u5173\u6CE8",
-      listReason: "\u539F\u56E0",
-      listDelivery: "\u4EA4\u4ED8\u6458\u8981",
-      listOpinion: "\u51B3\u5B9A\u610F\u89C1",
-      listDocument: "\u6587\u6863\u540D\u79F0",
-      listRevision: "\u4FEE\u8BA2\u53F7",
-      listReorder: "\u8C03\u6574\u987A\u4F4D",
-      listFinishReorder: "\u7ED3\u675F\u6392\u5E8F",
-      listNoAlerts: "\u6682\u65E0\u5F02\u5E38"
-    }
-  };
-  function useListScroll(wb, page, waiting = false) {
-    const ref = useRef2(null);
-    const memory = wb.uiMemory && (wb.uiMemory.listScroll ??= {});
-    const key = wb.projectKey && JSON.stringify([wb.projectKey, page]);
-    const filter = JSON.stringify(wb.nav.filters[page] ?? {});
-    useLayoutEffect(() => {
-      const saved = key && memory?.[key];
-      if (ref.current && !waiting) ref.current.scrollTop = saved?.filter === filter ? saved.top : 0;
-    }, [key, filter, waiting, memory]);
-    return {
-      ref,
-      onScroll: key && memory && !waiting ? (event) => {
-        memory[key] = { filter, top: event.currentTarget.scrollTop };
-      } : void 0
-    };
-  }
-  function listTable(columns, rows, label, hasActions = true) {
-    return h8(
-      "table",
-      { className: "pw-list-table" + (hasActions ? " pw-list-table-actions" : ""), role: "table", "aria-label": label },
-      h8(
-        "thead",
-        { role: "rowgroup" },
-        h8("tr", { role: "row" }, columns.map((column, index) => h8("th", { key: index, scope: "col", role: "columnheader" }, column)))
-      ),
-      h8("tbody", { role: "rowgroup" }, rows.map(({ key, cells }) => h8(
-        "tr",
-        { key, role: "row" },
-        cells.map((cell, index) => h8(
-          "td",
-          { key: index, role: "cell" },
-          index > 0 && h8("span", { className: "pw-list-inline-label", "aria-hidden": true }, columns[index]),
-          cell
-        ))
-      )))
-    );
-  }
-  function listTitle(title, id, onClick) {
-    return onClick ? h8("button", { type: "button", id: "pw-list-item-" + id, className: "pw-list-title", onClick }, title) : h8("strong", { className: "pw-list-name" }, title);
-  }
-  function boardLocator(wb, req) {
-    return h8("button", { type: "button", className: "pw-button pw-quiet", onClick: () => wb.locateBoard(req) }, wb.t("locateBoard"));
-  }
-  function ListPage({ wb, page, title, items, columns, renderRow, emptyText, emptyAction, toolbar, waiting, filtersActive, onClear, hasActions }) {
-    const { t, setFilter } = wb;
-    const query = (wb.nav.filters[page] ?? {}).query ?? "";
-    const filtered = !!query.trim() || filtersActive;
-    const scroll = useListScroll(wb, page, waiting);
-    return h8(
-      "section",
-      { ...scroll, className: "pw-list pw-list-catalog", "aria-busy": waiting || void 0 },
-      h8("header", { className: "pw-list-header" }, h8("h2", null, title)),
-      h8(
-        "div",
-        { className: "pw-list-toolbar" },
-        h8("input", { type: "search", className: "pw-input pw-list-search", placeholder: t("search"), value: query, "aria-label": t("search"), onChange: (e) => setFilter(page, { query: e.target.value }) }),
-        toolbar,
-        filtered && items.length === 0 && !waiting && h8("button", {
-          type: "button",
-          className: "pw-button pw-quiet",
-          onClick: onClear || (() => setFilter(page, { query: "" }))
-        }, t("clearFilter"))
-      ),
-      items.length > 0 ? listTable(columns, items.map(renderRow), title, hasActions) : waiting ? h8("p", { className: "pw-note", role: "status" }, t("loading")) : emptyText && h8("div", { className: "pw-empty" }, filtered ? t("noResults") : emptyText, !filtered && emptyAction)
-    );
-  }
-  var dateText = (value) => String(value ?? "").replace("T", " ").slice(0, 16);
-  var firstLine = (value) => String(value ?? "").split(/\r?\n/).find((line) => line.trim())?.trim() ?? "";
-  var listCss = `
-.pw-list-catalog{container:list-catalog / inline-size;min-width:0;gap:14px}
-.pw-list-header{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
-.pw-list-header h2{margin:0;font-size:20px;font-weight:650;line-height:1.4}
-.pw-list-catalog .pw-list-search{width:220px;max-width:100%;box-sizing:border-box}
-.pw-list-table{width:100%;table-layout:auto;border-collapse:separate;border-spacing:0;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l3);border-radius:8px;text-align:start}
-.pw-list-table th,.pw-list-table td{padding:8px 12px;vertical-align:middle;text-align:start;overflow-wrap:anywhere;border-bottom:1px solid var(--dsw-alias-border-l3)}
-.pw-list-table th{color:var(--dsw-alias-label-secondary);font-size:12px;font-weight:500}
-.pw-list-table tbody tr:last-child td{border-bottom:0}
-.pw-list-table th:first-child{width:30%}
-.pw-list-table-actions th:last-child{width:1%;min-width:6em}
-.pw-list-table td:first-child{padding-block:1px}
-.pw-list-table td .pw-istatus,.pw-list-table td .pw-flag{display:inline-flex;width:max-content;max-width:100%;white-space:normal}
-.pw-list-table td .pw-istatus{pointer-events:none}
-.pw-list-title{display:block;width:100%;min-height:44px;padding:6px 0;border:0;background:none;color:var(--dsw-alias-label-primary);font:inherit;font-weight:600;text-align:start;cursor:pointer;overflow-wrap:anywhere}
-.pw-list-title:hover{text-decoration:underline;color:var(--dsw-alias-brand-primary)}
-.pw-list-title:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px;border-radius:4px}
-.pw-list-name{display:block;padding-block:8px;overflow-wrap:anywhere}
-.pw-list-value{font-variant-numeric:tabular-nums}
-.pw-list-muted,.pw-list-preview,.pw-list-parent{color:var(--dsw-alias-label-secondary)}
-.pw-list-parent{display:block;margin-block:2px 7px;font-size:12px}
-.pw-list-preview{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.pw-list-review-note{-webkit-line-clamp:1}
-.pw-list-alerts,.pw-list-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.pw-list-actions .pw-button{min-height:32px}
-.pw-list-actions .pw-orderbtn{min-height:32px;min-width:32px}
-.pw-list-actions .pw-orderbtn:focus-visible,.pw-list-menu>summary:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
-.pw-list-inline-label{display:none}
-.pw-list-risk{min-width:0}
-.pw-list-risk h3{margin:8px 0;font-size:15px}
-.pw-list-menu summary{min-height:32px;box-sizing:border-box;white-space:nowrap}
-.pw-list-menu .pw-list-actions{padding-top:6px}
-@container list-catalog (max-width:710px){
-  .pw-list-table,.pw-list-table tbody{display:block}
-  .pw-list-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
-  .pw-list-table tbody tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:4px 14px;padding:8px 12px}
-  .pw-list-table tbody tr+tr{border-top:1px solid var(--dsw-alias-border-l3)}
-  .pw-list-table td{display:block;min-width:0;padding:2px 0;border:0}
-  .pw-list-table td:first-child,.pw-list-table-actions td:last-child{grid-column:1 / -1}
-  .pw-list-table td:last-child:empty{display:none}
-  .pw-list-table-actions td:last-child>.pw-list-inline-label{display:none}
-  .pw-list-inline-label{display:block;color:var(--dsw-alias-label-secondary);font-size:12px;margin-bottom:2px}
-}
-@container list-catalog (max-width:400px){
-  .pw-list-table tbody tr{grid-template-columns:minmax(0,1fr)}
-}
-`;
-
-  // client-src/pages/requirements.js
   var h9 = import_react9.default.createElement;
   var openRequirement = (wb, req, page) => listTitle(req.title, req.id, () => wb.openDetail({ reqId: req.id, issueId: null }, page));
   var date = (value) => h9("span", { className: "pw-list-muted pw-list-value" }, dateText(value) || "\u2014");
@@ -2726,28 +2852,64 @@ ${detail.trim()}` : value);
     });
   }
   function ReviewPage({ wb }) {
-    const { t, requirements, navigate } = wb;
+    const { t, requirements, navigate, projectKey, root } = wb;
+    const [snapshot, setSnapshot] = import_react9.default.useState(null);
     const items = reviewItems(requirements, wb.nav.filters.review?.query);
+    const idKey = JSON.stringify(items.map((item) => item.id));
+    const rows = snapshot?.root === root && snapshot?.projectKey === projectKey && snapshot?.requirements === requirements && snapshot?.idKey === idKey ? snapshot.rows : null;
+    import_react9.default.useEffect(() => {
+      const ids = JSON.parse(idKey);
+      if (!root || ids.length === 0) return;
+      let active = true;
+      let loading = false;
+      const load = async () => {
+        if (loading || document.hidden) return;
+        loading = true;
+        const response = await rpc("requirement/review/statuses", { root, ids });
+        loading = false;
+        if (active) setSnapshot({
+          root,
+          projectKey,
+          requirements,
+          idKey,
+          rows: new Map((response?.ok ? response.data : []).map((row) => [row.id, row]))
+        });
+      };
+      load();
+      const timer = setInterval(load, 8e3);
+      document.addEventListener("visibilitychange", load);
+      return () => {
+        active = false;
+        clearInterval(timer);
+        document.removeEventListener("visibilitychange", load);
+      };
+    }, [root, projectKey, requirements, idKey]);
+    const labelFor = (row) => {
+      if (!rows) return "loading";
+      if (!row || row.unavailable || row.stage !== "reviewing" || row.reportsUnavailable || row.prdsUnavailable) return "listReviewUnavailable";
+      if (row.missingPreparation.length) return "listReviewMissing";
+      if (row.state === "running") return "listReviewRunning";
+      if (row.state === "failed" || row.state === "save_failed") return "listReviewRetry";
+      if (row.stale) return "listReviewStale";
+      return row.hasReview ? "listReviewDecision" : "listReviewPending";
+    };
     return h9(ListPage, {
       wb,
       page: "review",
       title: t("navReview"),
       items,
-      columns: [t("listRequirement"), t("submittedAt"), t("listOpinion"), t("listActions")],
+      columns: [t("listRequirement"), t("submittedAt"), t("listCurrentReview"), t("listActions")],
       emptyText: t("reviewEmpty"),
       emptyAction: h9("button", { type: "button", className: "pw-button", onClick: () => navigate("board") }, t("locateBoard")),
-      renderRow: (req) => {
-        const latest = reviewRecords(req.reviews).find((record) => record.kind === "review");
-        return {
-          key: req.id,
-          cells: [
-            openRequirement(wb, req, "review"),
-            date(req.submittedAt),
-            h9("span", { className: "pw-list-preview pw-list-review-note" }, firstLine(latest?.opinion) || t("noOpinion")),
-            boardLocator(wb, req)
-          ]
-        };
-      }
+      renderRow: (req) => ({
+        key: req.id,
+        cells: [
+          openRequirement(wb, req, "review"),
+          date(req.submittedAt),
+          h9("span", { className: "pw-list-muted" }, t(labelFor(rows?.get(req.id)))),
+          boardLocator(wb, req)
+        ]
+      })
     });
   }
   function ReadyPage({ wb }) {
@@ -2832,23 +2994,24 @@ ${detail.trim()}` : value);
           key: req.id,
           cells: [
             listTitle(req.title, req.id, () => openDetail2({ reqId: req.id, issueId: null }, "dev")),
-            activeCount > 0 ? h10(
-              "span",
-              { className: "pw-list-value", title: progress == null ? void 0 : Math.round(progress * 100) + "%" },
-              h10("strong", null, doneCount),
-              " / ",
-              activeCount
-            ) : h10("span", { className: "pw-list-muted" }, t("noProgress")),
+            h10(
+              import_react10.default.Fragment,
+              null,
+              activeCount > 0 ? h10(
+                "span",
+                { className: "pw-list-value", title: progress == null ? void 0 : Math.round(progress * 100) + "%" },
+                h10("strong", null, doneCount),
+                " / ",
+                activeCount
+              ) : h10("span", { className: "pw-list-muted" }, t("noProgress")),
+              cancelledCount > 0 && h10("span", { className: "pw-list-parent" }, t("cancelledCount").replace("{n}", String(cancelledCount)))
+            ),
             h10(
               "div",
               { className: "pw-list-alerts" },
               blockedCount > 0 && h10("span", { className: "pw-istatus st-blocked" }, t("devBlocked").replace("{n}", String(blockedCount))),
               inReviewCount > 0 && h10("span", { className: "pw-istatus st-in_review" }, t("devInReview").replace("{n}", String(inReviewCount))),
-              (cancelledCount > 0 || !blockedCount && !inReviewCount) && h10(
-                "span",
-                { className: "pw-list-muted" },
-                cancelledCount > 0 ? t("cancelledCount").replace("{n}", String(cancelledCount)) : t("listNoAlerts")
-              )
+              !blockedCount && !inReviewCount && h10("span", { className: "pw-list-muted" }, t("listNoAlerts"))
             ),
             boardLocator(wb, req)
           ]
@@ -2877,7 +3040,7 @@ ${detail.trim()}` : value);
       return !query || title.toLowerCase().includes(query.toLowerCase());
     });
     const total = blockedList.length + authList.length + failures.length + deliveryFailed.length + risks.length;
-    const item = (key, title, reqTitle2, reason, at, actions) => ({
+    const item = (key, title, reqTitle2, reason, at, actions, evidence) => ({
       key,
       cells: [
         h10(
@@ -2886,11 +3049,13 @@ ${detail.trim()}` : value);
           h10("strong", { className: "pw-list-name" }, title),
           reqTitle2 && reqTitle2 !== title && h10("span", { className: "pw-list-parent" }, reqTitle2)
         ),
-        h10("div", null, reason, at ? h10(
-          "time",
-          { className: "pw-list-parent", dateTime: new Date(at).toISOString() },
-          dateText(new Date(at).toISOString())
-        ) : null),
+        h10(
+          "div",
+          null,
+          h10("span", { className: "pw-list-preview" }, reason),
+          at > 0 && h10("time", { className: "pw-list-parent", dateTime: new Date(at).toISOString() }, dateText(new Date(at).toISOString())),
+          evidence && h10(Disclosure, { label: t("listRiskInTask") }, h10(ReadText, { value: evidence }))
+        ),
         actions
       ]
     });
@@ -2962,24 +3127,26 @@ ${detail.trim()}` : value);
         "b" + b.issueId,
         b.title,
         b.reqTitle,
-        b.reason || t("taskNoReason"),
+        b.reason ? shortBlocker(b.reason) || t("listBlockerInTask") : t("taskNoReason"),
         b.at,
         h10("button", { className: "pw-button", onClick: () => openDetail2({ reqId: b.reqId, issueId: b.issueId }, "dev") }, t("viewOriginalTask"))
       ))),
       blocked?.proposals == null ? section(t("riskSection"), h10("p", { className: "pw-note" }, t("loading"))) : risks.length > 0 && section(t("riskSection"), risks.map((p) => {
         const req = requirements.find((r) => r.id === p.target.reqId);
         const issue = req?.issues?.find((i) => i.id === p.target.issueId);
+        const reason = shortRecordedText(p.reason);
         return item(
           "r" + p.id,
           issue?.title ?? req.title,
           req.title,
-          p.reason,
+          reason || t("kind_" + p.kind),
           Date.parse(p.createdAt) || 0,
           h10(
             "button",
             { className: "pw-button", onClick: () => issue ? locateTask(req.id, issue.id) : locateBoard(req) },
             t(issue ? "syncLocateTask" : "syncLocateRequirement")
-          )
+          ),
+          reason ? null : p.reason
         );
       }))
     );
@@ -2988,7 +3155,7 @@ ${detail.trim()}` : value);
   // client-src/pages/board.js
   var import_react11 = __toESM(__require("react"), 1);
   var h11 = import_react11.default.createElement;
-  var { useEffect: useEffect4, useRef: useRef3, useState: useState5 } = import_react11.default;
+  var { useEffect: useEffect4, useRef: useRef5, useState: useState5 } = import_react11.default;
   var COL_ACCENT = { reviewing: "var(--dsw-alias-brand-primary)", ready: "var(--dsw-alias-label-secondary)", backlog: "var(--dsw-alias-label-tertiary)", in_progress: "var(--dsw-alias-brand-primary)", pending: "var(--dsw-alias-state-warn-primary)", completed: "var(--dsw-alias-state-success-primary)" };
   var flagOf = (d) => d.blocked ? "blocked" : d.needsClarification ? "clarify" : d.submittable ? "submittable" : d.stalled ? "stalled" : d.acceptable ? "acceptable" : null;
   function BoardPage({ wb }) {
@@ -2999,9 +3166,9 @@ ${detail.trim()}` : value);
     const cursorId = filters.cursor ?? null;
     const [dragOver, setDragOver] = useState5(null);
     const [dragging, setDragging] = useState5(null);
-    const dragSource = useRef3(null);
-    const skipCardClick = useRef3(false);
-    const newRef = useRef3(null);
+    const dragSource = useRef5(null);
+    const skipCardClick = useRef5(false);
+    const newRef = useRef5(null);
     const visible = requirements.filter((r) => !query || r.title.toLowerCase().includes(query.toLowerCase()));
     const setCursor = (id) => setFilter("board", { cursor: id });
     const columnAt = (event) => document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-requirement-column]")?.dataset.requirementColumn;
@@ -3106,13 +3273,13 @@ ${detail.trim()}` : value);
             onPointerCancel: clearDrag
           },
           h11("p", { className: "pw-cardtitle pw-preview" }, r.title),
-          h11(
+          (flag || pct !== null) && h11(
             "div",
             { className: "pw-cardmeta" },
-            pct !== null && h11("div", { className: "pw-bar", title: `${pct}%` }, h11("span", { style: { width: pct + "%" } })),
-            flag && h11("span", { className: "pw-flag " + flag }, t("flag_" + flag))
+            flag && h11("span", { className: "pw-flag " + flag }, t("flag_" + flag)),
+            pct !== null && h11("div", { className: "pw-bar", title: `${pct}%` }, h11("span", { style: { width: pct + "%" } }))
           ),
-          preview && h11("div", { className: "pw-next pw-preview" }, preview)
+          !flag && preview && h11("div", { className: "pw-next pw-preview" }, preview)
         ),
         r.pendingReopen && h11(
           "button",
@@ -3145,7 +3312,7 @@ ${detail.trim()}` : value);
           h11("span", { className: "pw-count" }, String(items.length)),
           state === "completed" && !collapsed && h11("button", { className: "pw-button", style: { marginLeft: "auto", minHeight: 22, padding: "0 6px", fontSize: 12 }, onClick: () => setFilter("board", { showCompleted: false }) }, t("collapse"))
         ),
-        collapsed ? h11("button", { className: "pw-button", onClick: () => setFilter("board", { showCompleted: true }) }, t("expand")) : h11("div", { className: "pw-cards" }, items.length ? items.map(card) : h11("div", { className: "pw-empty" }, t("empty")))
+        collapsed ? h11("button", { className: "pw-button", onClick: () => setFilter("board", { showCompleted: true }) }, t("expand")) : h11("div", { className: "pw-cards" }, items.map(card))
       );
     };
     return h11(
@@ -3180,6 +3347,15 @@ ${detail.trim()}` : value);
         const result = requirementResult(req);
         const d = req.derived ?? {};
         const returned = reviewRecords(req.reviews).some((record) => record.kind === "acceptance" && record.decision === "returned");
+        const tasks = (req.issues ?? []).filter((task) => task.status !== "cancelled");
+        const confirmed = tasks.filter((task) => task.status === "done");
+        const titles = confirmed.map((task) => shortRecordedText(task.title, 45)).filter(Boolean);
+        const taskNames = titles.length === confirmed.length && titles.length <= 3 ? shortRecordedText(titles.join(t("fieldSeparator"))) : "";
+        const needsChecking = tasks.filter((task) => {
+          const current = taskResult(task, req.deliveryStartedAt);
+          const verification = current.verification;
+          return current.limits || verification.failed > 0 || verification.incomplete > 0 || verification.unconfirmedChanges > 0;
+        }).length;
         return {
           key: req.id,
           cells: [
@@ -3189,14 +3365,19 @@ ${detail.trim()}` : value);
               listTitle(req.title, req.id, () => openDetail2({ reqId: req.id, issueId: null }, "pending")),
               dateText(req.updated) && h12("span", { className: "pw-list-parent pw-list-value" }, t("submittedAt"), " ", dateText(req.updated))
             ),
-            h12("span", { className: "pw-list-preview" }, firstLine(result.summary) || t("missingDeliverySummary")),
+            h12("span", { className: "pw-list-preview" }, result.summary ? shortRecordedText(result.summary) || taskNames || t("listDeliveryReady") : t("missingDeliverySummary")),
             h12(
               "div",
               { className: "pw-list-alerts" },
               !result.summary && result.previousSummary && h12("span", { className: "pw-list-muted" }, t("previousResult")),
+              h12("span", { className: "pw-list-muted pw-list-value" }, t("listDeliveryConfirmed").replace("{total}", String(tasks.length)).replace("{done}", String(confirmed.length))),
+              needsChecking > 0 && h12(
+                "span",
+                { className: "pw-istatus st-in_review" },
+                t("listDeliveryNeedsChecking").replace("{n}", String(needsChecking))
+              ),
               d.cancelledCount > 0 && h12("span", { className: "pw-list-muted" }, t("cancelledCount").replace("{n}", String(d.cancelledCount))),
-              returned && h12("span", { className: "pw-istatus st-blocked" }, t("wasReturned")),
-              h12("span", { className: "pw-list-muted" }, t("taskCount").replace("{total}", String((req.issues ?? []).length)).replace("{done}", String(d.doneCount ?? 0)))
+              returned && h12("span", { className: "pw-istatus st-blocked" }, t("wasReturned"))
             ),
             boardLocator(wb, req)
           ]
@@ -3235,7 +3416,7 @@ ${detail.trim()}` : value);
             listTitle(record.reqTitle, key, () => openDetail2({ record: { reqId: record.reqId, marker: record.marker, round: record.round } }, "records")),
             h12("span", { className: "pw-istatus " + (approved ? "st-done" : "st-blocked") }, t(approved ? "deliveryAccepted" : "deliveryReturned")),
             h12("span", { className: "pw-list-muted pw-list-value" }, dateText(record.at) || "\u2014"),
-            h12("span", { className: "pw-list-preview" }, firstLine(record.opinion || record.summary) || t("noOpinion"))
+            h12("span", { className: "pw-list-preview" }, firstLine(record.opinion) || "\u2014")
           ]
         };
       }
@@ -3282,8 +3463,26 @@ ${detail.trim()}` : value);
 
   // client-src/pages/resources.js
   var h13 = import_react13.default.createElement;
-  var { useCallback, useEffect: useEffect5, useRef: useRef4, useState: useState6 } = import_react13.default;
+  var { useCallback, useEffect: useEffect5, useRef: useRef6, useState: useState6 } = import_react13.default;
   var baseName = (p) => String(p ?? "").replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "";
+  var pagesLocale = {
+    en: {
+      wikiRebuildNotice: "Updating rebuilds the Wiki from the project. Git-ignored files are skipped. The previous Wiki is kept in a local backup.",
+      archSourcesCount: "Sources ({n})",
+      archViewFile: "View file",
+      syncDetails: "Review suggestion",
+      syncHistory: "Decision history",
+      syncScopeAction: "Revise scope"
+    },
+    zh: {
+      wikiRebuildNotice: "\u66F4\u65B0\u4F1A\u6839\u636E\u9879\u76EE\u91CD\u65B0\u751F\u6210 Wiki\u3002Git \u5FFD\u7565\u7684\u6587\u4EF6\u4E0D\u53C2\u4E0E\uFF0C\u539F\u7248 Wiki \u4FDD\u5B58\u5728\u9879\u76EE\u672C\u5730\u5907\u4EFD\u4E2D\u3002",
+      archSourcesCount: "\u6765\u6E90\u4F9D\u636E\uFF08{n}\uFF09",
+      archViewFile: "\u67E5\u770B\u6587\u4EF6",
+      syncDetails: "\u67E5\u770B\u5EFA\u8BAE",
+      syncHistory: "\u5904\u7406\u5386\u53F2",
+      syncScopeAction: "\u8C03\u6574\u8303\u56F4"
+    }
+  };
   function wikiLink(href, pagePath) {
     if (!pagePath || /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(href) || /%(?:2f|5c)/i.test(href) || href.includes("\\")) return null;
     try {
@@ -3489,11 +3688,12 @@ ${detail.trim()}` : value);
     const [err, setErr] = useState6("");
     const [query, setQuery] = useState6("");
     const [source, setSource] = useState6(null);
-    const pageSeq = useRef4(0);
-    const statusSeq = useRef4(0);
+    const [confirmUpdate, setConfirmUpdate] = useState6(false);
+    const pageSeq = useRef6(0);
+    const statusSeq = useRef6(0);
     const [gen, setGen] = useState6(() => uiMemory2.wikiGen[root] ?? null);
     const [genChecked, setGenChecked] = useState6(false);
-    const pollRef = useRef4(null);
+    const pollRef = useRef6(null);
     const setGenState = (g) => {
       uiMemory2.wikiGen[root] = g;
       setGen(g);
@@ -3654,6 +3854,7 @@ ${detail.trim()}` : value);
       h13("button", { className: "pw-button", onClick: loadStatus }, t("retryRead"))
     );
     const generate = async () => {
+      if (genChecked === false || gen?.busy) return;
       setGenState({ busy: true, starting: true, message: t("wikiGenerating") });
       try {
         const res = await fetch("/api/project-workbench/wiki-generate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ root, sessionId }) });
@@ -3688,7 +3889,11 @@ ${detail.trim()}` : value);
     const genBar = h13(
       "div",
       { className: "pw-banner", role: "status" },
-      h13("button", { className: "pw-button primary", onClick: generate, disabled: genChecked === false || gen?.busy }, status?.exists ? t("wikiUpdate") : t("wikiGenerate")),
+      h13("button", {
+        className: "pw-button primary",
+        onClick: () => status?.exists ? setConfirmUpdate(true) : generate(),
+        disabled: genChecked === false || gen?.busy
+      }, status?.exists ? t("wikiUpdate") : t("wikiGenerate")),
       gen?.busy && h13("button", { className: "pw-button", onClick: stopGen }, t("wikiStop")),
       !genError && genMessage && h13("span", { style: { marginLeft: 10 } }, genMessage)
     );
@@ -3713,7 +3918,6 @@ ${detail.trim()}` : value);
       { className: "pw-wiki-wrap" },
       genBar,
       genError,
-      h13("div", { className: "pw-note" }, t("wikiRebuildNotice")),
       readError,
       status?.viewExternalChanged ? h13("div", { className: "pw-note", role: "status" }, t(status.viewUnavailable ? "wikiNoSavedExternal" : "wikiExternalChangeView")) : (page ? page.viewIsSnapshot : status?.viewIsSnapshot) && h13("div", { className: "pw-note", role: "status" }, t("wikiShowingPrevious")),
       status?.viewUnprotected && h13("div", { className: "pw-note", role: "status" }, t("wikiPreviousUnavailable")),
@@ -3767,6 +3971,22 @@ ${detail.trim()}` : value);
           ) : h13("div", { className: "pw-empty" }, t("wikiPages"))
         )
       ),
+      confirmUpdate && h13(Modal, {
+        title: t("wikiUpdate"),
+        manageFocus: true,
+        onClose: () => setConfirmUpdate(false),
+        actions: [
+          h13("button", { className: "pw-button", "data-modal-initial-focus": true, onClick: () => setConfirmUpdate(false) }, t("cancel")),
+          h13("button", {
+            className: "pw-button primary",
+            disabled: gen?.busy,
+            onClick: () => {
+              setConfirmUpdate(false);
+              return generate();
+            }
+          }, t("wikiUpdate"))
+        ]
+      }, h13("p", null, t("wikiRebuildNotice"))),
       source && h13(
         Modal,
         {
@@ -3789,9 +4009,9 @@ ${detail.trim()}` : value);
     const [run, setRun] = useState6(null);
     const [readError, setReadError] = useState6(null);
     const [source, setSource] = useState6(null);
-    const sourceSeq = useRef4(0);
-    const timer = useRef4(null);
-    const mounted = useRef4(false);
+    const sourceSeq = useRef6(0);
+    const timer = useRef6(null);
+    const mounted = useRef6(false);
     const stopPoll = useCallback(() => {
       if (timer.current) clearInterval(timer.current);
       timer.current = null;
@@ -3893,6 +4113,12 @@ ${detail.trim()}` : value);
       sourceSeq.current++;
       setSource(null);
     };
+    const sources = arch?.sources ?? [];
+    const byFile = /* @__PURE__ */ new Map();
+    for (const ref of sources) {
+      if (!byFile.has(ref.path)) byFile.set(ref.path, []);
+      byFile.get(ref.path).push(ref);
+    }
     return h13(
       "div",
       { className: "pw-arch" },
@@ -3916,15 +4142,23 @@ ${detail.trim()}` : value);
         null,
         h13("iframe", { className: "pw-arch-frame", title: t("archTitle"), srcDoc: arch.html, sandbox: "allow-scripts allow-same-origin" }),
         h13(
-          "section",
-          { className: "pw-evidence", "aria-label": t("wikiEvidence") },
-          h13("span", { className: "pw-label" }, t("wikiEvidence")),
-          (arch.sources ?? []).length ? arch.sources.map((ref, index) => h13("button", {
-            key: index,
-            className: "pw-refchip pw-reflink",
-            title: t("sourceOpen"),
-            onClick: () => openSource(ref)
-          }, ref.label ? ref.label + " \xB7 " : "", ref.path, ref.from ? `#L${ref.from}${ref.to > ref.from ? `-L${ref.to}` : ""}` : "")) : h13("p", { className: "pw-note" }, t("wikiNoEvidence"))
+          Disclosure,
+          { label: t("archSourcesCount").replace("{n}", String(sources.length)) },
+          h13(
+            "div",
+            { className: "pw-arch-sources" },
+            sources.length ? [...byFile].map(([path, refs]) => h13(
+              "div",
+              { key: path, className: "pw-claim" },
+              h13("div", null, path),
+              h13("div", { className: "pw-proposal-evidence" }, refs.map((ref, index) => h13("button", {
+                key: index,
+                className: "pw-refchip pw-reflink",
+                "aria-label": [path, ref.label, ref.from && `L${ref.from}`].filter(Boolean).join(" \xB7 "),
+                onClick: () => openSource(ref)
+              }, [ref.label, ref.from ? `L${ref.from}${ref.to > ref.from ? `\u2013L${ref.to}` : ""}` : null].filter(Boolean).join(" \xB7 ") || t("archViewFile"))))
+            )) : h13("p", { className: "pw-note" }, t("wikiNoEvidence"))
+          )
         )
       ) : !readError && h13("div", { className: "pw-init" }, h13("h2", null, t("archTitle")), h13("p", { className: "pw-note" }, t(arch ? "archEmpty" : "loading"))),
       source && h13(
@@ -3988,7 +4222,7 @@ ${detail.trim()}` : value);
   // client-src/preparation.js
   var import_react14 = __toESM(__require("react"), 1);
   var h14 = import_react14.default.createElement;
-  var { useEffect: useEffect6, useRef: useRef5, useState: useState7 } = import_react14.default;
+  var { useEffect: useEffect6, useRef: useRef7, useState: useState7 } = import_react14.default;
   var preparationLocale = {
     zh: {
       prepTitle: "\u51C6\u5907\u5DE5\u4F5C",
@@ -4001,15 +4235,24 @@ ${detail.trim()}` : value);
       prepChoose: "\u9009\u62E9 PRD \u64B0\u5199\u4F9D\u636E",
       prepExistingPrd: "\u7F16\u8F91\u5DF2\u6709 PRD",
       prepUseDiscovery: "\u7528\u6DF1\u6316\u8BB0\u5F55\u8D77\u8349",
-      prepPreview: "\u9884\u89C8\u6700\u65B0\u8349\u7A3F",
-      prepNoDraft: "\u8BF7\u5728\u5F53\u524D Session \u548C AI \u7EE7\u7EED\u8BA8\u8BBA\uFF0C\u7B49 AI \u7ED9\u51FA\u5B8C\u6574\u8349\u7A3F\u540E\u518D\u9884\u89C8\u3002",
+      prepPickSource: "\u8BF7\u9009\u62E9\u4F9D\u636E",
+      prepResumePrd: "\u7EE7\u7EED\u5F53\u524D PRD \u4F1A\u8BDD",
+      prepSourceRequired: "\u5148\u4FDD\u5B58\u6DF1\u6316\u8BB0\u5F55\u6216\u5173\u8054\u5DF2\u6709 PRD\u3002",
+      prepPreview: "\u9884\u89C8\u65B0\u8349\u7A3F",
+      prepNoDraft: "\u6682\u65E0\u65B0\u8349\u7A3F",
+      prepReadSaved: "\u67E5\u770B\u5DF2\u4FDD\u5B58\u7248\u672C",
+      prepReadSavedRevision: "\u67E5\u770B\u5DF2\u4FDD\u5B58 v{n}",
+      prepCurrentPrd: "\u5F53\u524D PRD \xB7 v{n}",
+      prepSavedRevisionUnavailable: "\u4F1A\u8BDD\u4FDD\u5B58\u7684\u65E7\u7248\u6CA1\u6709\u5FEB\u7167\u3002\u4EE5\u4E0B\u4E3A PRD \u5F53\u524D\u7248\u672C\u3002",
+      prepEditDraft: "\u7F16\u8F91\u8349\u7A3F",
+      prepReadDraft: "\u67E5\u770B\u8349\u7A3F",
+      prepDraftText: "\u8349\u7A3F\u6B63\u6587",
       prepSave: "\u786E\u8BA4\u4FDD\u5B58",
-      prepSaved: "\u5DF2\u4FDD\u5B58\u5230\u9700\u6C42\u8D44\u6599",
       prepHistory: "\u5DF2\u786E\u8BA4\u7684\u539F\u578B",
       prepOutsidePool: "\u56DE\u5230\u9700\u6C42\u6C60\u540E\u53EF\u4EE5\u4FDD\u5B58\u65B0\u7684\u7248\u672C\u3002",
       prepVersion: "\u7B2C {n} \u7248",
       prepFrame: "\u6D41\u7A0B\u56FE\u4E0E\u539F\u578B\u9884\u89C8",
-      prepPrdFirst: "\u5148\u5173\u8054\u5DF2\u4FDD\u5B58\u7684 PRD\u3002"
+      prepPrdFirst: "\u5148\u4FDD\u5B58\u5E76\u5173\u8054\u4E00\u4EFD\u6709\u6B63\u6587\u7684 PRD\u3002"
     },
     en: {
       prepTitle: "Preparation",
@@ -4022,15 +4265,24 @@ ${detail.trim()}` : value);
       prepChoose: "Choose a source for the PRD",
       prepExistingPrd: "Edit an existing PRD",
       prepUseDiscovery: "Draft from discovery",
-      prepPreview: "Preview latest draft",
-      prepNoDraft: "Continue the conversation until the AI provides a complete draft.",
+      prepPickSource: "Choose a source",
+      prepResumePrd: "Continue the current PRD session",
+      prepSourceRequired: "Save a discovery record or link an existing PRD first.",
+      prepPreview: "Preview new draft",
+      prepNoDraft: "No new draft",
+      prepReadSaved: "View saved version",
+      prepReadSavedRevision: "View saved v{n}",
+      prepCurrentPrd: "Current PRD \xB7 v{n}",
+      prepSavedRevisionUnavailable: "The session\u2019s saved revision has no snapshot. The current PRD is shown below.",
+      prepEditDraft: "Edit draft",
+      prepReadDraft: "View draft",
+      prepDraftText: "Draft content",
       prepSave: "Confirm and save",
-      prepSaved: "Saved to this requirement",
       prepHistory: "Confirmed prototypes",
       prepOutsidePool: "Return the requirement to the pool to save a new version.",
       prepVersion: "Version {n}",
       prepFrame: "Flow and prototype preview",
-      prepPrdFirst: "Link a saved PRD first."
+      prepPrdFirst: "Save and link a PRD with content first."
     }
   };
   var labels = { discovery: "prepDiscovery", prd: "prepPrd", prototype: "prepPrototype" };
@@ -4042,27 +4294,33 @@ ${detail.trim()}` : value);
       style: { display: "block", width: "100%", minHeight: "60vh", border: 0, background: "#fff" }
     });
   }
-  function PreparationActions({ req, root, t, busy, open, hasDiscoverySession }) {
+  function PreparationActions({ req, root, t, busy, open, hasDiscoverySession, PreparationModal, focusRequest, onFocusHandled }) {
     const [result, setResult] = useState7(null);
     const [record, setRecord] = useState7(null);
     const [failure, setFailure] = useState7(null);
-    const [selection, setSelection] = useState7("");
+    const [selection, setSelection] = useState7(null);
     const [loadingVersion, setLoadingVersion] = useState7(false);
-    const openRecordRequest = useRef5(0);
-    const loadOptions = () => rpc("preparation/options", { root, reqId: req.id });
+    const prdButton = useRef7(null);
+    const section = useRef7(null);
+    const openRecordRequest = useRef7(0);
     useEffect6(() => {
       let current = true;
-      const load = () => loadOptions().then((response) => {
-        if (current) setResult(response);
-      });
+      let latest = 0;
+      const load = async () => {
+        const request = ++latest;
+        const response = await rpc("preparation/options", { root, reqId: req.id });
+        if (current && request === latest) setResult(response);
+      };
+      if (req.status !== "backlog") setSelection(null);
       void load();
       const changed = (event) => {
-        if (event.detail?.root === root) void load();
+        if (event.detail?.root === root && (!event.detail.reqId || event.detail.reqId === req.id)) void load();
       };
-      window.addEventListener("pw-prd-changed", changed);
+      const events = ["pw-prd-changed", "pw-preparation-changed"];
+      for (const event of events) window.addEventListener(event, changed);
       return () => {
         current = false;
-        window.removeEventListener("pw-prd-changed", changed);
+        for (const event of events) window.removeEventListener(event, changed);
         openRecordRequest.current++;
       };
     }, [root, req.id, req.status]);
@@ -4079,49 +4337,108 @@ ${detail.trim()}` : value);
       else setFailure(response);
     };
     const started = (kind) => !!req.preparationTasks?.[kind] || kind === "discovery" && hasDiscoverySession;
-    const startPrd = () => {
-      if (selection.startsWith("prd-")) open("prd", { prdId: selection });
-      else if (selection) open("prd", { discoveryVersion: Number(selection) });
-      else open("prd");
+    const resumePrd = started("prd");
+    const canWritePrd = !!(options?.discoveryVersions.length || options?.prds.length);
+    const canPrototype = !!options?.hasReviewablePrd;
+    const choices = [
+      ...resumePrd ? [{ value: "continue", label: t("prepResumePrd") }] : [],
+      ...(options?.discoveryVersions ?? []).map((version) => ({
+        value: String(version),
+        input: { discoveryVersion: version },
+        label: `${t("prepUseDiscovery")} \xB7 ${t("prepVersion").replace("{n}", version)}`
+      })),
+      ...(options?.prds ?? []).map(({ id, title }) => ({
+        value: id,
+        input: { prdId: id },
+        label: `${t("prepExistingPrd")} \xB7 ${title}`
+      }))
+    ];
+    const selected = choices.find((choice) => choice.value === selection);
+    const closePicker = () => {
+      setSelection(null);
+      requestAnimationFrame(() => prdButton.current?.focus({ preventScroll: true }));
     };
+    const choosePrd = () => setSelection(resumePrd || choices.length === 1 ? choices[0].value : "");
+    const startPrd = () => {
+      if (busy || !canWritePrd || !selected) return;
+      closePicker();
+      open("prd", selected.input);
+    };
+    useEffect6(() => {
+      if (!focusRequest || !active || busy || !result) return;
+      const inferred = !options?.discoveryVersions.length ? "discovery" : !canPrototype ? "prd" : !options.prototypes.length ? "prototype" : "discovery";
+      const kind = focusRequest.kind || inferred;
+      const target = options ? section.current?.querySelector(`button[data-kind="${kind}"]:enabled`) ?? section.current?.querySelector("button[data-kind]:enabled") ?? section.current : section.current;
+      if (!target) return;
+      const frame = requestAnimationFrame(() => {
+        target.focus({ preventScroll: true });
+        target.scrollIntoView({ block: "nearest" });
+        onFocusHandled?.(focusRequest);
+      });
+      return () => cancelAnimationFrame(frame);
+    }, [focusRequest, onFocusHandled, active, busy, result, options, canPrototype]);
     if (!active && !options?.prototypes.length && result?.ok !== false) return null;
+    const missing = { prd: !canWritePrd && "prepSourceRequired", prototype: !canPrototype && "prepPrdFirst" };
     return h14(
       "section",
-      { className: "pw-reading-block pw-reading-divider", "aria-label": t("prepTitle") },
+      { ref: section, tabIndex: -1, className: "pw-reading-block pw-reading-divider pw-preparation", "aria-label": t("prepTitle") },
       h14("h3", { className: "pw-reading-label" }, t("prepTitle")),
       active && h14(
-        import_react14.default.Fragment,
-        null,
-        h14(
-          "div",
-          { className: "pw-actions" },
-          ...Object.keys(labels).map((kind) => h14("button", {
-            key: kind,
-            type: "button",
-            className: "pw-button",
-            disabled: busy || kind === "prototype" && !!options && !options.prds.length,
-            onClick: kind === "prd" ? startPrd : () => open(kind)
-          }, t(started(kind) ? "prepContinue" : "prepStart"), " \xB7 ", t(labels[kind])))
-        ),
-        !!(options?.prds.length || options?.discoveryVersions.length) && h14(
-          "label",
-          { className: "pw-field" },
-          h14("span", null, t("prepChoose")),
-          h14(
-            "select",
-            { value: selection, disabled: busy, onChange: (event) => setSelection(event.target.value) },
-            h14("option", { value: "" }, t(started("prd") ? "prepContinue" : "prepStart")),
-            options.discoveryVersions.map((version) => h14(
-              "option",
-              { key: version, value: version },
-              t("prepUseDiscovery"),
-              " \xB7 ",
-              t("prepVersion").replace("{n}", version)
-            )),
-            options.prds.map((prd) => h14("option", { key: prd.id, value: prd.id }, t("prepExistingPrd"), " \xB7 ", prd.title))
+        "div",
+        { className: "pw-actions pw-preparation-actions" },
+        Object.keys(labels).map((kind) => {
+          const reason = missing[kind];
+          const reasonId = options && reason ? `pw-preparation-${req.id}-${kind}-hint` : void 0;
+          return h14(
+            "div",
+            { key: kind, className: "pw-preparation-action" },
+            h14("button", {
+              type: "button",
+              className: "pw-button",
+              disabled: busy || !!reason,
+              "data-kind": kind,
+              ref: kind === "prd" ? prdButton : void 0,
+              "aria-describedby": reasonId,
+              "aria-haspopup": kind === "prd" ? "dialog" : void 0,
+              onClick: kind === "prd" ? choosePrd : () => open(kind)
+            }, t(started(kind) ? "prepContinue" : "prepStart"), " \xB7 ", t(labels[kind])),
+            reasonId && h14("span", { id: reasonId, className: "pw-note" }, t(reason))
+          );
+        })
+      ),
+      active && !result && h14("p", { className: "pw-preparation-status", role: "status" }, t("loading")),
+      active && selection !== null && h14(
+        PreparationModal,
+        {
+          open: true,
+          title: t("prepChoose"),
+          onClose: closePicker,
+          closeLabel: t("close"),
+          footer: h14(
+            import_react14.default.Fragment,
+            null,
+            h14("button", { type: "button", className: "pw-button", onClick: closePicker }, t("cancel")),
+            h14("button", {
+              type: "button",
+              className: "pw-button primary",
+              onClick: startPrd,
+              disabled: busy || !canWritePrd || !selected
+            }, t("pwbOpenPreparation"))
           )
-        ),
-        options && !options.prds.length && h14("p", { className: "pw-note" }, t("prepPrdFirst"))
+        },
+        h14(
+          "select",
+          {
+            className: "pw-select pw-preparation-select",
+            value: selected?.value ?? "",
+            autoFocus: true,
+            "aria-label": t("prepChoose"),
+            disabled: busy || !canWritePrd,
+            onChange: (event) => setSelection(event.target.value)
+          },
+          h14("option", { value: "", disabled: true, hidden: true }, t("prepPickSource")),
+          choices.map((choice) => h14("option", { key: choice.value, value: choice.value }, choice.label))
+        )
       ),
       !!options?.prototypes.length && h14(
         "div",
@@ -4148,17 +4465,21 @@ ${detail.trim()}` : value);
       )
     );
   }
-  function PreparationSession({ initial, root, sessionId, sessionBusy, t, openRequirement: openRequirement2 }) {
+  function PreparationSession({ initial, root, sessionId, sessionBusy, t, openRequirement: openRequirement2, DiscoveryModal }) {
     const [draft, setDraft] = useState7(null);
+    const [record, setRecord] = useState7(null);
+    const [editing, setEditing] = useState7(false);
     const [failure, setFailure] = useState7(null);
     const [saved, setSaved] = useState7(initial.saved);
     const [busy, setBusy] = useState7(false);
     const [empty, setEmpty] = useState7(false);
-    const request = useRef5(false);
+    const edits = useRef7(null);
+    const request = useRef7(false);
     const { requirement: req, kind } = initial;
     const inPool = req.status === "backlog";
-    const run = async (save) => {
+    const run = async (mode) => {
       if (request.current) return;
+      const save = mode === "save";
       request.current = true;
       setBusy(true);
       setFailure(null);
@@ -4166,25 +4487,42 @@ ${detail.trim()}` : value);
         const response = await rpc(save ? "preparation/save" : "preparation/session", {
           root,
           sessionId,
-          ...save ? { draftId: draft.id, markdown: draft.markdown } : { preview: true }
+          ...save ? { draftId: draft.id, markdown: draft.markdown } : mode === "saved" ? { readSaved: true } : { preview: true }
         });
         if (!response.ok) {
           setFailure(response);
           return;
         }
         if (save) {
+          edits.current = null;
           setSaved(response.data);
           setDraft(null);
           if (kind === "prd") window.dispatchEvent(new CustomEvent("pw-prd-changed", { detail: { root } }));
+          else window.dispatchEvent(new CustomEvent("pw-preparation-changed", { detail: { root, reqId: req.id } }));
+        } else if (mode === "saved") {
+          setSaved(response.data.preparation.saved);
+          setRecord(response.data.record);
         } else {
-          setDraft(response.data.draft ?? null);
-          setEmpty(!response.data.draft);
+          const next = response.data.draft ?? null;
+          if (edits.current?.id !== next?.id) edits.current = null;
+          setEditing(false);
+          setDraft(edits.current ?? next);
+          setEmpty(!next);
         }
       } finally {
         request.current = false;
         setBusy(false);
       }
     };
+    const version = saved?.revision ?? saved?.version;
+    const close = () => {
+      if (!busy) {
+        setDraft(null);
+        setRecord(null);
+        setFailure(null);
+      }
+    };
+    const title = t(labels[kind]) + (record ? " \xB7 " + (record.newer ? t("prepCurrentPrd").replace("{n}", record.revision) : t("prepVersion").replace("{n}", version)) : "");
     return h14(
       "section",
       { className: "pw-discovery-pane", "aria-label": t(labels[kind]) },
@@ -4197,49 +4535,66 @@ ${detail.trim()}` : value);
       h14(
         "div",
         { className: "pw-actions" },
-        h14("button", { type: "button", className: "pw-button primary", disabled: busy || sessionBusy, onClick: () => run(false) }, t("prepPreview"))
+        h14("button", {
+          type: "button",
+          className: "pw-button primary",
+          "aria-haspopup": "dialog",
+          disabled: busy || sessionBusy,
+          onClick: () => run("preview")
+        }, t("prepPreview")),
+        saved && h14("button", {
+          type: "button",
+          className: "pw-button",
+          "aria-haspopup": "dialog",
+          disabled: busy,
+          onClick: () => run("saved")
+        }, kind === "prd" ? t("prepReadSavedRevision").replace("{n}", version) : t("prepReadSaved") + " \xB7 " + t("prepVersion").replace("{n}", version))
       ),
-      empty && !draft && h14("p", { role: "status" }, t("prepNoDraft")),
-      saved && h14("p", { role: "status" }, t("prepSaved"), " \xB7 ", t("prepVersion").replace("{n}", saved.revision ?? saved.version)),
+      empty && !draft && h14("p", { role: "status", className: "pw-note" }, t("prepNoDraft")),
       !inPool && h14("p", { className: "pw-note" }, t("prepOutsidePool")),
-      !draft && h14(ErrorDetails, { error: failure, t }),
-      draft && h14(
-        Modal,
+      !draft && !record && h14(ErrorDetails, { error: failure, t }),
+      (draft || record) && h14(
+        DiscoveryModal,
         {
-          wide: true,
-          title: t(labels[kind]),
-          onClose: () => {
-            if (!busy) setDraft(null);
-          },
-          actions: h14(
+          open: true,
+          title,
+          description: req.title,
+          onClose: close,
+          closeLabel: t("close"),
+          className: kind === "prototype" ? "pw-prototype-dialog" : "pw-discovery-dialog",
+          contentClassName: "pw-discovery-dialog-content",
+          footer: h14(
             import_react14.default.Fragment,
             null,
-            h14("button", { type: "button", className: "pw-button", disabled: busy, onClick: () => setDraft(null) }, t("close")),
-            h14("button", {
+            draft && kind === "prd" && inPool && h14("button", {
+              type: "button",
+              className: "pw-button",
+              disabled: busy,
+              onClick: () => setEditing((value) => !value)
+            }, t(editing ? "prepReadDraft" : "prepEditDraft")),
+            h14("button", { type: "button", className: "pw-button", disabled: busy, onClick: close }, t("close")),
+            draft && h14("button", {
               type: "button",
               className: "pw-button primary",
               disabled: busy || sessionBusy || !inPool || kind === "prd" && !draft.markdown.trim(),
-              onClick: () => run(true)
+              onClick: () => run("save")
             }, t("prepSave"))
           )
         },
-        kind === "prd" ? h14(
-          import_react14.default.Fragment,
-          null,
-          h14(ReadText, { value: draft.markdown }),
-          h14(
-            "label",
-            { className: "pw-field" },
-            h14("span", null, t("discoveryPreview")),
-            h14("textarea", {
-              className: "pw-textarea",
-              rows: 10,
-              value: draft.markdown,
-              disabled: busy || !inPool,
-              onChange: (event) => setDraft({ ...draft, markdown: event.target.value })
-            })
-          )
-        ) : h14(PrototypeFrame, { html: draft.html, t }),
+        record?.newer && h14("p", { className: "pw-note" }, t("prepSavedRevisionUnavailable")),
+        kind === "prototype" ? h14(PrototypeFrame, { html: (record ?? draft).html, t }) : draft && editing ? h14("textarea", {
+          className: "pw-textarea",
+          rows: 18,
+          "aria-label": t("prepDraftText"),
+          value: draft.markdown,
+          disabled: busy,
+          autoFocus: true,
+          onChange: (event) => {
+            const next = { ...draft, markdown: event.target.value };
+            edits.current = next;
+            setDraft(next);
+          }
+        }) : h14("div", { className: "pw-wiki-content" }, renderMarkdown((record ?? draft).markdown, t)),
         h14(ErrorDetails, { error: failure, t })
       )
     );
@@ -4247,7 +4602,7 @@ ${detail.trim()}` : value);
 
   // client-src/discovery.js
   var h15 = import_react15.default.createElement;
-  var { useEffect: useEffect7, useId, useMemo, useRef: useRef6, useState: useState8 } = import_react15.default;
+  var { useEffect: useEffect7, useId, useMemo, useRef: useRef8, useState: useState8 } = import_react15.default;
   var discoveryLocale = {
     zh: {
       discoveryStart: "\u5F00\u59CB\u6DF1\u6316",
@@ -4266,6 +4621,8 @@ ${detail.trim()}` : value);
       discoveryNoQuestions: "Grill Me \u7684\u63D0\u95EE\u4F1A\u663E\u793A\u5728\u8FD9\u91CC\u3002",
       discoveryAnswered: "\u5DF2\u56DE\u590D",
       discoveryRound: "\u7B2C{n}\u8F6E",
+      discoveryAnsweredCount: "\u5DF2\u56DE\u590D {n} \u9898",
+      discoveryWaitingCount: "\u8FD8\u6709 {n} \u9898\u5F85\u56DE\u590D",
       discoveryWait: "\u8BF7\u5728\u4E3B\u4F1A\u8BDD\u5B8C\u6210\u5F53\u524D\u56DE\u590D\u6216\u5F85\u529E\u64CD\u4F5C\u540E\u518D\u6574\u7406\u3002",
       discoverySummaryTitle: "\u6574\u7406\u9700\u6C42",
       discoveryWaitForQuestion: "\u8BF7\u7B49 Grill Me \u5728\u4E3B\u4F1A\u8BDD\u5B8C\u6210\u9996\u6B21\u63D0\u95EE\u3002",
@@ -4303,6 +4660,8 @@ ${detail.trim()}` : value);
       discoveryNoQuestions: "Questions from Grill Me will appear here.",
       discoveryAnswered: "Answered",
       discoveryRound: "Round {n}",
+      discoveryAnsweredCount: "{n} answered",
+      discoveryWaitingCount: "{n} more to answer",
       discoveryWait: "Wait for the reply or handle the pending action in the conversation.",
       discoverySummaryTitle: "Summarize requirement",
       discoveryWaitForQuestion: "Wait for Grill Me to finish asking its first questions in the conversation.",
@@ -4377,7 +4736,7 @@ ${detail.trim()}` : value);
       )
     )));
   }
-  function DiscoverySession({ root, sessionId, sessionStatus, visible, t, uiMemory: uiMemory2, openRequirement: openRequirement2, renderTask, DiscoveryModal: DiscoveryModal2 }) {
+  function DiscoverySession({ root, sessionId, sessionStatus, visible, t, uiMemory: uiMemory2, openRequirement: openRequirement2, renderTask, DiscoveryModal }) {
     const [result, setResult] = useState8(null);
     const sessionBusy = sessionStatus?.running === true || !!sessionStatus?.pendingInteraction;
     useEffect7(() => {
@@ -4400,7 +4759,7 @@ ${detail.trim()}` : value);
     if (!result) return visible && h15("p", { role: "status", className: "pw-note" }, t("loading"));
     if (!result.ok) return h15(ErrorDetails, { error: result, t });
     const { requirement: req, questions, preparation } = result.data;
-    if (preparation) return h15(PreparationSession, { key: sessionId, initial: preparation, root, sessionId, sessionBusy, t, openRequirement: openRequirement2 });
+    if (preparation) return h15(PreparationSession, { key: sessionId, initial: preparation, root, sessionId, sessionBusy, t, openRequirement: openRequirement2, DiscoveryModal });
     return req ? h15(DiscoverySummary, {
       req,
       root,
@@ -4410,14 +4769,14 @@ ${detail.trim()}` : value);
       uiMemory: uiMemory2,
       openRequirement: openRequirement2,
       questions,
-      DiscoveryModal: DiscoveryModal2
+      DiscoveryModal
     }) : renderTask();
   }
   function QuestionRow({ row, showRound, t }) {
     const { number, round, question, answered } = row;
     const { stem, choices } = useMemo(() => discoveryQuestionText(question), [question]);
     const id = useId();
-    const text = useRef6(null);
+    const text = useRef8(null);
     const [expanded, setExpanded] = useState8(false);
     const [clipped, setClipped] = useState8(false);
     const canExpand = choices.length > 0 || clipped || expanded;
@@ -4476,7 +4835,7 @@ ${detail.trim()}` : value);
       )
     );
   }
-  function DiscoverySummary({ req, root, sessionId, sessionBusy, questions, t, uiMemory: uiMemory2, openRequirement: openRequirement2, DiscoveryModal: DiscoveryModal2 }) {
+  function DiscoverySummary({ req, root, sessionId, sessionBusy, questions, t, uiMemory: uiMemory2, openRequirement: openRequirement2, DiscoveryModal }) {
     const drafts = uiMemory2.discoveryDrafts ??= {};
     const key = JSON.stringify([root, sessionId, req.id]);
     const [preview, setPreview] = useState8(() => drafts[key]);
@@ -4484,8 +4843,8 @@ ${detail.trim()}` : value);
     const [failure, setFailure] = useState8(null);
     const [busy, setBusy] = useState8("");
     const [notice, setNotice] = useState8("");
-    const live = useRef6(false);
-    const action = useRef6(false);
+    const live = useRef8(false);
+    const action = useRef8(false);
     useEffect7(() => {
       live.current = true;
       return () => {
@@ -4523,7 +4882,10 @@ ${detail.trim()}` : value);
       setFailure(null);
       const res = await rpc("discovery/save", { root, reqId: req.id, sessionId, previewId: preview.previewId, markdown: preview.markdown });
       action.current = false;
-      if (res.ok) remember(null);
+      if (res.ok) {
+        remember(null);
+        window.dispatchEvent(new CustomEvent("pw-preparation-changed", { detail: { root, reqId: req.id } }));
+      }
       if (!live.current) return;
       if (res.ok) {
         setPreviewOpen(false);
@@ -4540,6 +4902,9 @@ ${detail.trim()}` : value);
     const waiting = inPool && !preview && sessionBusy;
     const counts = /* @__PURE__ */ new Map();
     for (const { number } of questions) counts.set(number, (counts.get(number) ?? 0) + 1);
+    const [current, ...pending] = questions.filter((row) => !row.answered);
+    const answered = questions.filter((row) => row.answered);
+    const questionRow = (row) => h15(QuestionRow, { key: row.id, row, showRound: counts.get(row.number) > 1, t });
     return h15(
       "section",
       { className: "pw-discovery-pane", "aria-label": t("discoveryRecords") },
@@ -4550,10 +4915,10 @@ ${detail.trim()}` : value);
         h15("button", { type: "button", className: "pw-button pw-quiet", onClick: () => openRequirement2(req.id, req.status) }, t("discoveryReturn"))
       ),
       h15(
-        "div",
-        { className: "pw-discovery-qa", role: "region", "aria-label": t("discoveryQuestions"), tabIndex: 0 },
-        h15("h4", null, t("discoveryQuestions")),
-        questions.length ? questions.map((row) => h15(QuestionRow, { key: row.id, row, showRound: counts.get(row.number) > 1, t })) : h15("p", { className: "pw-note" }, t("discoveryNoQuestions"))
+        "section",
+        { className: "pw-discovery-current", "aria-label": t("discoveryQuestions") },
+        current && questionRow(current),
+        !questions.length && h15("p", { className: "pw-note" }, t("discoveryNoQuestions"))
       ),
       h15(
         "footer",
@@ -4570,8 +4935,14 @@ ${detail.trim()}` : value);
         !previewOpen && h15(ErrorDetails, { error: failure, t }),
         notice && h15("p", { role: "status", className: "pw-note" }, notice)
       ),
+      (pending.length > 0 || answered.length > 0) && h15(
+        "div",
+        { className: "pw-discovery-history" },
+        pending.length > 0 && h15(Disclosure, { label: t("discoveryWaitingCount").replace("{n}", pending.length) }, pending.map(questionRow)),
+        answered.length > 0 && h15(Disclosure, { label: t("discoveryAnsweredCount").replace("{n}", answered.length) }, answered.map(questionRow))
+      ),
       previewOpen && preview && h15(
-        DiscoveryModal2,
+        DiscoveryModal,
         {
           open: true,
           title: t("discoverySummaryTitle"),
@@ -4614,7 +4985,7 @@ ${detail.trim()}` : value);
 
   // client-src/pages/prds.js
   var h16 = import_react16.default.createElement;
-  var { useEffect: useEffect8, useRef: useRef7, useState: useState9 } = import_react16.default;
+  var { useEffect: useEffect8, useRef: useRef9, useState: useState9 } = import_react16.default;
   var prdDateFormat = new Intl.DateTimeFormat(void 0, {
     year: "numeric",
     month: "2-digit",
@@ -5013,8 +5384,8 @@ ${detail.trim()}` : value);
     readingMemory
   }) {
     const { data: prd, error, initial, reload } = usePrdRead(root, { id });
-    const reader = useRef7(null);
-    const scroller = useRef7(null);
+    const reader = useRef9(null);
+    const scroller = useRef9(null);
     const readingKey = JSON.stringify([root, id, inDrawer ? "drawer" : "full"]);
     import_react16.default.useLayoutEffect(() => {
       if (!initial && scroller.current) scroller.current.scrollTop = readingMemory?.[readingKey] ?? 0;
@@ -5085,14 +5456,20 @@ ${detail.trim()}` : value);
             "article",
             { className: "pw-md pw-prd-article" },
             h16("h1", { className: "pw-md-h" }, prd.title),
-            h16("p", { className: "pw-count" }, "v" + prd.revision, " \xB7 ", t("updated"), " ", prdDate(prd.updated)),
-            prd.reqIds.length > 0 && h16("p", { className: "pw-note" }, t("prdRelatedRequirements"), " \xB7 ", prd.reqIds.map((reqId) => reqTitle(requirements, reqId)).join(t("fieldSeparator"))),
+            h16(
+              "div",
+              { className: "pw-prd-metadata" },
+              h16("span", { className: "pw-count" }, "v" + prd.revision, " \xB7 ", t("updated"), " ", prdDate(prd.updated)),
+              prd.reqIds.length > 0 && h16("span", { className: "pw-count" }, t("prdRelatedRequirements"), " \xB7 ", prd.reqIds.map((reqId) => reqTitle(requirements, reqId)).join(t("fieldSeparator")))
+            ),
             prd.discoverySources?.length > 0 && h16(
-              "p",
-              { className: "pw-note" },
-              t("discoveryPrdSource"),
-              " \xB7 ",
-              discoveryReference(t, prd.discoverySources.map(({ reqId }) => reqTitle(requirements, reqId)), prd.discoverySources)
+              Disclosure,
+              { label: t("discoveryPrdSource") },
+              h16(
+                "p",
+                { className: "pw-note" },
+                discoveryReference(t, prd.discoverySources.map(({ reqId }) => reqTitle(requirements, reqId)), prd.discoverySources)
+              )
             ),
             content
           )
@@ -5133,6 +5510,7 @@ ${detail.trim()}` : value);
 .pw-prd-article{margin:0 auto;min-width:0;width:100%;box-sizing:border-box;overflow-wrap:anywhere}
 .pw-prd-article h1:first-child{margin-top:0}
 .pw-prd-article [data-prd-heading]{scroll-margin-top:14px}
+.pw-prd-metadata{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 14px;margin-block-end:10px}
 @container prd-reader (max-width:650px){
   .pw-prd-page-outline{grid-template-columns:minmax(0,1fr)}
   .pw-prd-outline{position:static;max-block-size:110px;border-inline-end:0;padding:0 0 8px;border-block-end:1px solid var(--dsw-alias-border-l3)}
@@ -5162,6 +5540,7 @@ ${detail.trim()}` : value);
       prdTitleField: "\u6587\u6863\u540D\u79F0",
       prdBodyField: "\u6B63\u6587\uFF08Markdown\uFF09",
       prdAddImage: "\u63D2\u5165\u672C\u5730\u56FE\u7247",
+      prdChooseImage: "\u9009\u62E9\u56FE\u7247",
       prdImageHelp: "\u652F\u6301 PNG\u3001JPEG\u3001WebP\u3001GIF\uFF0C\u6BCF\u5F20\u6700\u591A 2 MB\u3002",
       prdImageInvalid: "\u8BF7\u9009\u62E9\u652F\u6301\u7684\u56FE\u7247\u683C\u5F0F\uFF0C\u4E14\u5355\u5F20\u4E0D\u8D85\u8FC7 2 MB\u3002",
       prdImageReadError: "\u65E0\u6CD5\u8BFB\u53D6\u8FD9\u5F20\u56FE\u7247\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9\u3002",
@@ -5180,6 +5559,7 @@ ${detail.trim()}` : value);
       prdTitleField: "Document name",
       prdBodyField: "Body (Markdown)",
       prdAddImage: "Insert a local image",
+      prdChooseImage: "Choose image",
       prdImageHelp: "PNG, JPEG, WebP and GIF, up to 2 MB per image.",
       prdImageInvalid: "Select a supported image of 2 MB or less.",
       prdImageReadError: "Unable to read this image. Choose it again.",
@@ -5302,6 +5682,8 @@ ${detail.trim()}` : value);
         onClose: close,
         title: t(id ? "prdEditTitle" : "prdCreateTitle"),
         wide: true,
+        className: "pw-prd-editor",
+        manageFocus: true,
         actions: [
           draft && drafts[key] && button("discard", t("prdDiscardEditor"), { disabled: busy, onClick: () => {
             delete drafts[key];
@@ -5311,16 +5693,19 @@ ${detail.trim()}` : value);
           button("save", t(id ? "prdSaveOverwrite" : "prdSaveNew"), { className: "pw-button primary", disabled: busy || !draft || conflicted, onClick: save })
         ]
       },
-      h17("style", null, ".pw-prd-edit-content .pw-textarea{min-height:160px}.pw-prd-edit-content pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:210px;overflow:auto}"),
+      h17("style", null, ".pw-prd-edit-content pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:210px;overflow:auto}"),
       h17(
         "div",
         { className: "pw-prd-edit-content" },
         generated && h17(
-          "p",
-          { className: "pw-note" },
-          t("discoveryPrdLinked") + " \xB7 " + generated.requirements.join(" / "),
-          h17("br"),
-          t("discoveryPrdSource") + " \xB7 " + discoveryReference(t, generated.requirements, generated.sources)
+          import_react17.default.Fragment,
+          null,
+          h17("p", { className: "pw-note" }, t("discoveryPrdLinked") + " \xB7 " + generated.requirements.join(" / ")),
+          h17(Disclosure, { label: t("discoveryPrdSource") }, h17(
+            "p",
+            { className: "pw-note" },
+            discoveryReference(t, generated.requirements, generated.sources)
+          ))
         ),
         draft && h17(
           "form",
@@ -5329,7 +5714,7 @@ ${detail.trim()}` : value);
             "label",
             { className: "pw-field" },
             h17("span", null, t("prdTitleField")),
-            h17("input", { className: "pw-input", disabled: busy, value: draft.title, onChange: (event) => remember({ title: event.target.value }) })
+            h17("input", { className: "pw-input", "data-modal-initial-focus": true, disabled: busy, value: draft.title, onChange: (event) => remember({ title: event.target.value }) })
           ),
           h17(
             "label",
@@ -5338,11 +5723,20 @@ ${detail.trim()}` : value);
             h17("textarea", { className: "pw-textarea", rows: 10, disabled: busy, value: draft.body, onChange: (event) => remember({ body: event.target.value }) })
           ),
           h17(
-            "label",
-            { className: "pw-field" },
-            h17("span", null, t("prdAddImage")),
-            h17("input", { type: "file", accept: Object.keys(imageExtensions).join(","), disabled: busy || conflicted, onChange: insertImage }),
-            h17("small", { className: "pw-note" }, t("prdImageHelp"))
+            Disclosure,
+            { label: t("prdAddImage") },
+            h17(
+              "label",
+              { className: "pw-field" },
+              h17("small", { className: "pw-note" }, t("prdImageHelp")),
+              h17("input", {
+                type: "file",
+                "aria-label": t("prdChooseImage"),
+                accept: Object.keys(imageExtensions).join(","),
+                disabled: busy || conflicted,
+                onChange: insertImage
+              })
+            )
           )
         ),
         !draft && !error && h17("p", { role: "status" }, t("loading")),
@@ -5370,15 +5764,15 @@ ${detail.trim()}` : value);
   // client-src/pages/sync.js
   var import_react18 = __toESM(__require("react"), 1);
   var h18 = import_react18.default.createElement;
-  var { useCallback: useCallback2, useEffect: useEffect10, useRef: useRef8, useState: useState11 } = import_react18.default;
+  var { useCallback: useCallback2, useEffect: useEffect10, useRef: useRef10, useState: useState11 } = import_react18.default;
   var STATES = ["todo", "doing", "blocked", "in_review", "done", "cancelled", "backlog", "reviewing", "ready", "in_progress", "pending", "completed"];
   function SyncView({ root, sessionId, t, refresh, requirements = [], onLocateProposal }) {
     const [list, setList] = useState11(null);
     const [baseline, setBaseline] = useState11(null);
     const [run, setRun] = useState11(null);
     const [loadError, setLoadError] = useState11(null);
-    const poll = useRef8(null);
-    const mounted = useRef8(false);
+    const poll = useRef10(null);
+    const mounted = useRef10(false);
     const load = useCallback2(async () => {
       const res = await rpc("sync/proposals", { root });
       if (!mounted.current) return;
@@ -5476,7 +5870,6 @@ ${detail.trim()}` : value);
         h18("button", { className: "pw-button primary", onClick: startSync, disabled: run?.busy }, t("syncRun")),
         content.length > 0 && h18("button", { className: "pw-button", onClick: approveAll, disabled: run?.busy }, t("syncAdoptContent")),
         list && h18("span", { className: "pw-count", style: { marginLeft: 8 } }, t("syncPending").replace("{n}", String(list.length))),
-        baseline && total > 0 && h18("span", { className: "pw-count", style: { marginLeft: 8 } }, t("syncAcceptRate").replace("{rate}", String(rate)).replace("{accepted}", String(baseline.accepted ?? 0)).replace("{total}", String(total))),
         run?.message && h18("span", { style: { marginLeft: 10 } }, run.message),
         run?.error && h18(ErrorDetails, { error: run.error, t, showRaw: false })
       ),
@@ -5489,10 +5882,13 @@ ${detail.trim()}` : value);
       !list ? !loadError && h18("div", { className: "pw-empty" }, t("loading")) : list.length === 0 ? h18("div", { className: "pw-empty" }, t("syncEmpty")) : h18("div", { className: "pw-sync-list" }, list.map((p) => {
         const req = requirements.find((req2) => req2.id === p.target?.reqId);
         const task = req?.issues?.find((task2) => task2.id === p.target.issueId);
-        const state = p.kind === "task_suggestion" && p.suggested_patch?.action === "cancel" ? "cancelled" : p.suggested_patch?.to;
+        const patch = p.suggested_patch ?? {};
+        const state = p.kind === "task_suggestion" && patch.action === "cancel" ? "cancelled" : patch.to;
         const stateLabel = (p.target?.issueId ? "st_" : "col_") + state;
         const sources = [...new Set((p.evidence ?? []).map(sourceLabel).filter(Boolean))];
         const split = isRequirementSplit(p);
+        const apply = canApply(p);
+        const change = p.kind === "new_task" ? patch.title : p.kind === "task_suggestion" && patch.action === "scope" ? t("syncScopeAction") : ["field_draft", "req_draft"].includes(p.kind) ? Object.keys(patch).map((field) => draftFieldLabel(field, t)).join(t("fieldSeparator")) : "";
         return h18(
           "div",
           { key: p.id, className: "pw-proposal" },
@@ -5501,33 +5897,49 @@ ${detail.trim()}` : value);
             { className: "pw-proposal-head" },
             h18("span", { className: "pw-istatus st-doing" }, t("kind_" + p.kind)),
             h18("strong", null, task?.title ?? req?.title ?? t(p.target?.issueId ? "issueDetail" : "detail")),
-            STATES.includes(state) && h18("span", { className: "pw-count" }, "\u2192 ", t(stateLabel))
+            STATES.includes(state) && h18("span", { className: "pw-count" }, "\u2192 ", t(stateLabel)),
+            change && h18("span", { className: "pw-list-preview" }, change)
           ),
-          (p.kind !== "new_task" || split) && h18("div", { className: "pw-proposal-reason" }, split ? p.suggested_patch?.title : p.reason),
-          sources.length > 0 && h18(
-            "div",
-            { className: "pw-proposal-evidence" },
-            h18("span", { className: "pw-label" }, t("syncEvidence")),
-            sources.map((source) => h18("span", { key: source, className: "pw-refchip" }, source))
-          ),
-          p.kind === "new_task" && canApply(p) ? h18(DraftSuggestions, {
-            proposals: [p],
-            root,
-            t,
-            busy: run?.busy,
-            act: (method, input) => decide(p, method === "proposal/adopt", input.patch)
-          }) : h18(
+          !apply && p.target?.reqId && h18(
             "div",
             { className: "pw-actions" },
-            canApply(p) ? h18("button", { className: "pw-button primary", onClick: () => decide(p, true), disabled: run?.busy }, t("demoAdopt")) : p.target?.reqId && h18(
+            h18(
               "button",
               { className: "pw-button", onClick: () => onLocateProposal({ ...p.target, split }) },
               t(split ? "splitLocate" : p.target.issueId ? "syncLocateTask" : "syncLocateRequirement")
+            )
+          ),
+          h18(
+            Disclosure,
+            { label: t("syncDetails") },
+            sources.length > 0 && h18(
+              "div",
+              { className: "pw-proposal-evidence" },
+              h18("span", { className: "pw-label" }, t("syncEvidence")),
+              sources.map((source) => h18("span", { key: source, className: "pw-refchip" }, source))
             ),
-            !split && h18("button", { className: "pw-button", onClick: () => decide(p, false), disabled: run?.busy }, t("syncDismiss"))
+            apply ? h18(DraftSuggestions, {
+              proposals: [p],
+              root,
+              t,
+              busy: run?.busy,
+              showHeading: false,
+              act: (method, input) => decide(p, method === "proposal/adopt", input.patch)
+            }) : h18(
+              import_react18.default.Fragment,
+              null,
+              h18(ReadText, { value: p.reason }),
+              h18(ReadText, { value: patch.text }),
+              !split && h18("button", { className: "pw-button", onClick: () => decide(p, false), disabled: run?.busy }, t("syncDismiss"))
+            )
           )
         );
-      }))
+      })),
+      baseline && total > 0 && h18(
+        Disclosure,
+        { label: t("syncHistory") },
+        h18("p", { className: "pw-note" }, t("syncAcceptRate").replace("{rate}", String(rate)).replace("{accepted}", String(baseline.accepted ?? 0)).replace("{total}", String(total)))
+      )
     );
   }
 
@@ -5537,7 +5949,7 @@ ${detail.trim()}` : value);
   // client-src/detail/requirement-review.js
   var import_react19 = __toESM(__require("react"), 1);
   var h19 = import_react19.default.createElement;
-  var { useCallback: useCallback3, useEffect: useEffect11, useRef: useRef9, useState: useState12 } = import_react19.default;
+  var { useCallback: useCallback3, useEffect: useEffect11, useRef: useRef11, useState: useState12 } = import_react19.default;
   var requirementReviewLocale = {
     en: {
       aiReview: "Start AI review",
@@ -5558,7 +5970,27 @@ ${detail.trim()}` : value);
       aiReviewRequirementVersion: "Requirement version",
       aiReviewPrdVersion: "PRD version",
       aiReviewNoPrd: "No PRD was linked at the time of review.",
-      aiReviewNoSource: "This report has no version details."
+      aiReviewNoSource: "This report has no version details.",
+      aiReviewCannotApprove: "Cannot approve yet",
+      aiReviewMissing: "Still needed: {items}.",
+      aiReviewPrdMaterial: "PRD with content",
+      aiReviewReturnToPool: "Return to pool to add materials",
+      aiReviewReturnReason: "Add missing review materials: {items}.",
+      aiReviewReturnConfirm: "Return to pool",
+      aiReviewWaitingDecision: "Ready for a human decision",
+      aiReviewOpen: "Open this review report",
+      aiReviewOpenHistorical: "Open report",
+      aiReviewReport: "AI review report",
+      aiReviewEarlierMaterials: "Uses earlier materials",
+      aiReviewReportSaved: "Report saved",
+      aiReviewBack: "Back to requirement",
+      aiReviewFailureDetails: "View read or review error",
+      aiReviewNewMaterials: "Current materials need a new review",
+      aiReviewAiAdvice: "AI recommendation",
+      aiReviewProceed: "Proceed",
+      aiReviewReduceScope: "Reduce scope",
+      aiReviewVerifyFirst: "Verify first",
+      aiReviewHold: "Hold"
     },
     zh: {
       aiReview: "\u5F00\u59CB AI \u8BC4\u5BA1",
@@ -5579,13 +6011,46 @@ ${detail.trim()}` : value);
       aiReviewRequirementVersion: "\u9700\u6C42\u7248\u672C",
       aiReviewPrdVersion: "PRD \u7248\u672C",
       aiReviewNoPrd: "\u8BC4\u5BA1\u65F6\u672A\u5173\u8054 PRD\u3002",
-      aiReviewNoSource: "\u8FD9\u4EFD\u62A5\u544A\u672A\u8BB0\u5F55\u8D44\u6599\u7248\u672C\u3002"
+      aiReviewNoSource: "\u8FD9\u4EFD\u62A5\u544A\u672A\u8BB0\u5F55\u8D44\u6599\u7248\u672C\u3002",
+      aiReviewCannotApprove: "\u6682\u4E0D\u80FD\u901A\u8FC7",
+      aiReviewMissing: "\u8FD8\u7F3A{items}\u3002",
+      aiReviewPrdMaterial: "\u6709\u6B63\u6587\u7684 PRD",
+      aiReviewReturnToPool: "\u9000\u56DE\u9700\u6C42\u6C60\u8865\u6750\u6599",
+      aiReviewReturnReason: "\u8865\u9F50\u8BC4\u5BA1\u6750\u6599\uFF1A{items}\u3002",
+      aiReviewReturnConfirm: "\u9000\u56DE\u9700\u6C42\u6C60",
+      aiReviewWaitingDecision: "\u5F85\u4EBA\u5DE5\u51B3\u5B9A",
+      aiReviewOpen: "\u67E5\u770B\u672C\u8F6E\u62A5\u544A",
+      aiReviewOpenHistorical: "\u6253\u5F00\u62A5\u544A",
+      aiReviewReport: "AI \u8BC4\u5BA1\u62A5\u544A",
+      aiReviewEarlierMaterials: "\u57FA\u4E8E\u65E7\u8D44\u6599",
+      aiReviewReportSaved: "\u62A5\u544A\u5DF2\u4FDD\u5B58",
+      aiReviewBack: "\u8FD4\u56DE\u9700\u6C42\u8BE6\u60C5",
+      aiReviewFailureDetails: "\u67E5\u770B\u8BFB\u53D6\u6216\u8BC4\u5BA1\u9519\u8BEF",
+      aiReviewNewMaterials: "\u5F53\u524D\u6750\u6599\u5F85\u91CD\u65B0\u8BC4\u5BA1",
+      aiReviewAiAdvice: "AI \u5EFA\u8BAE",
+      aiReviewProceed: "\u63A8\u8FDB",
+      aiReviewReduceScope: "\u7F29\u5C0F\u8303\u56F4",
+      aiReviewVerifyFirst: "\u5148\u9A8C\u8BC1",
+      aiReviewHold: "\u6682\u7F13"
     }
   };
-  function ReviewSource({ source, t }) {
+  function reportRecommendation(report, t) {
+    const line = report?.opinion?.trim().split(/\r?\n/, 1)[0].replaceAll("**", "").trim();
+    const verdict = line?.match(/^建议\s*[：:]\s*(推进|缩小范围|先验证|暂缓)$/u)?.[1];
+    const key = { \u63A8\u8FDB: "aiReviewProceed", \u7F29\u5C0F\u8303\u56F4: "aiReviewReduceScope", \u5148\u9A8C\u8BC1: "aiReviewVerifyFirst", \u6682\u7F13: "aiReviewHold" }[verdict];
+    return key ? t("aiReviewAiAdvice") + " \xB7 " + t(key) : "";
+  }
+  function ReviewSource({ source, t, expanded = false }) {
     if (!source?.requirementVersion) return h19("p", { className: "pw-note" }, t("aiReviewNoSource"));
     const versionText2 = (version) => version && h19("code", { title: version }, String(version).slice(0, 12));
     const prds = Array.isArray(source.prds) ? source.prds : [];
+    const materialBody = source.materials && h19(
+      import_react19.default.Fragment,
+      null,
+      source.materials.discovery && h19(ReadText, { label: t("prepDiscovery"), value: source.materials.discovery }),
+      (source.materials.documents ?? []).map((doc) => h19(ReadText, { key: doc.id, label: doc.title, value: doc.excerpt })),
+      source.materials.prototype && h19(ReadText, { label: t("prepPrototype"), value: JSON.stringify(source.materials.prototype, null, 2) })
+    );
     return h19(
       import_react19.default.Fragment,
       null,
@@ -5593,43 +6058,107 @@ ${detail.trim()}` : value);
       prds.length ? prds.map((prd) => h19("p", { className: "pw-note", key: prd.id }, t("aiReviewPrdVersion"), " ", prd.title, " \xB7 ", prd.revision ? t("prepVersion").replace("{n}", prd.revision) : versionText2(prd.version))) : h19("p", { className: "pw-note" }, t("aiReviewNoPrd")),
       source.discovery && h19("p", { className: "pw-note" }, t("prepDiscovery"), " \xB7 ", t("prepVersion").replace("{n}", source.discovery.version)),
       source.prototype && h19("p", { className: "pw-note" }, t("prepPrototype"), " \xB7 ", t("prepVersion").replace("{n}", source.prototype.version)),
-      source.materials && h19(
-        Disclosure,
-        { label: t("aiReviewSavedMaterials") },
-        source.materials.discovery && h19(ReadText, { label: t("prepDiscovery"), value: source.materials.discovery }),
-        (source.materials.documents ?? []).map((doc) => h19(ReadText, { key: doc.id, label: doc.title, value: doc.excerpt })),
-        source.materials.prototype && h19(ReadText, { label: t("prepPrototype"), value: JSON.stringify(source.materials.prototype, null, 2) })
+      materialBody && (expanded ? materialBody : h19(Disclosure, { label: t("aiReviewSavedMaterials") }, materialBody))
+    );
+  }
+  function RequirementReviewHistory({ reports, t, onOpenReport }) {
+    return h19(
+      "ul",
+      { className: "pw-update-list pw-review-history" },
+      reports.map((record, index) => ({ record, index })).reverse().map(({ record, index }) => {
+        const id = "pw-requirement-record-report-" + record.marker;
+        const round = t("aiReviewRound").replace("{n}", String(index + 1));
+        return h19(
+          "li",
+          { className: "pw-update", key: record.marker },
+          h19(
+            "span",
+            { className: "pw-update-body" },
+            h19("strong", null, round),
+            " \xB7 ",
+            reportRecommendation(record, t) || t("aiReviewReportSaved"),
+            record.at && h19("time", { className: "pw-note", dateTime: record.at, title: record.at }, " \xB7 ", dateText(record.at))
+          ),
+          h19("button", {
+            type: "button",
+            id,
+            className: "pw-button pw-quiet",
+            "aria-label": round + " \xB7 " + t("aiReviewOpenHistorical"),
+            onClick: () => onOpenReport(record.marker, id)
+          }, t("aiReviewOpenHistorical"))
+        );
+      })
+    );
+  }
+  function RequirementReportReader({ req, root, marker, t, onBack, fromDrawer }) {
+    const [result, setResult] = useState12(null);
+    const [attempt, setAttempt] = useState12(0);
+    const heading = useRef11(null);
+    useEffect11(() => {
+      let active = true;
+      rpc("requirement/review/status", { root, id: req.id }).then((res) => {
+        if (active) setResult(res);
+      });
+      return () => {
+        active = false;
+      };
+    }, [root, req.id, attempt]);
+    useEffect11(() => {
+      heading.current?.focus({ preventScroll: true });
+    }, []);
+    const reports = (result?.ok && !result.data.reportsUnavailable ? result.data.reports : null) ?? aiReviewReports(req.reviews);
+    const index = reports.findIndex((record2) => record2.marker === marker);
+    const record = reports[index];
+    const unreadable = result && (!result.ok || result.data.reportsUnavailable);
+    const older = result?.ok && result.data.status === "reviewing" && (index < reports.length - 1 || result.data.stale);
+    const title = t("aiReviewReport");
+    return h19(
+      "div",
+      { className: "pw-subpage-stack" },
+      h19(
+        "article",
+        { className: "pw-subpage pw-read-card", "aria-label": title },
+        h19(
+          "header",
+          { className: "pw-subpage-head" },
+          h19(
+            "div",
+            { className: "pw-read-title" },
+            h19("h2", { ref: heading, tabIndex: -1 }, title),
+            record && h19("span", { className: "pw-note" }, t("aiReviewRound").replace("{n}", String(index + 1))),
+            record?.at && h19("time", { className: "pw-note", dateTime: record.at, title: record.at }, dateText(record.at)),
+            record && older && h19("span", { className: "pw-note" }, t("aiReviewEarlierMaterials"))
+          ),
+          h19("button", { type: "button", className: "pw-button pw-quiet", onClick: onBack }, t(fromDrawer ? "backToReading" : "aiReviewBack"))
+        ),
+        !record && !result && h19("p", { className: "pw-note", role: "status" }, t("loading")),
+        !record && result && h19(
+          "div",
+          { className: "pw-actions" },
+          h19("span", { className: "pw-note", role: "status" }, t(unreadable ? "errUnreadable" : "errMissing")),
+          unreadable && h19("button", { type: "button", className: "pw-button", onClick: () => {
+            setResult(null);
+            setAttempt((n) => n + 1);
+          } }, t("retryRead"))
+        ),
+        record && h19(
+          "div",
+          { className: "pw-reading" },
+          h19(ReadText, { value: record.opinion }),
+          h19(Disclosure, { label: t("aiReviewSavedMaterials") }, h19(ReviewSource, { source: record.source, t, expanded: true }))
+        )
       )
     );
   }
-  function RequirementReviewHistory({ reports, t }) {
-    return reports.map((record, index) => ({ record, index })).reverse().map(({ record, index }) => h19(
-      Disclosure,
-      {
-        key: record.marker,
-        id: "pw-requirement-record-report-" + record.marker,
-        label: t("aiReviewRound").replace("{n}", String(index + 1))
-      },
-      record.at && h19(
-        "p",
-        { className: "pw-note" },
-        t("aiReviewAt"),
-        " ",
-        h19("time", { dateTime: record.at, title: record.at }, String(record.at).replace("T", " ").slice(0, 16))
-      ),
-      h19(ReviewSource, { source: record.source, t }),
-      h19(ReadText, { value: record.opinion })
-    ));
-  }
-  function RequirementReview({ req, root, t, busy, onApprove, onReject, onReportSnapshot, recentOnly = false, snapshotOnly = false }) {
+  function RequirementReview({ req, root, t, busy, onApprove, onReject, onOpenReport, onReportSnapshot, recentOnly = false, snapshotOnly = false }) {
     const [details, setDetails] = useState12(null);
     const [failure, setFailure] = useState12(null);
     const [readError, setReadError] = useState12(null);
     const [submitting, setSubmitting] = useState12(false);
-    const mounted = useRef9(false);
-    const reading = useRef9(false);
-    const request = useRef9(false);
-    const revision = useRef9(0);
+    const mounted = useRef11(false);
+    const reading = useRef11(false);
+    const request = useRef11(false);
+    const revision = useRef11(0);
     const load = useCallback3(async () => {
       if (reading.current || request.current || !mounted.current) return;
       const version = revision.current;
@@ -5681,7 +6210,7 @@ ${detail.trim()}` : value);
       return () => window.removeEventListener("pw-prd-changed", changed);
     }, [load, reviewing, root]);
     const dataUnavailable = details?.reportsUnavailable || details?.prdsUnavailable;
-    const missingPreparation = details?.missingPreparation ?? [];
+    const missingPreparation = !readError && !dataUnavailable ? details?.missingPreparation ?? [] : [];
     const canStart = !busy && !readError && !running && (saveFailed || details?.hasPrd && !dataUnavailable);
     const canApprove = !busy && !readError && !dataUnavailable && !running && !missingPreparation.length && details?.hasReview;
     const start = async () => {
@@ -5711,52 +6240,86 @@ ${detail.trim()}` : value);
     if (snapshotOnly) return null;
     if (!reviewing && !reports.length && !running && !saveFailed && !readError && !dataUnavailable) return null;
     const startLabel = saveFailed ? "aiReviewRetrySave" : latest ? "aiReviewAgain" : "aiReview";
-    const lines = latest?.opinion.split("\n") ?? [];
+    const lines = latest?.opinion?.split("\n") ?? [];
     const suggestedReason = lines.map((line) => line.replace(/^[\s#*>-]+/u, "").replaceAll("**", "").trim()).find((line) => line && !/^建议[：:]/u.test(line)) ?? lines[0];
-    const helpId = "pw-approve-review-help-" + req.id;
-    const needsReport = reviewing && details?.hasPrd && !details.hasReview && !dataUnavailable;
+    const materials = { discovery: "prepDiscovery", prd: "aiReviewPrdMaterial", prototype: "prepPrototype" };
+    const missing = Object.keys(materials).filter((key) => missingPreparation.includes(key));
+    const missingText = missing.map((key) => t(materials[key])).join(t("fieldSeparator"));
+    const waiting = running || submitting;
+    const status = readError || dataUnavailable ? "errUnreadable" : !details ? "loading" : missing.length ? "aiReviewCannotApprove" : waiting ? "aiReviewRunning" : saveFailed ? "aiReviewSaveFailed" : failure || details.state === "failed" ? "aiReviewFailed" : details.hasReview ? "aiReviewWaitingDecision" : details.stale ? "aiReviewNewMaterials" : "aiReviewRequired";
+    const currentReportId = "pw-req-current-report-" + req.id;
+    const rejectId = "pw-req-review-return-" + req.id;
     const title = t(recentOnly ? "reqReviewCurrent" : "aiReviewRecords");
     return h19(
       "section",
       { className: "pw-reading-block pw-reading-divider", "aria-label": title },
       h19("h3", { className: "pw-reading-label" }, title),
-      h19(
+      (reviewing || waiting || saveFailed) && h19(
+        "div",
+        { className: "pw-reading-block pw-review-decision" },
+        h19(
+          "p",
+          { className: "pw-text", role: "status" },
+          h19("strong", null, t(status)),
+          missing.length > 0 && " \xB7 " + t("aiReviewMissing").replace("{items}", () => missingText)
+        ),
+        missing.length > 0 && waiting && h19("span", { className: "pw-note" }, t("aiReviewRunning")),
+        h19(
+          "div",
+          { className: "pw-actions" },
+          reviewing && onReject && missing.length > 0 && h19("button", {
+            type: "button",
+            id: rejectId,
+            className: "pw-button primary",
+            disabled: busy,
+            onClick: () => onReject({ missingKind: missing[0], initialReason: t("aiReviewReturnReason").replace("{items}", () => missingText), triggerId: rejectId })
+          }, t("aiReviewReturnToPool")),
+          reviewing && onApprove && details?.hasReview && !missing.length && h19("button", {
+            type: "button",
+            className: "pw-button primary",
+            disabled: !canApprove || submitting,
+            onClick: () => onApprove(latest?.marker)
+          }, t("approveReview")),
+          (saveFailed || reviewing && details?.hasPrd) && h19("button", {
+            type: "button",
+            className: "pw-button" + (!missing.length && (saveFailed || !details.hasReview) ? " primary" : ""),
+            disabled: !canStart || submitting,
+            onClick: start
+          }, t(startLabel)),
+          reviewing && onReject && !missing.length && h19("button", {
+            type: "button",
+            id: rejectId,
+            className: "pw-button danger",
+            disabled: busy,
+            onClick: () => onReject({ suggestion: details?.hasReview ? suggestedReason : "", triggerId: rejectId })
+          }, t("rejectRequirement")),
+          (readError || dataUnavailable) && h19("button", { type: "button", className: "pw-button", onClick: load }, t("retryRead"))
+        ),
+        (failure || readError || details?.error || details?.errorCode) && h19(
+          Disclosure,
+          { label: t("aiReviewFailureDetails") },
+          h19(ErrorDetails, { error: failure ?? readError, t, showRaw: false }),
+          details?.error && h19(ReadText, { value: details.error }),
+          details?.errorCode && h19("p", { className: "pw-note" }, [details.errorCode, details.httpStatus].filter(Boolean).join(" \xB7 "))
+        )
+      ),
+      reviewing && latest && onOpenReport && h19(
         "div",
         { className: "pw-actions" },
-        (reviewing || saveFailed) && h19("button", { className: "pw-button", disabled: !canStart || submitting, onClick: start }, t(startLabel)),
-        reviewing && onApprove && h19("button", {
-          className: "pw-button primary",
-          disabled: !canApprove,
-          "aria-describedby": needsReport ? helpId : void 0,
-          onClick: () => onApprove(latest?.marker)
-        }, t("approveReview")),
-        reviewing && onReject && h19("button", { className: "pw-button danger", disabled: busy, onClick: () => onReject(details?.hasReview ? suggestedReason : "") }, t("rejectRequirement"))
+        h19("button", {
+          type: "button",
+          id: currentReportId,
+          className: "pw-button pw-quiet",
+          onClick: () => onOpenReport(latest.marker, currentReportId)
+        }, t("aiReviewOpen")),
+        details?.stale ? h19("span", { className: "pw-note" }, t("aiReviewEarlierMaterials")) : details?.hasReview && h19("span", { className: "pw-note" }, reportRecommendation(latest, t))
       ),
-      needsReport && h19("p", { className: "pw-note", id: helpId }, t("aiReviewRequired")),
-      reviewing && missingPreparation.length > 0 && h19(ErrorDetails, {
-        t,
-        showRaw: false,
-        error: { code: "PREPARATION_REQUIRED", message: `missing preparation: ${missingPreparation.join(", ")}` }
-      }),
-      (running || submitting) && h19("p", { className: "pw-note", role: "status" }, t("aiReviewRunning")),
-      reviewing && details?.state === "failed" && h19(
-        "p",
-        { className: "pw-note", role: "status" },
-        details?.error ?? t("aiReviewFailed"),
-        details?.errorCode && " (" + [details.errorCode, details.httpStatus].filter(Boolean).join(" \xB7 ") + ")"
-      ),
-      saveFailed && h19("p", { className: "pw-note", role: "status" }, t("aiReviewSaveFailed")),
-      details?.stale && h19("p", { className: "pw-note", role: "status" }, t("aiReviewStale")),
-      h19(ErrorDetails, { error: failure ?? readError, t, showRaw: false }),
-      dataUnavailable && h19("p", { className: "pw-note", role: "status" }, t("errUnreadable")),
-      (readError || dataUnavailable) && !saveFailed && h19("button", { className: "pw-button pw-quiet", onClick: load }, t("retryRead")),
       reviewing && details?.materials && h19(
         Disclosure,
-        { label: t("aiReviewMaterials"), open: true },
+        { label: t("aiReviewMaterials") },
         h19(ReviewSource, { source: details.materials, t })
       ),
-      reviewing && latest && h19(ReadText, { value: latest.opinion }),
-      !recentOnly && h19(RequirementReviewHistory, { reports, t })
+      !recentOnly && !!reports.length && h19(RequirementReviewHistory, { reports, t, onOpenReport })
     );
   }
 
@@ -5769,22 +6332,25 @@ ${detail.trim()}` : value);
     const pending = req.status === "pending";
     const completed = req.status === "completed";
     const hasDelivery = pending || completed || req.deliverySummary?.trim() || req.cancelImpact?.trim();
+    const actions = onMove && (recovering || pending || completed) && h20(
+      "div",
+      { className: "pw-actions" },
+      recovering && h20("button", { className: "pw-button primary", disabled: busy, onClick: () => onMove(req, completed ? "in_progress" : "completed") }, t("resumeReopen")),
+      !recovering && pending && h20("button", { className: "pw-button primary", disabled: busy, onClick: () => onMove(req, "completed") }, t("acceptRequirement")),
+      !recovering && (pending || completed) && h20("button", { className: "pw-button", disabled: busy, onClick: () => onMove(req, "in_progress") }, t(completed ? "reopen" : "sendBack"))
+    );
     return h20(
       "div",
       { className: "pw-reading" },
-      hasDelivery && h20(DeliveryResult, { req, t, userFacing: true, foldTasks: !showHistory }),
+      hasDelivery && h20(DeliveryResult, { req, t, userFacing: true, foldTasks: !showHistory }, (pending || completed) && actions),
       !hasDelivery && !records.length && h20("p", { className: "pw-note" }, t("noRequirementDelivery")),
-      onMove && (recovering || pending || completed) && h20(
-        "div",
-        { className: "pw-actions" },
-        recovering && h20("button", { className: "pw-button primary", disabled: busy, onClick: () => onMove(req, completed ? "in_progress" : "completed") }, t("resumeReopen")),
-        !recovering && pending && h20("button", { className: "pw-button primary", disabled: busy, onClick: () => onMove(req, "completed") }, t("acceptRequirement")),
-        !recovering && (pending || completed) && h20("button", { className: "pw-button", disabled: busy, onClick: () => onMove(req, "in_progress") }, t(completed ? "reopen" : "sendBack"))
-      ),
+      !pending && !completed && actions,
       showHistory && h20(RequirementDecisionRecords, { records, group: "delivery", t })
     );
   }
   function RecordDetail({ record, req, t, onOpenRequirement }) {
+    const opinion = record.opinion?.trim();
+    const briefOpinion = shortRecordedText(opinion);
     return h20(
       "section",
       { className: "pw-subpage pw-read-card", "aria-label": t("recordDetail") },
@@ -5799,7 +6365,9 @@ ${detail.trim()}` : value);
             "span",
             { className: "pw-count pw-read-status", "data-status": record.decision === "approved" ? "completed" : "in_progress" },
             t(record.decision === "approved" ? "deliveryAccepted" : "deliveryReturned")
-          )
+          ),
+          record.at && h20("span", { className: "pw-note pw-list-value" }, dateText(record.at)),
+          h20("span", { className: "pw-note" }, t("reqReadonlySnapshot"))
         ),
         h20(
           "div",
@@ -5810,10 +6378,12 @@ ${detail.trim()}` : value);
       h20(
         "div",
         { className: "pw-reading" },
-        record.at && h20("p", { className: "pw-note" }, t("decisionAt"), " ", String(record.at).replace("T", " ").slice(0, 16)),
-        h20(ReadingText, { label: t("reviewOpinion"), value: record.opinion || t("noOpinion") }),
-        h20(ReadingText, { label: t("demoDeliverySummary"), value: record.summary || t("missingDeliverySummary") }),
-        h20("p", { className: "pw-note" }, t("recordReadonlyHint"))
+        briefOpinion ? h20(ReadingText, { label: t("reviewOpinion"), value: briefOpinion }) : opinion && h20(Disclosure, { label: t("reviewOpinion") }, h20(ReadingText, { value: opinion })),
+        h20(
+          Disclosure,
+          { label: t("reqDeliverySnapshot") },
+          h20(ReadingText, { label: t("demoDeliverySummary"), value: record.summary || t("missingDeliverySummary") })
+        )
       )
     );
   }
@@ -5821,7 +6391,7 @@ ${detail.trim()}` : value);
   // client-src/detail/requirement-layout.js
   var import_react21 = __toESM(__require("react"), 1);
   var h21 = import_react21.default.createElement;
-  var { useEffect: useEffect12, useRef: useRef10, useState: useState13 } = import_react21.default;
+  var { useEffect: useEffect12, useRef: useRef12, useState: useState13 } = import_react21.default;
   var movableRequirementBlocks = ["prds", "review", "tasks", "development", "delivery"];
   var defaultOpen = {
     backlog: ["basic", "prds"],
@@ -5929,8 +6499,8 @@ ${detail.trim()}` : value);
     const [saveError, setSaveError] = useState13(false);
     const [reading, setReading] = useState13(() => readingMemory[layoutKey]);
     const [dropHint, setDropHint] = useState13(null);
-    const dragged = useRef10(null);
-    const appliedFocus = useRef10(null);
+    const dragged = useRef12(null);
+    const appliedFocus = useRef12(null);
     const activeReading = reading?.status === status ? reading : { status, open: defaultOpen[status] ?? ["basic"] };
     const displayedOrder = draft ?? order;
     useEffect12(() => {
@@ -6118,11 +6688,18 @@ ${detail.trim()}` : value);
     const open = { report: onOpenReport, review: onOpenReview, acceptance: onOpenAcceptance, issue: onOpenIssue };
     return h22("ul", { className: "pw-update-list", "aria-label": t("requirementLog"), style: { padding: 0 } }, entries.map(({ key, at, summary, target }) => {
       const onOpen = target && open[target.kind];
+      const trigger = target?.kind === "report" ? "pw-req-log-report-" + target.id : void 0;
       return h22(
         "li",
         { className: "pw-update", key },
         at ? h22("time", { className: "pw-update-ts", dateTime: at, title: at }, dateText(at)) : h22("span", { className: "pw-update-ts" }, t("requirementLogUnknownTime")),
-        onOpen ? h22("button", { type: "button", className: "pw-button pw-quiet pw-update-body", style: { textAlign: "start" }, onClick: () => onOpen(target.id) }, summary) : h22("span", { className: "pw-update-body" }, summary)
+        onOpen ? h22("button", {
+          type: "button",
+          id: trigger,
+          className: "pw-button pw-quiet pw-update-body",
+          style: { textAlign: "start" },
+          onClick: () => trigger ? onOpen(target.id, trigger) : onOpen(target.id)
+        }, summary) : h22("span", { className: "pw-update-body" }, summary)
       );
     }));
   }
@@ -6130,7 +6707,7 @@ ${detail.trim()}` : value);
   // client-src/shared/reading-drawer.js
   var import_react23 = __toESM(__require("react"), 1);
   var h23 = import_react23.default.createElement;
-  var { useEffect: useEffect13, useLayoutEffect: useLayoutEffect2, useRef: useRef11, useState: useState14 } = import_react23.default;
+  var { useEffect: useEffect13, useLayoutEffect: useLayoutEffect3, useRef: useRef13, useState: useState14 } = import_react23.default;
   var readingDrawerLocale = {
     en: { readingMaterials: "Materials and records", closeReading: "Close reading panel", backToReading: "Back to reading panel" },
     zh: { readingMaterials: "\u8D44\u6599\u4E0E\u8BB0\u5F55", closeReading: "\u5173\u95ED\u8D44\u6599\u62BD\u5C49", backToReading: "\u8FD4\u56DE\u8D44\u6599\u62BD\u5C49" }
@@ -6158,22 +6735,22 @@ ${detail.trim()}` : value);
     if (scroll) control?.scrollIntoView({ block: "nearest" });
   }
   function ReadingLayout({ t, rail, drawer, onClose, scrollMemory, scrollKey, modalActive, children }) {
-    const frame = useRef11(null);
-    const main = useRef11(null);
-    const index = useRef11(null);
-    const reader = useRef11(null);
-    const body = useRef11(null);
-    const bodyContent = useRef11(null);
-    const stopRestore = useRef11(null);
-    const closeButton = useRef11(null);
-    const previous = useRef11(null);
+    const frame = useRef13(null);
+    const main = useRef13(null);
+    const index = useRef13(null);
+    const reader = useRef13(null);
+    const body = useRef13(null);
+    const bodyContent = useRef13(null);
+    const stopRestore = useRef13(null);
+    const closeButton = useRef13(null);
+    const previous = useRef13(null);
     const [width, setWidth] = useState14(() => document.documentElement.clientWidth);
     const [indexOpen, setIndexOpen] = useState14(false);
     const narrow = width <= 710;
     const overlay = !!drawer && width < 890;
     const drawerKey = drawer && (drawer.key ?? drawer.title);
     const drawerScrollKey = drawerKey && scrollKey && scrollKey + ":drawer:" + (drawer.scrollKey ?? drawerKey);
-    useLayoutEffect2(() => {
+    useLayoutEffect3(() => {
       const element = frame.current;
       if (!element) return;
       const measure = () => setWidth(element.clientWidth);
@@ -6182,13 +6759,13 @@ ${detail.trim()}` : value);
       observer.observe(element);
       return () => observer.disconnect();
     }, []);
-    useLayoutEffect2(() => {
+    useLayoutEffect3(() => {
       if (main.current) main.current.inert = overlay;
     }, [overlay]);
-    useLayoutEffect2(() => {
+    useLayoutEffect3(() => {
       if (main.current) main.current.scrollTop = scrollMemory?.[scrollKey] ?? 0;
     }, [scrollKey, scrollMemory]);
-    useLayoutEffect2(() => {
+    useLayoutEffect3(() => {
       if (drawer) {
         previous.current = drawer.trigger ?? previous.current;
         closeButton.current?.focus({ preventScroll: true });
@@ -6202,7 +6779,7 @@ ${detail.trim()}` : value);
         (trigger?.isConnected && trigger.getClientRects().length ? trigger : fallback)?.focus({ preventScroll: true });
       }
     }, [drawerKey]);
-    useLayoutEffect2(() => {
+    useLayoutEffect3(() => {
       const element = body.current;
       if (!element) return;
       const saved = scrollMemory?.[drawerScrollKey] ?? 0;
@@ -6358,11 +6935,11 @@ ${detail.trim()}` : value);
 
   // client-src/detail/requirement-detail.js
   var h24 = import_react24.default.createElement;
-  var { useCallback: useCallback4, useEffect: useEffect14, useRef: useRef12, useState: useState15 } = import_react24.default;
+  var { useCallback: useCallback4, useEffect: useEffect14, useRef: useRef14, useState: useState15 } = import_react24.default;
   function useWorkItemDraft(draftKey, item, fieldsOf, onDirty, memory) {
     const [editing, setEditing] = useState15(() => !!memory.drafts[draftKey]);
     const [draft, setDraft] = useState15(() => draftOf(memory.drafts, draftKey, fieldsOf(item)));
-    const base = useRef12({ fields: fieldsOf(item), fileHash: item.hash });
+    const base = useRef14({ fields: fieldsOf(item), fileHash: item.hash });
     useEffect14(() => {
       onDirty?.(!!memory.drafts[draftKey]);
     }, [draftKey, onDirty]);
@@ -6416,6 +6993,7 @@ ${detail.trim()}` : value);
     });
     const unresolved = items.find((item) => item.status === "gap") ?? items.find((item) => item.status === "unknown");
     const assigned = items.find((item) => item.status === "assigned" && item.needsWork && item.taskIds?.length) ?? items.find((item) => item.status === "assigned" && item.taskIds?.length);
+    const shortQuestion = shortRecordedText(review?.question);
     const taskLinks = (item) => h24("div", { className: "pw-actions" }, item.taskIds?.map((id) => {
       const task = req.issues?.find((task2) => task2.id === id);
       if (!task) return null;
@@ -6445,16 +7023,17 @@ ${detail.trim()}` : value);
         h24(ReadText, { value: assigned.detail, preview: true }),
         taskLinks(assigned)
       ),
-      review?.question && h24(ReadText, { value: review.question }),
+      shortQuestion && h24(ReadText, { value: shortQuestion }),
       review && !hasDrafts && h24(
         "p",
         { className: "pw-text" },
         t(items.length && !review.question && items.every((item) => ["verified", "assigned"].includes(item.status)) ? "splitNoNew" : "splitNoDrafts")
       ),
-      items.length > 0 && h24(
+      (items.length > 0 || review?.question && !shortQuestion) && h24(
         Disclosure,
         { label: t("splitDetails") },
-        h24("ul", { className: "pw-reading-list" }, items.map((item) => h24(
+        review?.question && !shortQuestion && h24(ReadText, { value: review.question }),
+        items.length > 0 && h24("ul", { className: "pw-reading-list" }, items.map((item) => h24(
           "li",
           { key: item.id },
           h24("strong", null, t(splitLabels[item.status]), " \xB7 ", item.requirement),
@@ -6505,20 +7084,23 @@ ${detail.trim()}` : value);
       )
     );
   }
-  function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenIssue, onCreateTask, projectKey, rootRef, onDirty, busy, sessionId, setModal, uiMemory: uiMemory2, onReorderTask, onStartTask, onApprove, onReject, onMove, initialPrdId, initialDelivery, focusTarget, renderPrds, restorePrds, onClosePrds, modalActive, openDiscovery, openPreparation }) {
+  function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenIssue, onCreateTask, projectKey, rootRef, onDirty, busy, sessionId, setModal, uiMemory: uiMemory2, onReorderTask, onStartTask, onApprove, onReject, onMove, initialPrdId, initialDelivery, focusTarget, renderPrds, restorePrds, onClosePrds, modalActive, openDiscovery, openPreparation, PreparationModal, reviewReturn, onReviewReturnHandled, onOpenReport, preparationFocus, onPreparationFocusHandled }) {
     const discovery = useDiscoveryRecords(root, req.id);
     const layoutKey = reqDraftKey(projectKey, req.id);
     const form = useWorkItemDraft(layoutKey, req, reqDraftFrom, onDirty, uiMemory2);
     const [arranging, setArranging] = useState15(false);
-    const [linear, setLinear] = useState15(false);
+    const [linear, setLinear] = useState15(() => !!reviewReturn?.ordered);
     const [managePrds, setManagePrds] = useState15(false);
     const [addProgress, setAddProgress] = useState15(false);
     const [order, setOrder] = useState15(() => savedRequirementOrder(layoutKey, uiMemory2.requirementOrders));
-    const [drawer, setDrawer] = useState15(() => initialPrdId || restorePrds ? {
-      id: "prds",
-      trigger: "pw-req-read-prds",
-      focusId: initialPrdId ? "pw-prd-open-full" : void 0
-    } : null);
+    const [drawer, setDrawer] = useState15(() => {
+      if (reviewReturn?.drawer) return { id: reviewReturn.drawer, trigger: "pw-req-read-" + reviewReturn.drawer, focusId: reviewReturn.trigger };
+      return initialPrdId || restorePrds ? {
+        id: "prds",
+        trigger: "pw-req-read-prds",
+        focusId: initialPrdId ? "pw-prd-open-full" : void 0
+      } : null;
+    });
     const taskFilters = uiMemory2.requirementTaskFilters ??= {};
     const [taskFilter, setTaskFilter] = useState15(() => taskFilters[layoutKey] ?? "");
     const changeFilter = (next) => {
@@ -6554,8 +7136,8 @@ ${detail.trim()}` : value);
     const [splitBusy, setSplitBusy] = useState15(false);
     const [splitError, setSplitError] = useState15(null);
     const [readError, setReadError] = useState15(null);
-    const live = useRef12(false);
-    const proposalSeq = useRef12(0);
+    const live = useRef14(false);
+    const proposalSeq = useRef14(0);
     const mode = req.status === "backlog" ? "organize" : canCreateIssue(req.status).ok && !req.pendingReopen ? "split" : null;
     useEffect14(() => {
       if (initialPrdId || restorePrds) {
@@ -6566,6 +7148,32 @@ ${detail.trim()}` : value);
         setFocus({ block: "delivery" });
       }
     }, [initialPrdId, initialDelivery, restorePrds]);
+    useEffect14(() => {
+      if (!reviewReturn) return;
+      onReviewReturnHandled?.();
+      if (reviewReturn.drawer || !reviewReturn.trigger) return;
+      const restore = () => {
+        const element = document.getElementById(reviewReturn.trigger);
+        if (!element) return false;
+        const block = element.closest("details.pw-requirement-block");
+        if (block) block.open = true;
+        element.focus({ preventScroll: true });
+        return true;
+      };
+      if (restore()) return;
+      const observer = new MutationObserver(() => {
+        if (restore()) observer.disconnect();
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      return () => observer.disconnect();
+    }, []);
+    useEffect14(() => {
+      if (!preparationFocus) return;
+      setDrawer(null);
+      setLinear(false);
+      setArranging(false);
+      setManagePrds(false);
+    }, [preparationFocus]);
     useEffect14(() => {
       if (focusTarget?.startsWith("pw-task-") || focusTarget === "pw-suggest-" + req.id) {
         setFocus({ block: "tasks", elementId: focusTarget });
@@ -6706,19 +7314,20 @@ ${detail.trim()}` : value);
     const developmentSummary = progressRecords(req.activity, t, "requirement").find((entry) => !entry.event)?.text.split("\n")[0];
     const lastAcceptance = decisions.find((record) => record.kind === "acceptance");
     const delivery = requirementResult(req);
-    const deliverySummary = delivery.summary.split(/\r?\n/)[0] || (lastAcceptance ? t(lastAcceptance.decision === "approved" ? "deliveryAccepted" : "deliveryReturned") : t(delivery.previousSummary || delivery.previousCancelImpact ? "previousResult" : "reqNoDelivery"));
+    const deliverySummary = shortRecordedText(delivery.summary) || (lastAcceptance ? t(lastAcceptance.decision === "approved" ? "deliveryAccepted" : "deliveryReturned") : t(delivery.summary ? "reqDeliverySubmitted" : delivery.previousSummary || delivery.previousCancelImpact ? "previousResult" : "reqNoDelivery"));
     const entries = requirementLogEntries(req, t, reports);
     const openRecord = (block, group, marker) => {
       const id = "pw-requirement-record-" + group + "-" + marker;
       if (useOrderedLayout) setFocus({ block, elementId: id });
       else setDrawer({ id: block, trigger: "pw-req-read-log", focusId: id });
     };
-    const reviewProps = { req, root, t, busy, sessionId, onApprove, onReject, onReportSnapshot: setReportSnapshot };
+    const openReport = (marker, trigger, drawer2) => onOpenReport?.(marker, { trigger, drawer: drawer2, ordered: useOrderedLayout });
+    const reviewProps = { req, root, t, busy, sessionId, onApprove, onReject, onReportSnapshot: setReportSnapshot, onOpenReport: openReport };
     const addDevelopmentNote = canEdit ? (text) => mutate("requirement/addUpdate", { root, id: req.id, text }) : void 0;
     const blocks = {
       basic: {
         label: t("reqBasic"),
-        summary: requirementOverview(req).split(/\r?\n/)[0],
+        summary: shortRecordedText(req.goal) || shortRecordedText(requirementOverview(req)),
         body: editing ? h24(
           "form",
           { noValidate: true, onSubmit: (e) => {
@@ -6733,7 +7342,7 @@ ${detail.trim()}` : value);
             h24("button", { type: "submit", className: "pw-button primary", disabled: busy }, t("save")),
             h24("button", { type: "button", className: "pw-button", disabled: busy, onClick: form.finish }, t("cancel"))
           )
-        ) : h24(import_react24.default.Fragment, null, h24(RequirementOverview, { req, t }), mode === "organize" && drafts)
+        ) : h24(import_react24.default.Fragment, null, h24(RequirementOverview, { req, t, compact: !useOrderedLayout }), mode === "organize" && drafts)
       },
       discovery: {
         label: t("discoveryRecords"),
@@ -6825,7 +7434,7 @@ ${detail.trim()}` : value);
           entries,
           t,
           onOpenIssue,
-          onOpenReport: (marker) => openRecord("review", "report", marker),
+          onOpenReport: (marker, trigger) => openReport(marker, trigger, useOrderedLayout ? void 0 : "log"),
           onOpenReview: (marker) => openRecord("review", "review", marker),
           onOpenAcceptance: (marker) => openRecord("delivery", "delivery", marker)
         })
@@ -6853,7 +7462,7 @@ ${detail.trim()}` : value);
           h24("span", { className: "pw-note" }, t("errUnreadable")),
           h24("button", { type: "button", className: "pw-button pw-quiet", onClick: reportSnapshot.retry }, t("retryRead"))
         ),
-        h24(RequirementReviewHistory, { reports, t }),
+        !!reports.length && h24(RequirementReviewHistory, { reports, t, onOpenReport: (marker, trigger) => openReport(marker, trigger, "review") }),
         h24(RequirementReviewDecisions, { req, t }),
         !reviewCount && reportSnapshot.state !== "unavailable" && h24("p", { className: "pw-note" }, reviewSummary)
       ),
@@ -6873,7 +7482,7 @@ ${detail.trim()}` : value);
       return h24(ReadingLink, {
         key: id,
         id: "pw-req-read-" + id,
-        label: block.label,
+        label: id === "basic" ? t("reqInformation") : block.label,
         summary,
         onClick: (event) => showDrawer(id, event.currentTarget)
       });
@@ -6883,14 +7492,23 @@ ${detail.trim()}` : value);
       ready: ["in_progress", "startDev"],
       in_progress: ["pending", "submit"]
     }[req.status];
-    const transitionButton = transition && h24("button", {
-      type: "button",
-      className: "pw-button" + (req.status === "in_progress" ? "" : " primary"),
-      disabled: busy,
-      onClick: () => onMove(req, transition[0])
-    }, t(transition[1]));
+    const unplanned = req.status === "ready" && (!tasks.length || tasks.some((task) => startBlockers(task).length));
+    const unfinished = req.status === "in_progress" ? tasks.filter((task) => !["done", "cancelled"].includes(task.status)).length : 0;
+    const transitionHint = req.status === "in_progress" ? !tasks.length ? t("errNoTasks") : unfinished ? t("reqDeliveryUnfinished").replace("{n}", String(unfinished)) : "" : "";
+    const transitionButton = transition && !unplanned && h24(
+      import_react24.default.Fragment,
+      null,
+      transitionHint && h24("span", { id: "pw-req-transition-hint", className: "pw-note", role: "status" }, transitionHint),
+      h24("button", {
+        type: "button",
+        className: "pw-button" + (req.status === "in_progress" ? "" : " primary"),
+        disabled: busy,
+        "aria-describedby": transitionHint ? "pw-req-transition-hint" : void 0,
+        onClick: () => onMove(req, transition[0])
+      }, t(transition[1]))
+    );
     const activeDrawer = !editing && !managePrds && !useOrderedLayout && drawer && {
-      title: blocks[drawer.id].label,
+      title: drawer.id === "basic" ? t("reqInformation") : blocks[drawer.id].label,
       key: drawer.id,
       scrollKey: drawer.id === "prds" ? "prds:" + (initialPrdId ?? "") : drawer.id,
       body: readOnlyBodies[drawer.id],
@@ -7001,8 +7619,11 @@ ${detail.trim()}` : value);
         root,
         t,
         busy,
+        PreparationModal,
         hasDiscoverySession: !!discovery.result?.data?.sessionId,
-        open: (kind, input) => openPreparation(req.id, kind, input)
+        open: (kind, input) => openPreparation(req.id, kind, input),
+        focusRequest: preparationFocus,
+        onFocusHandled: onPreparationFocusHandled
       }),
       detailContent
     );
@@ -7041,6 +7662,7 @@ ${detail.trim()}` : value);
     const done = tasks.filter((task) => task.status === "done").length;
     const cancelled = tasks.filter((task) => task.status === "cancelled").length;
     const effective = tasks.length - cancelled;
+    const emptyPlan = planning && !tasks.length;
     const flags = [["blocked", "devBlocked"], ["in_review", "devInReview"]].map(([status, label]) => [status, label, tasks.filter((task) => task.status === status).length]);
     return h24(
       "section",
@@ -7072,11 +7694,16 @@ ${detail.trim()}` : value);
       h24(
         "div",
         { className: "pw-req-task-head" },
-        h24("h3", { id: "pw-req-task-heading", tabIndex: -1 }, t("reqTasks"), " ", h24("span", { className: "pw-count" }, String(tasks.length))),
+        h24(
+          "h3",
+          { id: "pw-req-task-heading", tabIndex: -1 },
+          t(emptyPlan ? "reqPlanFirstTask" : "reqTasks"),
+          tasks.length > 0 && h24("span", { className: "pw-count" }, " ", String(tasks.length))
+        ),
         !locked && h24(
           "div",
           { className: "pw-actions" },
-          h24("button", { type: "button", className: "pw-button", disabled: busy, onClick: onCreateTask }, t("newTask")),
+          h24("button", { type: "button", className: "pw-button" + (emptyPlan ? " primary" : ""), disabled: busy, onClick: onCreateTask }, t("newTask")),
           onSuggest && h24("button", { type: "button", id: "pw-suggest-" + req.id, className: "pw-button pw-quiet", disabled: busy, onClick: onSuggest }, t("aiSplit")),
           tasks.length > 1 && onReorderTask && h24("button", {
             type: "button",
@@ -7087,9 +7714,8 @@ ${detail.trim()}` : value);
           }, t(sorting ? "reqFinishOrder" : "reqTaskOrder"))
         )
       ),
-      planning && h24("p", { className: "pw-note" }, t("planTasksHint")),
       suggestionReview,
-      !visible.length && h24("p", { className: "pw-note", role: "status" }, t(filter ? "noResults" : "reqNoTasks")),
+      !visible.length && !emptyPlan && h24("p", { className: "pw-note", role: "status" }, t(filter ? "noResults" : "reqNoTasks")),
       filter && !sorting && h24("button", { type: "button", className: "pw-button pw-quiet", onClick: () => onFilter?.("") }, t("reqClearTaskFilter")),
       !!visible.length && h24(
         "table",
@@ -7101,44 +7727,48 @@ ${detail.trim()}` : value);
           h24("th", { scope: "col" }, t("reqTaskStatus")),
           showOperations && h24("th", { scope: "col" }, t("reqTaskOperations"))
         )),
-        h24("tbody", null, visible.map((task, index) => h24(
-          "tr",
-          { key: task.id },
-          h24(
-            "td",
-            null,
-            h24("button", { type: "button", id: "pw-task-" + task.id, className: "pw-issue-title", onClick: () => onOpenIssue(task.id) }, task.title)
-          ),
-          h24("td", null, readOnly ? h24("span", { className: "pw-istatus st-" + task.status }, t("st_" + task.status)) : h24(IssueStatusSelect, { req, issue: task, t, moveIssue, busy })),
-          showOperations && h24("td", null, sorting ? h24(
-            "span",
-            { className: "pw-actions" },
-            h24("button", {
+        h24("tbody", null, visible.map((task, index) => {
+          const missing = planning ? startBlockers(task) : [];
+          return h24(
+            "tr",
+            { key: task.id },
+            h24(
+              "td",
+              null,
+              h24("button", { type: "button", id: "pw-task-" + task.id, className: "pw-issue-title", onClick: () => onOpenIssue(task.id) }, task.title),
+              missing.length > 0 && h24("div", { className: "pw-note" }, t("reqPlanMissing").replace("{fields}", () => missing.map((field) => t({ title: "issueTitle", problemOverview: "taskOverviewField", acceptance: "taskCriteriaField" }[field])).join(t("fieldSeparator"))))
+            ),
+            h24("td", null, readOnly ? h24("span", { className: "pw-istatus st-" + task.status }, t("st_" + task.status)) : h24(IssueStatusSelect, { req, issue: task, t, moveIssue, busy })),
+            showOperations && h24("td", null, sorting ? h24(
+              "span",
+              { className: "pw-actions" },
+              h24("button", {
+                type: "button",
+                className: "pw-orderbtn",
+                disabled: busy || index === 0,
+                "aria-label": t("moveUp") + " \xB7 " + task.title,
+                onClick: () => onReorderTask(task.id, "up")
+              }, "\u2191"),
+              h24("button", {
+                type: "button",
+                className: "pw-orderbtn",
+                disabled: busy || index === tasks.length - 1,
+                "aria-label": t("moveDown") + " \xB7 " + task.title,
+                onClick: () => onReorderTask(task.id, "down")
+              }, "\u2193")
+            ) : task.status === "in_review" ? h24("button", {
               type: "button",
-              className: "pw-orderbtn",
-              disabled: busy || index === 0,
-              "aria-label": t("moveUp") + " \xB7 " + task.title,
-              onClick: () => onReorderTask(task.id, "up")
-            }, "\u2191"),
-            h24("button", {
-              type: "button",
-              className: "pw-orderbtn",
-              disabled: busy || index === tasks.length - 1,
-              "aria-label": t("moveDown") + " \xB7 " + task.title,
-              onClick: () => onReorderTask(task.id, "down")
-            }, "\u2193")
-          ) : task.status === "in_review" ? h24("button", {
-            type: "button",
-            className: "pw-button pw-quiet pw-startbtn",
-            disabled: busy,
-            "aria-label": `${t("taskGoToAcceptance")} \xB7 ${task.title}`,
-            onClick: () => onOpenIssue(task.id, true)
-          }, t("taskGoToAcceptance")) : onStartTask && ["todo", "doing", "blocked"].includes(task.status) && h24(
-            "button",
-            { type: "button", className: "pw-button pw-quiet pw-startbtn", disabled: busy, onClick: () => onStartTask(task.id) },
-            t(task.status === "todo" ? "startTask" : "demoContinue")
-          ))
-        )))
+              className: "pw-button pw-quiet pw-startbtn",
+              disabled: busy,
+              "aria-label": `${t("taskGoToAcceptance")} \xB7 ${task.title}`,
+              onClick: () => onOpenIssue(task.id, true)
+            }, t("taskGoToAcceptance")) : onStartTask && ["todo", "doing", "blocked"].includes(task.status) && h24(
+              "button",
+              { type: "button", className: "pw-button pw-quiet pw-startbtn", disabled: busy, onClick: () => onStartTask(task.id) },
+              t(task.status === "todo" ? "startTask" : "demoContinue")
+            ))
+          );
+        }))
       ),
       children
     );
@@ -7146,6 +7776,8 @@ ${detail.trim()}` : value);
   var requirementDetailCss = `
 .pw-req-drawer-actions{margin-block-end:8px}
 .pw-req-head-actions{justify-content:flex-end;max-width:100%}
+.pw-review-history{padding:0;max-height:none}
+.pw-review-history>.pw-update{justify-content:space-between;align-items:center;flex-wrap:wrap}
 .pw-req-lead{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;color:var(--dsw-alias-label-secondary);max-width:55em;margin:0 0 16px}
 .pw-req-progress{padding:13px 14px;margin:0 0 18px;border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:var(--dsw-alias-bg-base)}
 .pw-req-progress-heading{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 12px}
@@ -7178,7 +7810,7 @@ ${detail.trim()}` : value);
   // client-src/detail/acceptance-assist.js
   var import_react25 = __toESM(__require("react"), 1);
   var h25 = import_react25.default.createElement;
-  var { useEffect: useEffect15, useRef: useRef13, useState: useState16 } = import_react25.default;
+  var { useEffect: useEffect15, useRef: useRef15, useState: useState16 } = import_react25.default;
   var acceptanceAssistLocale = {
     zh: {
       acceptanceHelp: "\u4EFB\u52A1\u9A8C\u6536\u8F85\u52A9",
@@ -7188,6 +7820,7 @@ ${detail.trim()}` : value);
       acceptanceCheckReport: "\u67E5\u770B AI \u9A8C\u6536\u62A5\u544A",
       acceptanceGuideSteps: "\u5B9E\u64CD\u9A8C\u6536\u6B65\u9AA4",
       acceptanceGuideExpected: "\u6B63\u5E38\u5E94\u770B\u5230",
+      acceptanceOpenGuide: "\u67E5\u770B\u5B9E\u64CD\u6B65\u9AA4\uFF08{n} \u6B65\u5F85\u6838\u5BF9\uFF09",
       acceptanceGuideNotNeeded: "\u65E0\u9700\u5B9E\u64CD\u3002\u8BF7\u6309\u4EFB\u52A1\u5B8C\u6210\u6807\u51C6\u6838\u5BF9\u6D4B\u8BD5\u548C\u9A8C\u8BC1\u8BB0\u5F55\u3002",
       acceptanceGuideUnknown: "\u6682\u672A\u627E\u5230\u53EF\u6838\u5BF9\u7684\u7528\u6237\u64CD\u4F5C\u5165\u53E3\u3002",
       acceptanceRunHint: "AI \u9A8C\u6536\u4F1A\u5C1D\u8BD5\u8FD0\u884C\u68C0\u67E5\u547D\u4EE4\uFF0C\u53EF\u80FD\u6D88\u8017\u6A21\u578B\u989D\u5EA6\u3002",
@@ -7235,6 +7868,7 @@ ${detail.trim()}` : value);
       acceptanceCheckReport: "View the AI check report",
       acceptanceGuideSteps: "Hands-on acceptance steps",
       acceptanceGuideExpected: "Expected result",
+      acceptanceOpenGuide: "View hands-on steps ({n} to verify)",
       acceptanceGuideNotNeeded: "No hands-on steps needed. Review the tests and verification records against the task criteria.",
       acceptanceGuideUnknown: "No user-facing action could be verified from the available information.",
       acceptanceRunHint: "AI checks may run commands and use model credits.",
@@ -7288,11 +7922,11 @@ ${detail.trim()}` : value);
     for (const listener of entry.listeners) listener();
   };
   function AcceptanceAssist({ req, issue, root, sessionId, t, busy = false, onRunningChange, memory, compact = false, showInstructions = true }) {
-    const localMemory = useRef13({});
+    const localMemory = useRef15({});
     const cache = (memory ?? localMemory.current).acceptanceAssist ??= {};
     const entry = cache[JSON.stringify([root, req.id, issue.id])] ??= { pending: "", results: {}, error: null, listeners: /* @__PURE__ */ new Set() };
     const [, redraw] = useState16(0);
-    const runningCallback = useRef13(onRunningChange);
+    const runningCallback = useRef15(onRunningChange);
     const context = JSON.stringify([req.hash, req.status, issue.hash, issue.status]);
     const reviewable = req.status === "in_progress" && !req.pendingReopen && issue.status === "in_review";
     runningCallback.current = onRunningChange;
@@ -7348,10 +7982,11 @@ ${detail.trim()}` : value);
           );
         }
         const sources = result.sources ?? [];
-        return h25(
+        const insufficient = sources.length < result.sourcesRequested && h25("p", { className: "pw-note" }, t("acceptanceSourcesInsufficient"));
+        const guide = h25(
           "section",
           { className: "pw-reading-block pw-assist-report", "aria-label": t("acceptanceGuideSteps") },
-          staleNotice,
+          !compact && staleNotice,
           h25("h4", null, t("acceptanceGuideSteps")),
           h25("ol", { className: "pw-reading-list pw-guide-steps" }, result.steps.map(({ action, expected }, index) => h25(
             "li",
@@ -7359,7 +7994,7 @@ ${detail.trim()}` : value);
             h25("span", null, action),
             h25("p", { className: "pw-note" }, t("acceptanceGuideExpected"), " \xB7 ", expected)
           ))),
-          sources.length < result.sourcesRequested && h25("p", { className: "pw-note" }, t("acceptanceSourcesInsufficient")),
+          !compact && insufficient,
           h25(
             "details",
             { className: "pw-disclosure pw-assist-disclosure" },
@@ -7375,6 +8010,18 @@ ${detail.trim()}` : value);
             result.childId && h25("p", { className: "pw-note" }, t("acceptanceSession"), "\uFF1A", result.childId)
           )
         );
+        return compact ? h25(
+          import_react25.default.Fragment,
+          null,
+          staleNotice,
+          insufficient,
+          h25(
+            "details",
+            { className: "pw-disclosure pw-assist-disclosure" },
+            h25("summary", null, t("acceptanceOpenGuide").replace("{n}", String(result.steps.length))),
+            guide
+          )
+        ) : guide;
       }
       const commands = Array.isArray(result.commands) ? result.commands : [];
       const report = h25(
@@ -7469,6 +8116,16 @@ ${detail.trim()}` : value);
     zh: {
       taskInfo: "\u4EFB\u52A1\u4FE1\u606F",
       taskOpenInfo: "\u67E5\u770B\u8BE6\u60C5",
+      taskCurrentGoal: "\u5F53\u524D\u76EE\u6807",
+      taskRecordedResult: "\u5DF2\u8BB0\u5F55\u7ED3\u679C\uFF0C\u5F85\u6838\u5BF9",
+      taskReadLimits: "\u6709\u5DF2\u8BB0\u5F55\u7684\u9650\u5236\uFF0C\u8BF7\u6838\u5BF9\u9A8C\u8BC1\u8BB0\u5F55\u3002",
+      taskReadReason: "\u5DF2\u8BB0\u5F55\u539F\u56E0\uFF0C\u8BF7\u67E5\u770B\u4EFB\u52A1\u4FE1\u606F\u3002",
+      taskCheck_failed: "\u672A\u901A\u8FC7\u7684\u68C0\u67E5",
+      taskCheck_incomplete: "\u5F85\u6838\u5B9E\u7684\u68C0\u67E5",
+      taskCheck_passed: "\u5DF2\u901A\u8FC7\u7684\u68C0\u67E5",
+      taskCheckFollowUp: "\u8865\u5145\u9A8C\u8BC1\u8BB0\u5F55",
+      taskDecision: "\u4EBA\u5DE5\u51B3\u5B9A",
+      taskPriorOutcome: "\u8FD4\u56DE\u610F\u89C1",
       taskInfoEmpty: "\u5C1A\u672A\u8BB0\u5F55\u64CD\u4F5C\u6B65\u9AA4\u3001\u6839\u56E0\u6216\u8865\u5145\u8BF4\u660E\u3002",
       taskReadProgress: "\u67E5\u770B\u5B8C\u6574\u8FDB\u5C55",
       taskPreviousEvidence: "\u6B64\u524D\u7684\u4EBA\u5DE5\u9A8C\u8BC1\u8BB0\u5F55",
@@ -7498,6 +8155,16 @@ ${detail.trim()}` : value);
     en: {
       taskInfo: "Task information",
       taskOpenInfo: "View details",
+      taskCurrentGoal: "Current goal",
+      taskRecordedResult: "Result recorded. Review it before deciding.",
+      taskReadLimits: "Review the known limits in the verification records.",
+      taskReadReason: "The reason is recorded in Task information.",
+      taskCheck_failed: "Failed checks",
+      taskCheck_incomplete: "Checks to verify",
+      taskCheck_passed: "Passed checks",
+      taskCheckFollowUp: "Follow-up verification",
+      taskDecision: "Decision",
+      taskPriorOutcome: "Return feedback",
       taskInfoEmpty: "No steps, root cause, or additional notes have been recorded.",
       taskReadProgress: "Read full progress",
       taskPreviousEvidence: "Previous manual verification record",
@@ -7592,6 +8259,8 @@ ${detail.trim()}` : value);
     const supplementary = description !== overview ? description : "";
     const hasExtraInfo = !!(issue.triggerPath?.trim() || issue.rootCause?.trim() || supplementary || issue.refs?.length);
     const infoOpen = drawerView?.kind === "info";
+    const showInfoFirst = ["todo", "doing"].includes(issue.status);
+    const taskReason = issue.status === "blocked" ? issue.blocked_reason : issue.status === "cancelled" ? cancellationReason(issue) : "";
     const planning = req.status === "ready";
     const inactive = req.status !== "in_progress" || !!req.pendingReopen;
     const mayRecord = !inactive && ["todo", "doing", "blocked"].includes(issue.status);
@@ -7602,9 +8271,9 @@ ${detail.trim()}` : value);
     const reworkReason = mayRecord && taskReworkReason(issue);
     const missing = startBlockers(issue);
     const runLocked = !!runFact && (["starting", "running"].includes(runFact.runState) || runFact.sessionRunning);
-    const showDrawer = (kind, trigger, initialProgress) => {
+    const showDrawer = (kind, trigger, initialProgress, focusId) => {
       if (drawerView?.kind === "prds" && kind !== "prds") onClosePrds?.();
-      setDrawerView(kind ? { kind, trigger, initialProgress } : null);
+      setDrawerView(kind ? { kind, trigger, initialProgress, focusId } : null);
     };
     const closeDrawer = () => showDrawer(null);
     const begin = (focus = "title") => {
@@ -7632,18 +8301,14 @@ ${detail.trim()}` : value);
       }
     };
     const reviewNotice = runLocked ? "runRunning" : assistRunning ? "taskReviewAssistRunning" : !reviewReady ? "taskReviewNeedsResult" : null;
+    const showTaskMissing = mayRecord && missing.length > 0 && !runLocked;
     const reviewStep = reviewing && h26(
       "section",
-      { className: "pw-task-review-step", "aria-labelledby": "pw-task-acceptance" },
+      { className: "pw-task-review-step", "aria-labelledby": "pw-task-decision" },
       h26(
         "div",
         { className: "pw-task-review-head" },
-        h26(
-          "div",
-          null,
-          h26("h3", { id: "pw-task-acceptance", tabIndex: -1 }, t("taskReviewTitle")),
-          h26("p", { className: "pw-note" }, t("taskReviewInstruction"))
-        ),
+        h26("h3", { id: "pw-task-decision", tabIndex: -1 }, t("taskDecision")),
         h26(
           "div",
           { className: "pw-actions" },
@@ -7669,12 +8334,12 @@ ${detail.trim()}` : value);
     const actions = h26(
       "div",
       { className: "pw-actions" },
+      issue.status === "blocked" && !inactive && h26("button", { className: "pw-button primary", disabled: busy, onClick: () => setSupplementing((v) => !v) }, t("supplement")),
       mayRecord && h26(
         "button",
-        { className: "pw-button" + (reworkReason && reviewReady ? "" : " primary"), disabled: busy || runLocked, title: runLocked ? t("runRunning") : void 0, onClick: startWork },
+        { className: "pw-button" + (issue.status === "blocked" || reworkReason && reviewReady ? "" : " primary"), disabled: busy || runLocked, title: runLocked ? t("runRunning") : void 0, onClick: startWork },
         t(missing.length ? "completeTaskInfo" : issue.status === "todo" ? "startTask" : "demoContinue")
       ),
-      issue.status === "blocked" && !inactive && h26("button", { className: "pw-button", disabled: busy, onClick: () => setSupplementing((v) => !v) }, t("supplement")),
       mayRecord && (reworkReason ? reviewReady : hasResult) && h26("button", {
         className: "pw-button" + (reworkReason ? " primary" : ""),
         disabled: busy || runLocked,
@@ -7691,7 +8356,17 @@ ${detail.trim()}` : value);
       const entry = index >= 0 ? taskProgressRecords(issue.activity, t)[index] : null;
       showDrawer("progress", event.currentTarget, entry?.id);
     };
-    const readEvidence = (event) => drawerView?.kind === "evidence" ? closeDrawer() : showDrawer("evidence", event.currentTarget);
+    const readEvidence = (event, failure = false) => {
+      const focusId = failure && "pw-task-failed-checks";
+      const open = drawerView?.kind === "evidence";
+      if (open && !failure) return closeDrawer();
+      if (open && drawerView.focusId === focusId) {
+        const target = event.currentTarget.ownerDocument?.getElementById(focusId);
+        target?.focus();
+        return;
+      }
+      showDrawer("evidence", event.currentTarget, void 0, focusId);
+    };
     const rail = editing ? null : h26(
       import_react26.default.Fragment,
       null,
@@ -7716,6 +8391,8 @@ ${detail.trim()}` : value);
           "section",
           { className: "pw-task-info-body", tabIndex: 0, "aria-label": t("taskInfo") },
           h26(ReadingText, { label: t("taskOverviewField"), value: overview || t("taskMissing") }),
+          h26(ReadingText, { label: t("requirementCriteria"), value: issue.acceptance }),
+          h26(ReadingText, { label: t(issue.status === "blocked" ? "blockedReason" : "taskCancelReason"), value: taskReason }),
           h26(ReadingText, { label: t("taskSteps"), value: issue.triggerPath }),
           h26(ReadingText, { label: t("taskCause"), value: issue.rootCause }),
           h26(ReadingText, { label: t("taskSupplement"), value: supplementary }),
@@ -7736,7 +8413,13 @@ ${detail.trim()}` : value);
         focusId: drawerView.returnFocus ? "pw-prd-open-full" : void 0,
         body: renderPrds(setPrdSummary, { readOnly: true })
       };
-      if (kind === "evidence") drawer = { key: kind, trigger, title: t("taskReviewRecords"), body: h26(TaskVerificationRecords, { task: issue, t, since: req.deliveryStartedAt }) };
+      if (kind === "evidence") drawer = {
+        key: kind,
+        trigger,
+        focusId: drawerView.focusId,
+        title: t("taskReviewRecords"),
+        body: h26(TaskVerificationRecords, { task: issue, t, since: req.deliveryStartedAt, focusFailedId: "pw-task-failed-checks" })
+      };
       if (kind === "progress") drawer = {
         key: kind,
         trigger,
@@ -7754,6 +8437,22 @@ ${detail.trim()}` : value);
         })
       };
     }
+    const info = !editing && h26(
+      "section",
+      { className: "pw-task-info" + (showInfoFirst ? "" : " pw-task-info-secondary"), "aria-labelledby": "pw-task-info-heading" },
+      h26(
+        "div",
+        { className: "pw-task-info-head" },
+        h26("h3", { id: "pw-task-info-heading", className: "pw-reading-label" }, t("taskInfo")),
+        h26("button", {
+          type: "button",
+          className: "pw-button",
+          "aria-expanded": infoOpen,
+          onClick: (event) => infoOpen ? closeDrawer() : showDrawer("info", event.currentTarget)
+        }, t("taskOpenInfo"), h26("span", { className: "pw-reading-chevron", "aria-hidden": true }, "\u203A"))
+      ),
+      showInfoFirst && h26("p", { className: "pw-text pw-preview" }, overview || t("taskMissing"))
+    );
     const scrollKey = `${projectKey}:${issue.id}` + (reviewing ? `:review:${issue.inReviewAt || issue.deliveryStartedAt || 0}` : "");
     return h26(
       ReadingLayout,
@@ -7773,22 +8472,7 @@ ${detail.trim()}` : value);
           ),
           !editing && !terminal && h26("button", { className: "pw-button", onClick: () => begin() }, t("edit"))
         ),
-        !editing && h26(
-          "section",
-          { className: "pw-task-info", "aria-labelledby": "pw-task-info-heading" },
-          h26(
-            "div",
-            { className: "pw-task-info-head" },
-            h26("h3", { id: "pw-task-info-heading", className: "pw-reading-label" }, t("taskInfo")),
-            h26("button", {
-              type: "button",
-              className: "pw-button",
-              "aria-expanded": infoOpen,
-              onClick: (event) => infoOpen ? closeDrawer() : showDrawer("info", event.currentTarget)
-            }, t("taskOpenInfo"), h26("span", { className: "pw-reading-chevron", "aria-hidden": true }, "\u203A"))
-          ),
-          h26("p", { className: "pw-text pw-preview" }, overview || t("taskMissing"))
-        ),
+        showInfoFirst && info,
         notice && h26("p", { className: "pw-note", role: "status" }, notice),
         runLocked && !editing && !reviewing && h26("p", { className: "pw-note", role: "status" }, t("runRunning")),
         editing ? h26(TaskForm, { form: { ...form, change: (...args) => {
@@ -7797,12 +8481,11 @@ ${detail.trim()}` : value);
         } }, t, busy, focus: formFocus, error: formError, onSave: save, onCancel: form.finish }) : h26(
           import_react26.default.Fragment,
           null,
-          reviewStep,
           reworkReason && h26(
             "section",
             { className: "pw-task-review-step", "aria-labelledby": "pw-task-rework" },
             h26("h3", { id: "pw-task-rework", tabIndex: -1 }, t("taskRejected")),
-            h26("p", { className: "pw-text" }, reworkReason),
+            shortRecordedText(reworkReason) ? h26("p", { className: "pw-text" }, reworkReason) : h26("details", { className: "pw-disclosure" }, h26("summary", null, t("taskPriorOutcome")), h26(ReadingText, { value: reworkReason })),
             h26("p", { className: "pw-note" }, t(reviewReady ? "taskReworkReady" : "taskReworkNext")),
             actions
           ),
@@ -7812,6 +8495,7 @@ ${detail.trim()}` : value);
               task: issue,
               since: req.deliveryStartedAt,
               t,
+              resultActions: reviewStep,
               hidePriorResult: !!reworkReason && !hasResult,
               evidenceOpen: drawerView?.kind === "evidence",
               reviewTools: reviewing && h26(AcceptanceAssist, {
@@ -7830,6 +8514,10 @@ ${detail.trim()}` : value);
               onAdd: terminal || inactive ? void 0 : (text) => mutate("issue/addUpdate", { root, reqId: req.id, id: issue.id, text })
             },
             inactive && h26("p", { className: "pw-note" }, t(planning ? "planTasksHint" : req.pendingReopen ? "errReopenPending" : "errNotActive")),
+            showTaskMissing && h26("p", { className: "pw-note" }, t("errRequiredFields").replace(
+              "{fields}",
+              missing.map((field) => field === "title" ? t("issueTitle") : draftFieldLabel(field, t)).join(t("fieldSeparator"))
+            )),
             !reworkReason && actions,
             supplementing && h26(
               "form",
@@ -7842,7 +8530,8 @@ ${detail.trim()}` : value);
                 h26("button", { type: "button", className: "pw-button pw-quiet", disabled: busy, onClick: () => setSupplementing(false) }, t("cancel"))
               )
             )
-          )
+          ),
+          !showInfoFirst && info
         ),
         recording && h26(TaskResultForm, {
           task: issue,
@@ -7860,6 +8549,7 @@ ${detail.trim()}` : value);
 .pw-task-info-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px 12px}
 .pw-task-info-head .pw-reading-label,.pw-task-info .pw-preview{margin:0}
 .pw-task-info .pw-preview{line-height:1.5}
+.pw-task-info-secondary{margin-block:14px 0;padding-block:10px 0;border-block-start:1px solid var(--dsw-alias-border-l3);border-block-end:0}
 .pw-task-info-head .pw-reading-chevron{margin-inline-start:6px}
 .pw-task-info-body{line-height:1.6}
 .pw-task-info-body:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:3px}
@@ -7867,35 +8557,33 @@ ${detail.trim()}` : value);
 .pw-task-reading>.pw-reading-block,.pw-task-acceptance>.pw-reading-block,.pw-task-progress-preview{max-inline-size:46em}
 .pw-issue-page .pw-task-acceptance{max-width:none;gap:14px}
 .pw-task-review-step{display:grid;gap:8px;padding:12px 14px;margin-block-end:16px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base)}
-.pw-task-review-head,.pw-task-review-checks{display:flex;align-items:center;justify-content:space-between;gap:8px 16px;flex-wrap:wrap}
-.pw-task-review-head>div:first-child{flex:1 1 240px}
-.pw-task-review-step h3{margin:0;font-size:1.08em}
+.pw-task-review-head{display:flex;align-items:center;justify-content:space-between;gap:8px 16px;flex-wrap:wrap}
+.pw-task-review-step h3{margin:0;font-size:1em}
 .pw-task-review-step :is(.pw-note,.pw-text){margin:0;line-height:1.55;overflow-wrap:anywhere}
-.pw-task-review-step .pw-note,.pw-task-review-checks .pw-note{color:var(--dsw-alias-label-secondary)}
+.pw-task-review-step .pw-note{color:var(--dsw-alias-label-secondary)}
 .pw-task-review-step .pw-task-review-notice{color:var(--dsw-alias-label-primary);border-block-start:1px solid var(--dsw-alias-border-l3);padding-block-start:8px}
-.pw-task-review-step .pw-button,.pw-task-review-checks .pw-button{min-height:34px;max-width:100%;overflow-wrap:anywhere}
-.pw-task-review-compare{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}
-.pw-task-review-compare>.pw-reading-block{min-width:0;padding:10px 14px;border:1px solid var(--dsw-alias-border-l3);border-radius:8px}
-.pw-task-review-checks{border-block-start:1px solid var(--dsw-alias-border-l3);padding-block-start:10px}
-.pw-task-review-checks .pw-note{margin:0}
-.pw-task-review-checks .pw-reading-chevron{margin-inline-start:6px}
+.pw-task-review-step .pw-button{min-height:34px;max-width:100%;overflow-wrap:anywhere}
+.pw-task-acceptance .pw-reading-verification{display:flex;align-items:center;gap:5px 12px;flex-wrap:wrap}
+.pw-task-acceptance .pw-reading-verification strong{flex-basis:100%}
+.pw-reading-verification .pw-failed-checks{padding-inline:0;color:var(--dsw-alias-danger-primary,#e55654);text-decoration:underline;text-underline-offset:3px}
+.pw-task-limits{padding-inline-start:10px;border-inline-start:2px solid var(--dsw-alias-border-l2)}
+.pw-task-limits>.pw-note{font-size:.82em}
+.pw-task-read-evidence{justify-self:start}
+.pw-task-read-evidence .pw-reading-chevron{margin-inline-start:6px}
+.pw-task-choice-group{display:grid;min-inline-size:0;margin:0 0 6px;padding:0;border:0}
+.pw-task-choice-group legend{max-inline-size:100%;padding:0 4px;overflow-wrap:anywhere}
+.pw-task-current-goal{margin:0}
 .pw-task-acceptance .pw-acceptance-assist{border-block-start:1px solid var(--dsw-alias-border-l3);padding-block-start:10px;overflow-wrap:anywhere}
 .pw-task-acceptance .pw-assist-actions>.pw-button{flex:0 1 auto}
 .pw-task-acceptance .pw-assist-hint{margin:2px 0 0;color:var(--dsw-alias-label-secondary);font-size:.86em;line-height:1.4}
 .pw-task-acceptance .pw-assist-actions+.pw-assist-hint{margin-block-start:6px}
-.pw-task-verification-pair{display:grid;gap:12px;align-items:start;grid-template-columns:minmax(0,1fr)}
-.pw-task-verification-pair>*{min-inline-size:0}
-.pw-task-verification{padding-block:7px}
-.pw-task-verification>.pw-quiet{padding-inline:0;color:var(--dsw-alias-brand-primary);margin-top:3px}
-@container (min-width:545px){
-  .pw-task-verification-pair:has(.pw-reading-criteria){grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px}
-  .pw-task-verification-pair:has(.pw-reading-criteria)>.pw-task-verification{padding-inline-start:16px;border-inline-start:1px solid var(--dsw-alias-border-l3)}
-}
-@container (min-width:475px){.pw-task-review-compare{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}}
 .pw-task-progress-preview{padding-block-start:10px;border-block-start:1px solid var(--dsw-alias-border-l3)}
 .pw-task-progress-preview .pw-text{margin:0 0 6px}
 .pw-task-progress-preview .pw-actions>.pw-quiet{padding-inline:7px}
-.pw-task-progress-records .pw-progress-item[open] summary .pw-preview{display:block}
+.pw-progress-item summary .pw-progress-summary{-webkit-line-clamp:1}
+.pw-task-evidence .pw-progress-item{border-block-end:1px solid var(--dsw-alias-border-l3)}
+.pw-task-evidence .pw-progress-item pre{font-family:var(--dsw-alias-font-mono,monospace)}
+.pw-task-check-group h3:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
 .pw-task-evidence,.pw-task-info-body{display:grid;gap:12px;min-width:0}
 :is(.pw-task-evidence,.pw-task-info-body) :is(.pw-reading-block,.pw-text){margin-block:0}
 .pw-task-evidence .pw-text{white-space:pre-wrap;overflow-wrap:anywhere}
@@ -7903,7 +8591,7 @@ ${detail.trim()}` : value);
 
   // client-src/shell/main-shell.js
   var h27 = import_react27.default.createElement;
-  var { useCallback: useCallback5, useEffect: useEffect17, useRef: useRef14, useState: useState18 } = import_react27.default;
+  var { useCallback: useCallback5, useEffect: useEffect17, useRef: useRef16, useState: useState18 } = import_react27.default;
   var EMPTY_WORKSPACES = [];
   var useNoWorkspaces = (selector) => selector({ items: EMPTY_WORKSPACES });
   var useNoSessionStatus = () => void 0;
@@ -7934,15 +8622,15 @@ ${detail.trim()}` : value);
   var PAGE_COMPONENTS = { home: HomePage, pool: PoolPage, review: ReviewPage, ready: ReadyPage, dev: DevPage, blocked: BlockedPage, board: BoardPage, pending: PendingPage, records: RecordsPage };
   var pageLabel = (page) => ({ home: "navHome", pool: "navPool", review: "navReview", ready: "navReady", dev: "navDev", blocked: "navBlocked", board: "navBoard", pending: "navPending", records: "navRecords", wiki: "navWiki", arch: "navArch", prds: "navPrds", sync: "viewSync" })[page] ?? "navHome";
   function MainShell(props) {
-    const { t, useCurrentSession, useSessions, useWorkspaces, useSessionStatus, uiMemory: uiMemory2, css: css2, showConversation, enterSession, renderFactorySlot } = props;
+    const { t, useCurrentSession, useSessions, useWorkspaces, useSessionStatus, uiMemory: uiMemory2, css: css2, showConversation, enterSession, renderFactorySlot, PreparationModal } = props;
     const sessionId = useCurrentSession((v) => v);
     const session = useSessions((s) => sessionId === void 0 ? void 0 : s.byId[sessionId]);
     const sessionRoot = session?.cwd;
     const sessionIndex = useSessions((s) => s?.byId ?? {});
     const sessionStatus = (useSessionStatus ?? useNoSessionStatus)((s) => s);
-    const sessionStatusRef = useRef14(sessionStatus);
+    const sessionStatusRef = useRef16(sessionStatus);
     sessionStatusRef.current = sessionStatus;
-    const mountedRef = useRef14(true);
+    const mountedRef = useRef16(true);
     useEffect17(() => {
       mountedRef.current = true;
       return () => {
@@ -7959,16 +8647,16 @@ ${detail.trim()}` : value);
     const currentWorkspace = pickedWorkspace;
     const wsTitle = currentWorkspace?.title || baseName2(root) || t("title");
     const projectKey = picked?.id ? "id:" + picked.id : root ? "path:" + root : "";
-    const prevKey = useRef14(projectKey);
+    const prevKey = useRef16(projectKey);
     const keyChanged = prevKey.current !== projectKey;
     prevKey.current = projectKey;
-    const rootRef = useRef14(root);
+    const rootRef = useRef16(root);
     const rootChanged = rootRef.current !== root;
     rootRef.current = root;
     const [nav, setNav] = useState18(() => normalizeViewState(uiMemory2.views[projectKey]));
-    const navRef = useRef14(nav);
+    const navRef = useRef16(nav);
     navRef.current = nav;
-    const lastWritten = useRef14(uiMemory2.views[projectKey]);
+    const lastWritten = useRef16(uiMemory2.views[projectKey]);
     const [data, setData] = useState18(null);
     const [error, setError] = useState18("");
     const [notice, setNotice] = useState18("");
@@ -7976,34 +8664,35 @@ ${detail.trim()}` : value);
     const [homeError, setHomeError] = useState18(null);
     const [runFacts, setRunFacts] = useState18(null);
     const [runError, setRunError] = useState18(null);
-    const runAuthSnapshot = useRef14(null);
+    const runAuthSnapshot = useRef16(null);
     const [blocked, setBlocked] = useState18({ proposals: null, deliveryFailed: [] });
     const [modal, setModal] = useState18(null);
-    const modalRef = useRef14(modal);
+    const modalRef = useRef16(modal);
     modalRef.current = modal;
     const [saving, setSaving] = useState18(false);
     const reorderMemory = uiMemory2.reorders ??= {};
     const [, setReorderRevision] = useState18(0);
     const pendingReorder = reorderMemory[projectKey];
     const [focusTarget, setFocusTarget] = useState18("");
-    const contentRef = useRef14(null);
+    const [preparationFocus, setPreparationFocus] = useState18(null);
+    const contentRef = useRef16(null);
     const [editFocus, setEditFocus] = useState18(null);
     const [undo, setUndo] = useState18(null);
     const [git, setGit] = useState18(null);
     const [wsMenu, setWsMenu] = useState18(false);
-    const wsAnchor = useRef14(null);
+    const wsAnchor = useRef16(null);
     const [newDraft, setNewDraft] = useState18(() => uiMemory2.newRequirements[projectKey] ?? emptyRequirementDraft);
     const [detailDirty, setDetailDirty] = useState18(false);
-    const listSeq = useRef14(0);
-    const gitSeq = useRef14(0);
-    const homeSeq = useRef14(0);
-    const blockedSeq = useRef14(0);
-    const runSeq = useRef14(0);
-    const runFactsRef = useRef14(null);
+    const listSeq = useRef16(0);
+    const gitSeq = useRef16(0);
+    const homeSeq = useRef16(0);
+    const blockedSeq = useRef16(0);
+    const runSeq = useRef16(0);
+    const runFactsRef = useRef16(null);
     if (keyChanged || rootChanged) runFactsRef.current = null;
-    const homeStamp = useRef14(null);
-    const homeAuthSnapshot = useRef14(null);
-    const dataRef = useRef14(data);
+    const homeStamp = useRef16(null);
+    const homeAuthSnapshot = useRef16(null);
+    const dataRef = useRef16(data);
     dataRef.current = data;
     const initialized = !!(data && data.project);
     const refresh = useCallback5(async () => {
@@ -8144,6 +8833,7 @@ ${detail.trim()}` : value);
         setModal(null);
         setSaving(false);
         setFocusTarget("");
+        setPreparationFocus(null);
         setEditFocus(null);
         setDetailDirty(false);
         homeStamp.current = null;
@@ -8312,7 +9002,7 @@ ${detail.trim()}` : value);
       setEditFocus(null);
       writeNav(previous);
     });
-    const backRef = useRef14(back);
+    const backRef = useRef16(back);
     backRef.current = back;
     useEffect17(() => {
       if (nav.params || !focusTarget?.startsWith("pw-list-item-") || !contentRef.current) return;
@@ -8511,12 +9201,28 @@ ${detail.trim()}` : value);
       if (kind === "move") return submit(void 0, false, { reviewMarker: options.reviewMarker });
       if (kind === "reason") {
         const reprepare = req.status === "ready";
+        const origin = navRef.current;
+        const restoreFocus = options.triggerId && ((saved) => {
+          if (!saved && rootRef.current === root && navRef.current.params?.reqId === req.id) setFocusTarget(options.triggerId);
+        });
         setModal({
           kind,
-          title: t(reprepare ? "returnForPreparation" : "returnReview"),
+          title: t(options.missingKind ? "aiReviewReturnToPool" : reprepare ? "returnForPreparation" : "returnReview"),
           suggestion: options.suggestion,
+          initialReason: options.initialReason,
+          confirmLabel: t("aiReviewReturnConfirm"),
+          restoreFocus,
           body: reprepare ? t("returnForPreparationHint") : void 0,
-          onOk: (reason) => submit(reason, true, { confirmReviewInvalid: reprepare })
+          onOk: async (reason) => {
+            const result = await submit(reason, true, { confirmReviewInvalid: reprepare });
+            if (result.ok && mountedRef.current && rootRef.current === root && navRef.current === origin) {
+              const next = { reqId: req.id, issueId: null };
+              const view = origin.params?.reqId === req.id && !origin.params.issueId ? { ...origin, page: "pool", params: next } : openDetail(origin, next, "pool");
+              writeNav(view);
+              setPreparationFocus({ reqId: req.id, root, kind: options.missingKind });
+            }
+            return result;
+          }
         });
         return;
       }
@@ -8527,7 +9233,7 @@ ${detail.trim()}` : value);
         return;
       }
       setModal({ kind, req, onOk: () => submit(void 0, true) });
-    }, [mutate, root, t, saving, modal]);
+    }, [mutate, root, projectKey, t, saving, modal]);
     const moveIssue = (req, issue, to, triggerId) => {
       const label = ISSUE_MOVES[issue.status]?.[to];
       const rejecting = issue.status === "in_review" && to === "doing";
@@ -8827,7 +9533,11 @@ ${detail.trim()}` : value);
         import_react27.default.Fragment,
         null,
         h27("span", { className: "pw-crumb-sep" }, "/"),
-        selectedIssue || page === "pending" && params?.reqId && !selectedRecord ? h27("button", { className: "pw-crumb", onClick: back, title: selected.title }, t(page === "pending" ? "navPending" : "backToTasks")) : h27("span", { className: "pw-crumb-current" }, selected.title)
+        selectedIssue || params?.reviewReport || page === "pending" && params?.reqId && !selectedRecord ? h27(
+          "button",
+          { className: "pw-crumb", onClick: back, title: selected.title },
+          params?.reviewReport ? selected.title : t(page === "pending" ? "navPending" : "backToTasks")
+        ) : h27("span", { className: "pw-crumb-current" }, selected.title)
       ),
       selectedIssue && h27(
         import_react27.default.Fragment,
@@ -8840,6 +9550,12 @@ ${detail.trim()}` : value);
         null,
         h27("span", { className: "pw-crumb-sep" }, "/"),
         h27("span", { className: "pw-crumb-current" }, t("recordDetail"))
+      ),
+      params?.reviewReport && selected && h27(
+        import_react27.default.Fragment,
+        null,
+        h27("span", { className: "pw-crumb-sep" }, "/"),
+        h27("span", { className: "pw-crumb-current" }, t("aiReviewReport"))
       )
     );
     const selectAssociatedPrd = (prdId) => {
@@ -8856,6 +9572,18 @@ ${detail.trim()}` : value);
     const openAssociatedFull = (prdId) => {
       setFocusTarget(null);
       openDetailAt({ prdId, fromReading: true }, "prds");
+    };
+    const openReviewReport = (marker, returnPosition) => guardLeave(() => {
+      const view = navRef.current;
+      if (view.params?.reqId !== selected.id) return;
+      const origin = { ...view, params: { ...view.params, reviewReturn: returnPosition } };
+      writeNav(openDetail(origin, { reqId: selected.id, reviewReport: marker, fromDrawer: !!returnPosition.drawer }));
+    });
+    const clearReviewReturn = () => {
+      const view = navRef.current;
+      if (view.params?.reqId !== selected.id || !view.params?.reviewReturn) return;
+      const { reviewReturn, ...params2 } = view.params;
+      writeNav({ ...view, params: params2 });
     };
     const prdReadingMemory = uiMemory2.prdReading ??= {};
     const renderPrds = (onSummary, { readOnly, summaryOnly, manage } = {}) => h27(PrdDocuments, {
@@ -8896,6 +9624,16 @@ ${detail.trim()}` : value);
       })) : h27("div", { className: "pw-init" }, h27("p", null, t("errMissing")), h27("button", { className: "pw-button", onClick: back }, missingReturnLabel));
     } else if (params?.reqId && !selected) {
       content = h27("div", { className: "pw-init" }, h27("p", null, t("errMissing")), h27("button", { className: "pw-button", onClick: back }, missingReturnLabel));
+    } else if (selected && params?.reviewReport) {
+      content = h27(RequirementReportReader, {
+        key: projectKey + ":" + selected.id + ":" + params.reviewReport,
+        req: selected,
+        root,
+        marker: params.reviewReport,
+        t,
+        onBack: back,
+        fromDrawer: params.fromDrawer
+      });
     } else if (params?.issueId && !selectedIssue) {
       content = h27("div", { className: "pw-init" }, h27("p", null, t("errMissing")), h27("button", { className: "pw-button", onClick: back }, missingReturnLabel));
     } else if (selectedIssue) {
@@ -8935,6 +9673,7 @@ ${detail.trim()}` : value);
         rootRef,
         openDiscovery,
         openPreparation,
+        PreparationModal,
         initialPrdId: params?.prdId,
         restorePrds: params?.restorePrds,
         onClosePrds: closeAssociatedPrds,
@@ -8943,8 +9682,13 @@ ${detail.trim()}` : value);
         focusTarget,
         renderPrds,
         onMove: doMove,
+        reviewReturn: params?.reviewReturn,
+        onReviewReturnHandled: clearReviewReturn,
+        onOpenReport: openReviewReport,
+        preparationFocus: selected.status === "backlog" && preparationFocus?.reqId === selected.id && preparationFocus.root === root ? preparationFocus : void 0,
+        onPreparationFocusHandled: (handled) => setPreparationFocus((current) => current === handled ? null : current),
         onApprove: (reviewMarker) => doMove(selected, "ready", { reviewMarker }),
-        onReject: (suggestion) => doMove(selected, "backlog", { suggestion }),
+        onReject: (options) => doMove(selected, "backlog", options),
         onDirty: setDetailDirty,
         busy: saving || !!pendingReorder || !!modal,
         sessionId: sessionRoot === root ? sessionId : void 0,
@@ -9126,7 +9870,7 @@ ${detail.trim()}` : value);
 
   // client-src/rightbar/task-pane.js
   var h28 = import_react28.default.createElement;
-  var { useCallback: useCallback6, useEffect: useEffect18, useRef: useRef15, useState: useState19 } = import_react28.default;
+  var { useCallback: useCallback6, useEffect: useEffect18, useRef: useRef17, useState: useState19 } = import_react28.default;
   var EMPTY_WORKSPACES2 = [];
   var useNoWorkspaces2 = (selector) => selector({ items: EMPTY_WORKSPACES2 });
   var useNoSessionStatus2 = () => void 0;
@@ -9143,6 +9887,7 @@ ${detail.trim()}` : value);
       completeTaskInfo: "Fill in task info",
       parentRequirement: "Requirement",
       requirementDelivery: "Requirement delivery",
+      reviewInWorkbench: "Review and decide",
       selectDevRequirement: "Select a requirement in development",
       runInteraction: "The conversation needs your attention.",
       switchInteraction: "Handle the pending item in the conversation before switching tasks.",
@@ -9197,6 +9942,7 @@ ${detail.trim()}` : value);
       completeTaskInfo: "\u8865\u9F50\u4FE1\u606F",
       parentRequirement: "\u6240\u5C5E\u9700\u6C42",
       requirementDelivery: "\u9700\u6C42\u4EA4\u4ED8",
+      reviewInWorkbench: "\u6838\u5BF9\u5E76\u9A8C\u6536",
       selectDevRequirement: "\u9009\u62E9\u5F00\u53D1\u4E2D\u7684\u9700\u6C42",
       runInteraction: "\u4F1A\u8BDD\u4E2D\u6709\u5F85\u5904\u7406\u4E8B\u9879\u3002",
       switchInteraction: "\u4F1A\u8BDD\u4E2D\u6709\u5F85\u5904\u7406\u4E8B\u9879\uFF0C\u8BF7\u5148\u5728\u4F1A\u8BDD\u4E2D\u5904\u7406\u540E\u518D\u5207\u6362\u4EFB\u52A1\u3002",
@@ -9241,7 +9987,7 @@ ${detail.trim()}` : value);
       taskMissingTitle: "\u539F\u5173\u8054\u4EFB\u52A1\u6682\u65F6\u65E0\u6CD5\u6253\u5F00"
     }
   };
-  function TaskPane({ t, useCurrentSession, useSessions, useSessionStatus, useWorkspaces, useTabInfo, openMain, showConversation, uiMemory: uiMemory2, css: css2, DiscoveryModal: DiscoveryModal2 }) {
+  function TaskPane({ t, useCurrentSession, useSessions, useSessionStatus, useWorkspaces, useTabInfo, openMain, showConversation, uiMemory: uiMemory2, css: css2, DiscoveryModal }) {
     const sessionId = useCurrentSession((value) => value);
     const session = useSessions((state) => sessionId === void 0 ? void 0 : state?.byId?.[sessionId]);
     const sessionStatus = (useSessionStatus ?? useNoSessionStatus2)((state) => sessionId === void 0 ? void 0 : state?.get(sessionId));
@@ -9252,10 +9998,10 @@ ${detail.trim()}` : value);
     const registered = workspaces.find((item) => item.path === root || (item.sessionIds ?? []).includes(sessionId));
     const workspace = registered ? { ...registered, workspaceId: registered.workspaceId ?? registered.id } : null;
     const projectKey = workspace?.workspaceId && !String(workspace.workspaceId).startsWith("folder:") ? "id:" + workspace.workspaceId : "path:" + root;
-    const openObject = (reqId, wikiPage = null, status = null) => {
+    const openObject = (reqId, wikiPage = null, status = null, issueId = null) => {
       uiMemory2.picked = { id: projectIdOf(workspace), path: root };
       const current = normalizeViewState(uiMemory2.views[projectKey]);
-      uiMemory2.views[projectKey] = wikiPage ? { ...current, page: "wiki", params: { wikiTarget: wikiPage }, history: [] } : openDetail(current, { reqId, issueId: null }, statusPage(status));
+      uiMemory2.views[projectKey] = wikiPage ? { ...current, page: "wiki", params: { wikiTarget: wikiPage }, history: [] } : openDetail(current, { reqId, issueId }, statusPage(status));
       openMain();
     };
     return h28(
@@ -9270,7 +10016,7 @@ ${detail.trim()}` : value);
         visible,
         t,
         uiMemory: uiMemory2,
-        DiscoveryModal: DiscoveryModal2,
+        DiscoveryModal,
         openRequirement: (reqId, status) => openObject(reqId, null, status),
         renderTask: () => h28(LinkedTask, {
           root,
@@ -9282,7 +10028,7 @@ ${detail.trim()}` : value);
           uiMemory: uiMemory2,
           openMain,
           showConversation,
-          openRequirement: (reqId, status) => openObject(reqId, null, status),
+          openRequirement: (reqId, status, issueId) => openObject(reqId, null, status, issueId),
           openWikiPage: (reqId, path) => openObject(reqId, path)
         })
       }) : h28("p", null, t("noWorkspace"))
@@ -9307,17 +10053,17 @@ ${detail.trim()}` : value);
     const [pickerBusy, setPickerBusy] = useState19(false);
     const [createdTask, setCreatedTask] = useState19(null);
     const [leave, setLeave] = useState19(null);
-    const active = useRef15(false);
-    const linkSeq = useRef15(0);
-    const taskSeq = useRef15(0);
-    const choiceSeq = useRef15(0);
-    const stamp = useRef15({ modified: null, hash: null });
-    const linkRef = useRef15(null);
-    const taskRef = useRef15(null);
-    const leaveRef = useRef15(null);
-    const switchButton = useRef15(null);
-    const focusSwitch = useRef15(false);
-    const visibleRef = useRef15(visible);
+    const active = useRef17(false);
+    const linkSeq = useRef17(0);
+    const taskSeq = useRef17(0);
+    const choiceSeq = useRef17(0);
+    const stamp = useRef17({ modified: null, hash: null });
+    const linkRef = useRef17(null);
+    const taskRef = useRef17(null);
+    const leaveRef = useRef17(null);
+    const switchButton = useRef17(null);
+    const focusSwitch = useRef17(false);
+    const visibleRef = useRef17(visible);
     visibleRef.current = visible;
     linkRef.current = linkState?.link ?? null;
     taskRef.current = task;
@@ -9428,7 +10174,7 @@ ${detail.trim()}` : value);
       document.addEventListener("visibilitychange", onVisibility);
       return () => document.removeEventListener("visibilitychange", onVisibility);
     }, [load]);
-    const wasRunning = useRef15(runView.running);
+    const wasRunning = useRef17(runView.running);
     useEffect18(() => {
       if (visible && wasRunning.current && !runView.running) load();
       wasRunning.current = runView.running;
@@ -9453,7 +10199,7 @@ ${detail.trim()}` : value);
       }, 3e3);
       return () => clearInterval(timer);
     }, [root, task?.id, task?.hash, !!readError, loadTask, visible]);
-    const actionRef = useRef15(null);
+    const actionRef = useRef17(null);
     if (!actionRef.current) actionRef.current = createCardActions({
       getKey: () => active.current ? sessionId : null,
       rpc,
@@ -9533,7 +10279,7 @@ ${detail.trim()}` : value);
     const notices = h28(
       import_react28.default.Fragment,
       null,
-      switchHint && !loading && h28(
+      switchHint && !loading && (picking || !task || !runView.running && !runView.waiting) && h28(
         "div",
         { className: "pw-sidebar-notice", role: "status" },
         h28("span", null, switchHint),
@@ -9579,7 +10325,7 @@ ${detail.trim()}` : value);
         busy,
         act,
         start,
-        openRequirement: (reqId, status) => guardLeave(() => openRequirement2(reqId, status)),
+        openRequirement: (reqId, status, issueId) => guardLeave(() => openRequirement2(reqId, status, issueId)),
         openWikiPage: (reqId, path) => guardLeave(() => openWikiPage(reqId, path)),
         showConversation: () => guardLeave(showConversation),
         readError,
@@ -9731,28 +10477,41 @@ ${detail.trim()}` : value);
             requirements.map((req) => h28("option", { key: req.id, value: req.id }, req.title))
           )
         ),
-        items.length ? h28("div", { className: "pw-choice-list", role: "radiogroup", "aria-label": t("pickTask") }, items.map((issue) => {
-          const current = currentId === issue.id;
-          return h28(
-            "label",
-            { key: issue.id, className: "pw-choice", "data-selected": choice === issue.id },
-            h28("input", {
-              type: "radio",
-              name: "pw-task-choice",
-              value: issue.id,
-              checked: choice === issue.id,
-              disabled: current || busy,
-              onChange: () => setChoice(issue.id)
-            }),
-            h28(
-              "span",
-              { className: "pw-choice-copy" },
-              h28("strong", null, issue.title),
-              h28("span", { className: "pw-note" }, issue.requirementTitle, " \xB7 ", t("st_" + issue.status), current && " \xB7 " + t("linkedTask")),
-              taskOverview(issue) && h28("span", { className: "pw-preview" }, taskOverview(issue))
-            )
-          );
-        })) : h28("p", { className: "pw-note" }, t("noTaskChoices")),
+        items.length ? h28(
+          "div",
+          { className: "pw-choice-list", role: "radiogroup", "aria-label": t("pickTask") },
+          requirements.map((requirement) => {
+            const group = items.filter((issue) => issue.reqId === requirement.id);
+            return group.length > 0 && h28(
+              "fieldset",
+              { key: requirement.id, className: "pw-task-choice-group" },
+              h28("legend", { className: "pw-label" }, requirement.title),
+              group.map((issue) => {
+                const current = currentId === issue.id;
+                const selected = choice === issue.id;
+                return h28(
+                  "label",
+                  { key: issue.id, className: "pw-choice", "data-selected": selected },
+                  h28("input", {
+                    type: "radio",
+                    name: "pw-task-choice",
+                    value: issue.id,
+                    checked: selected,
+                    disabled: current || busy,
+                    onChange: () => setChoice(issue.id)
+                  }),
+                  h28(
+                    "span",
+                    { className: "pw-choice-copy" },
+                    h28("strong", null, issue.title),
+                    h28("span", { className: "pw-note" }, t("st_" + issue.status), current && " \xB7 " + t("linkedTask")),
+                    selected && taskOverview(issue) && h28("span", { className: "pw-preview" }, taskOverview(issue))
+                  )
+                );
+              })
+            );
+          })
+        ) : h28("p", { className: "pw-note" }, t("noTaskChoices")),
         items.length > 0 && h28(
           "button",
           { className: "pw-button primary", disabled: busy || !choice, onClick: () => onAttach(choice) },
@@ -9834,11 +10593,11 @@ ${detail.trim()}` : value);
     const [assistRunning, setAssistRunning] = useState19(false);
     const deliveryDraftKey = "delivery:" + projectKey + "|" + task.reqId;
     const [deliveryDraftDirty, setDeliveryDraftDirty] = useState19(() => !!uiMemory2.drafts[deliveryDraftKey]);
-    const lastDeliveryReq = useRef15(null);
+    const lastDeliveryReq = useRef17(null);
     if (lastDeliveryReq.current?.id !== task.reqId) lastDeliveryReq.current = null;
     if (req?.id === task.reqId) lastDeliveryReq.current = req;
     const deliveryReq = req?.id === task.reqId ? req : lastDeliveryReq.current;
-    const menu = useRef15(null);
+    const menu = useRef17(null);
     const terminal = terminalTask(task);
     const item = { root, reqId: task.reqId, id: task.id };
     const inactive = req?.status !== "in_progress" || !!req.pendingReopen;
@@ -9991,7 +10750,8 @@ ${detail.trim()}` : value);
         "div",
         { className: "pw-review-actions" },
         row(
-          primary("demoConfirm", () => confirm(task), !reviewable),
+          primary("reviewInWorkbench", () => openRequirement2(task.reqId, req.status, task.id)),
+          quiet("demoConfirm", () => confirm(task), !reviewable),
           h28(
             "div",
             { className: "pw-review-options" },
@@ -10101,27 +10861,24 @@ ${detail.trim()}` : value);
               t,
               sidebar: true,
               openWikiPage: (path) => openWikiPage(task.reqId, path),
-              resultActions: task.status === "in_review" ? h28(
-                import_react28.default.Fragment,
-                null,
-                !inactive && h28(AcceptanceAssist, {
-                  req,
-                  issue: task,
-                  root,
-                  sessionId,
-                  t,
-                  busy: busy || !available,
-                  memory: uiMemory2,
-                  onRunningChange: setAssistRunning,
-                  compact: true
-                }),
-                action
-              ) : null
+              running: runView.running || runView.waiting,
+              resultActions: task.status === "in_review" ? action : null,
+              reviewTools: task.status === "in_review" && !inactive && h28(AcceptanceAssist, {
+                req,
+                issue: task,
+                root,
+                sessionId,
+                t,
+                busy: busy || !available,
+                memory: uiMemory2,
+                onRunningChange: setAssistRunning,
+                compact: true
+              })
             },
             !terminal && task.status !== "in_review" && missingText && !runView.locked && h28("p", { className: "pw-note" }, missingText),
-            task.status !== "in_review" && action,
-            linkState?.link?.unrecorded && h28("p", { className: "pw-note" }, t("demoUnrecorded"))
+            task.status !== "in_review" && action
           ),
+          linkState?.link?.unrecorded && h28("p", { className: "pw-note" }, t("demoUnrecorded")),
           externalUpdate && h28("p", { className: "pw-note", role: "status" }, t("aiUpdated")),
           activeDelivery && h28(
             Disclosure,
@@ -10153,14 +10910,19 @@ ${detail.trim()}` : value);
         h28(
           "div",
           { hidden: form.editing && !terminal },
-          h28(UpdateLog, {
-            activity: task.activity,
-            t,
-            onAdd: !terminal && !inactive ? (text) => act("issue/addUpdate", { ...item, text: "\u4EBA\u5DE5\u64CD\u4F5C\uFF1A" + text }) : void 0,
-            userFacing: true,
-            timeline: true,
-            openWikiPage: (path) => openWikiPage(task.reqId, path)
-          })
+          (task.activity?.length > 0 || !terminal && !inactive) && h28(
+            Disclosure,
+            { label: t("progressRecords") },
+            h28(UpdateLog, {
+              activity: task.activity,
+              t,
+              onAdd: !terminal && !inactive ? (text) => act("issue/addUpdate", { ...item, text: "\u4EBA\u5DE5\u64CD\u4F5C\uFF1A" + text }) : void 0,
+              userFacing: true,
+              timeline: true,
+              showTimelineHeading: false,
+              openWikiPage: (path) => openWikiPage(task.reqId, path)
+            })
+          )
         )
       ),
       recording && h28(TaskResultForm, {
@@ -10204,7 +10966,7 @@ ${detail.trim()}` : value);
   // client-src/conversation.js
   var import_react29 = __toESM(__require("react"), 1);
   var import_dsh_client_ui_primitives = __require("@deepseek-ai/dsh-client-ui-primitives");
-  var { createElement: h29, useEffect: useEffect19, useRef: useRef16, useState: useState20 } = import_react29.default;
+  var { createElement: h29, useEffect: useEffect19, useRef: useRef18, useState: useState20 } = import_react29.default;
   var generating = /* @__PURE__ */ new Set(["running", "stopping", "starting"]);
   var confirmPrompts = { remove: "removePrompt", restore: "restorePrompt", start: "startPrompt" };
   var confirmActions = { remove: "pwbMoveToTrash", restore: "pwbRestore", start: "pwbStart", prd: "savePrd", reviewEdit: "pwbConfirm" };
@@ -10340,10 +11102,10 @@ ${detail.trim()}` : value);
     const [cards, setCards] = useState20([]);
     const [error, setError] = useState20(null);
     const [toast, setToast] = useState20(null);
-    const shown = useRef16(/* @__PURE__ */ new Set());
-    const generation = useRef16(0);
+    const shown = useRef18(/* @__PURE__ */ new Set());
+    const generation = useRef18(0);
     const workspaces = (useWorkspaces ?? useNoWorkspaces3)((state) => state?.items) ?? [];
-    const refreshRef = useRef16(null);
+    const refreshRef = useRef18(null);
     useEffect19(() => {
       setError(null);
       let disposed = false;
@@ -10660,6 +11422,7 @@ ${detail.trim()}` : value);
     ...requirementLogLocale.en,
     ...conversationLocale.en,
     ...prdLocale.en,
+    ...pagesLocale.en,
     ...prdEditorLocale.en,
     requirementActions: "More options",
     resumeReopen: "Resume reopening",
@@ -11003,6 +11766,7 @@ ${detail.trim()}` : value);
     ...requirementLogLocale.zh,
     ...conversationLocale.zh,
     ...prdLocale.zh,
+    ...pagesLocale.zh,
     ...prdEditorLocale.zh,
     requirementActions: "\u66F4\u591A\u9009\u9879",
     resumeReopen: "\u7EE7\u7EED\u91CD\u5F00",
@@ -11398,9 +12162,11 @@ ${detail.trim()}` : value);
 .pw-discovery-pane{display:flex;flex-direction:column;block-size:100%;gap:12px;min-height:0;min-width:0}
 .pw-discovery-header{display:flex;flex:none;align-items:center;justify-content:space-between;gap:4px 12px;flex-wrap:wrap}
 .pw-discovery-header h3{margin:0;font-size:16px;overflow-wrap:anywhere}
-.pw-discovery-qa{flex:1;min-height:0;min-width:0;overflow:auto;overscroll-behavior:contain;border:1px solid var(--dsw-alias-border-l3);border-radius:10px;background:var(--dsw-alias-bg-layer-1);padding:8px}
-.pw-discovery-qa h4{margin:2px 8px 8px;font-size:13px}
-.pw-discovery-qa>.pw-note{margin:8px}
+.pw-discovery-current{flex:none;min-width:0}
+.pw-discovery-current:empty{display:none}
+.pw-discovery-current>.pw-discovery-item{border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:var(--dsw-alias-bg-layer-1)}
+.pw-discovery-history{flex:1;min-height:0;min-width:0;overflow:auto;overscroll-behavior:contain}
+.pw-discovery-history>.pw-disclosure{margin-block:0 6px}
 .pw-discovery-item{--pw-discovery-columns:1em 2.6em minmax(0,1fr) 12px}
 .pw-discovery-item+.pw-discovery-item{border-top:1px solid var(--dsw-alias-border-l3);margin-top:4px;padding-top:4px}
 .pw-discovery-row,.pw-discovery-options:not([hidden]){display:grid;grid-template-columns:var(--pw-discovery-columns);align-items:start;gap:8px;padding:8px;line-height:1.5}
@@ -11409,7 +12175,7 @@ button.pw-discovery-row{cursor:pointer}
 button.pw-discovery-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .pw-discovery-chevron{width:6px;height:6px;margin:7px auto 0;border-inline-end:1px solid currentColor;border-block-end:1px solid currentColor;transform:rotate(-45deg);color:var(--dsw-alias-label-secondary)}
 .pw-discovery-row[aria-expanded="true"] .pw-discovery-chevron{transform:rotate(45deg)}
-.pw-discovery-qa:focus-visible,button.pw-discovery-row:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
+button.pw-discovery-row:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
 .pw-discovery-status{text-align:center;color:var(--dsw-alias-state-success-primary);font-weight:700}
 .pw-discovery-label{overflow-wrap:anywhere;color:var(--dsw-alias-label-secondary);font-weight:600}
 .pw-discovery-label small{display:block;font-size:.78em;font-weight:400}
@@ -11426,6 +12192,7 @@ button.pw-discovery-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .pw-discovery-dialog-content{min-height:0;overflow:auto}
 .pw-discovery-dialog .pw-field{display:block}
 .pw-discovery-dialog .pw-textarea{box-sizing:border-box;max-height:46dvh}
+.pw-prototype-dialog.pw-prototype-dialog{width:min(1000px,100%);max-height:100%}
 .pw-result ul{padding-inline-start:20px}
 .pw-card:hover{border-color:var(--dsw-alias-border-l1);transform:translateY(-1px)}
 .pw-card:active{cursor:grabbing}
@@ -11458,6 +12225,9 @@ button.pw-discovery-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .pw-modal p{margin:0;font-size:13px;color:var(--dsw-alias-label-secondary)}
 .pw-modal-actions{display:flex;justify-content:flex-end;gap:8px}
 .pw-modal.wide{width:min(620px,92vw);max-height:86vh}
+.pw-modal.pw-prd-editor{box-sizing:border-box;width:min(880px,calc(100% - 28px))}
+.pw-prd-editor .pw-textarea{min-height:clamp(160px,42vh,560px);font-family:var(--dsh-font-family-mono,monospace)}
+.pw-arch-sources{max-height:clamp(90px,28vh,270px);overflow:auto}
 .pw-modal-body{overflow:auto;display:flex;flex-direction:column;gap:10px;min-height:0;padding-right:2px}
 .pw-textarea{width:100%;min-height:72px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;resize:vertical;line-height:1.5}
 .pw-textarea:focus{border-color:var(--dsw-alias-brand-primary);outline:none}
@@ -11558,6 +12328,11 @@ button.pw-discovery-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .pw-read-card .pw-reading-verification .pw-text{margin:2px 0}
 .pw-read-card .pw-reading > .pw-note{margin:0;color:var(--dsw-alias-label-secondary)}
 .pw-read-card .pw-reading-result > .pw-note{color:var(--dsw-alias-state-warn-label)}
+.pw-task-acceptance .pw-read-confirm{margin-block-start:4px}
+.pw-task-acceptance .pw-failed-checks{color:var(--dsw-alias-state-error-label);white-space:normal;text-align:start}
+.pw-task-check-group+.pw-task-check-group{margin-block-start:14px}
+.pw-task-check-group .pw-progress-item pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.pw-task-limits time{display:block}
 .pw-read-card > .pw-reading > .pw-disclosure{border:0;padding:0}
 .pw-read-card > .pw-reading > .pw-disclosure > .pw-reading-block + .pw-reading-block{margin-block-start:10px}
 .pw-read-card .pw-reading-footer{color:var(--dsw-alias-label-secondary);font-size:.9em;font-variant-numeric:tabular-nums}
@@ -11566,6 +12341,15 @@ button.pw-discovery-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .pw-card-shell{min-width:0}
 .pw-card-retry{margin-top:4px}
 .pw-actions{display:flex;gap:8px;flex-wrap:wrap}
+.pw-read-card .pw-preparation{margin-block-end:14px}
+.pw-read-card .pw-preparation>.pw-reading-label{margin-block-end:8px}
+.pw-preparation-actions{column-gap:12px;align-items:flex-start}
+.pw-preparation-action{display:grid;justify-items:start;gap:4px;min-inline-size:0;max-inline-size:100%}
+.pw-preparation-action>.pw-button{max-inline-size:100%;text-align:start;overflow-wrap:anywhere}
+.pw-preparation-status,.pw-preparation-action>.pw-note{font-size:.86em;color:var(--dsw-alias-label-secondary)}
+.pw-preparation-status{margin:6px 0 0}
+.pw-preparation-action>.pw-note{max-inline-size:25ch;overflow-wrap:anywhere}
+.pw-preparation-select{inline-size:100%;min-inline-size:0;min-block-size:34px;padding-inline:8px;font-size:inherit}
 .pw-quiet{background:transparent;border-color:transparent;color:var(--dsw-alias-label-secondary)}
 .pw-quiet:focus-visible,.pw-task-menu summary:focus-visible,.pw-progress-item summary:focus-visible,.pw-choice:focus-within{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
 .pw-task-fields .pw-field,.pw-task-picker .pw-field,.pw-progress-form .pw-field{display:block;margin:0 0 10px}
@@ -11627,6 +12411,8 @@ button.pw-discovery-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .pw-review-actions .pw-progress-form{display:grid;justify-items:start;gap:8px}
 .pw-task-picker-head{margin-bottom:12px}
 .pw-choice-list{display:grid;gap:4px;max-height:min(46vh,380px);overflow:auto;padding:2px;margin:0 0 10px;overscroll-behavior:contain}
+.pw-task-choice-group{display:grid;gap:4px;min-inline-size:0;margin:0 0 8px;padding:0;border:0}
+.pw-task-choice-group>legend{padding:4px 0;color:var(--dsw-alias-label-secondary);font-size:.9em;overflow-wrap:anywhere}
 .pw-choice{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:9px;min-height:44px;padding:8px 10px;border-radius:7px;border:1px solid var(--dsw-alias-border-l3);cursor:pointer}
 .pw-choice[data-selected="true"]{border-color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-interactive-bg-hover)}
 .pw-choice-copy{display:grid;gap:2px;min-width:0;overflow-wrap:anywhere}
@@ -11709,11 +12495,16 @@ button.pw-discovery-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .pw-menu-item:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
 .pw-content{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 .pw-content>.pw-breadcrumb{flex:none}
-.pw-home{flex:1;min-height:0;display:flex;flex-direction:column;gap:12px;overflow:auto}
+.pw-home{container-type:inline-size;flex:1;min-height:0;display:flex;flex-direction:column;gap:12px;overflow:auto}
 .pw-home-title{margin:0 0 10px;font-size:15px}
 .pw-home-list{display:flex;flex-direction:column;gap:8px}
-.pw-home-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:var(--dsw-alias-bg-base)}
-.pw-home-copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.pw-home-item{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:6px 10px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:var(--dsw-alias-bg-base)}
+.pw-home-copy{min-width:0;display:flex;flex-direction:column;gap:2px}
+.pw-home-wait{font-variant-numeric:tabular-nums}
+@container(max-width:370px){
+  .pw-home-item{grid-template-columns:minmax(0,1fr) auto}
+  .pw-home-copy{grid-column:1/-1}
+}
 .pw-home-counts{display:flex;flex-wrap:wrap;gap:10px}
 .pw-home-count{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:88px;padding:10px;border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;cursor:pointer}
 .pw-home-count:hover{border-color:var(--dsw-alias-brand-primary)}
@@ -11962,7 +12753,12 @@ button.pw-discovery-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
           return { ok: true, tab: false };
         }
       });
-      ctx.slots.inject("main", () => ctx.slots.register({ name: "main", key: PANEL_ID, locale: NS, inject: () => injected() }, MainShell));
+      ctx.slots.inject("main", () => ctx.slots.register({
+        name: "main",
+        key: PANEL_ID,
+        locale: NS,
+        inject: () => ({ ...injected(), PreparationModal: import_dsh_client_ui_primitives2.Modal })
+      }, MainShell));
       ctx.slots.inject("sidebar.panellist", () => ctx.slots.register({ name: "sidebar.panellist", id: PANEL_ID, order: 20, label: () => t("panel"), locale: NS }, WorkbenchIcon));
       ctx.inject(["inputTriggers", "sessions"], (conversation) => {
         conversation.effect(() => conversation.inputTriggers.registerSource(workbenchMentionSource(t, WorkbenchIcon)), "project-workbench: @ candidate");

@@ -134,6 +134,20 @@ export function installRequirementReview(ctx) {
   return {
     routes: {
       'requirement/review/status': async ({ root, id }) => status(root, id, await keyOf(root, id)),
+      'requirement/review/statuses': async ({ root, ids }) => {
+        if (!Array.isArray(ids)) throw new WorkbenchError('INVALID_INPUT', 'ids must be an array of requirement identifiers')
+        const rows = []
+        for (const id of new Set(ids)) {
+          try {
+            const row = await status(root, id, await keyOf(root, id))
+            const { status: stage, reportsUnavailable, prdsUnavailable, hasReview, missingPreparation, state, stale } = row
+            rows.push({ id, stage, reportsUnavailable, prdsUnavailable, hasReview, missingPreparation, state, stale })
+          } catch {
+            rows.push({ id, unavailable: true })
+          }
+        }
+        return rows
+      },
       'requirement/review/start': async ({ root, id, after, retrySave, runId }) => {
         const key = await keyOf(root, id)
         // Serialize admission with edits, approval and other starts for this requirement.

@@ -109,10 +109,10 @@ export function BoardPage({ wb }) {
         onPointerCancel: clearDrag,
       },
       h('p', { className: 'pw-cardtitle pw-preview' }, r.title),
-      h('div', { className: 'pw-cardmeta' },
-        pct !== null && h('div', { className: 'pw-bar', title: `${pct}%` }, h('span', { style: { width: pct + '%' } })),
-        flag && h('span', { className: 'pw-flag ' + flag }, t('flag_' + flag))),
-      preview && h('div', { className: 'pw-next pw-preview' }, preview)),
+      (flag || pct !== null) && h('div', { className: 'pw-cardmeta' },
+        flag && h('span', { className: 'pw-flag ' + flag }, t('flag_' + flag)),
+        pct !== null && h('div', { className: 'pw-bar', title: `${pct}%` }, h('span', { style: { width: pct + '%' } }))),
+      !flag && preview && h('div', { className: 'pw-next pw-preview' }, preview)),
       r.pendingReopen && h('button', { className: 'pw-button pw-card-retry', disabled: saving,
         onClick: () => setModal({ kind: 'reopenRequirement', req: r }) },
       t('resumeReopen') + ' · ' + t('reopenProgress').replace('{done}', String(reopenItems.filter(item => item.done).length)).replace('{total}', String(reopenItems.length))))
@@ -131,7 +131,7 @@ export function BoardPage({ wb }) {
         state === 'completed' && !collapsed && h('button', { className: 'pw-button', style: { marginLeft: 'auto', minHeight: 22, padding: '0 6px', fontSize: 12 }, onClick: () => setFilter('board', { showCompleted: false }) }, t('collapse'))),
       collapsed
         ? h('button', { className: 'pw-button', onClick: () => setFilter('board', { showCompleted: true }) }, t('expand'))
-        : h('div', { className: 'pw-cards' }, items.length ? items.map(card) : h('div', { className: 'pw-empty' }, t('empty'))))
+        : h('div', { className: 'pw-cards' }, items.map(card)))
   }
 
   return h(React.Fragment, null,

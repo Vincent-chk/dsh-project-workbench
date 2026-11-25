@@ -24,7 +24,7 @@ export const rightbarLocale = {
     backMain: 'Workbench', viewConversation: 'View conversation', goAuthorize: 'Review permission',
     swapTask: 'Switch task', linkedTask: 'Current task', pickNewTask: 'Switch to this task',
     retryLink: 'Retry linking', completeTaskInfo: 'Fill in task info', parentRequirement: 'Requirement',
-    requirementDelivery: 'Requirement delivery', selectDevRequirement: 'Select a requirement in development',
+    requirementDelivery: 'Requirement delivery', reviewInWorkbench: 'Review and decide', selectDevRequirement: 'Select a requirement in development',
     runInteraction: 'The conversation needs your attention.',
     switchInteraction: 'Handle the pending item in the conversation before switching tasks.',
     switchRunning: 'Wait for AI to finish, or stop it in the conversation and let its records save before switching.',
@@ -52,7 +52,7 @@ export const rightbarLocale = {
     backMain: '工作台', viewConversation: '查看会话', goAuthorize: '去授权',
     swapTask: '换任务', linkedTask: '当前关联', pickNewTask: '换成此任务',
     retryLink: '重试关联', completeTaskInfo: '补齐信息', parentRequirement: '所属需求',
-    requirementDelivery: '需求交付', selectDevRequirement: '选择开发中的需求',
+    requirementDelivery: '需求交付', reviewInWorkbench: '核对并验收', selectDevRequirement: '选择开发中的需求',
     runInteraction: '会话中有待处理事项。',
     switchInteraction: '会话中有待处理事项，请先在会话中处理后再切换任务。',
     switchRunning: 'AI 正在处理。请等待结束，或先在会话中停止并等待记录保存，再切换任务。',
@@ -92,12 +92,12 @@ export function TaskPane({ t, useCurrentSession, useSessions, useSessionStatus, 
     ? 'id:' + workspace.workspaceId : 'path:' + root
   // 明确的对象入口才切到目标项目与页面；普通“工作台”返回不传参数，
   // 由 MainShell 恢复原浏览位置（PRD §7.1）。
-  const openObject = (reqId, wikiPage = null, status = null) => {
+  const openObject = (reqId, wikiPage = null, status = null, issueId = null) => {
     uiMemory.picked = { id: projectIdOf(workspace), path: root }
     const current = normalizeViewState(uiMemory.views[projectKey])
     uiMemory.views[projectKey] = wikiPage
       ? { ...current, page: 'wiki', params: { wikiTarget: wikiPage }, history: [] }
-      : openDetail(current, { reqId, issueId: null }, statusPage(status))
+      : openDetail(current, { reqId, issueId }, statusPage(status))
     openMain()
   }
   return h('aside', { className: 'pw-page pw-task-pane', 'aria-label': t('issueDetail') },
@@ -107,7 +107,7 @@ export function TaskPane({ t, useCurrentSession, useSessions, useSessionStatus, 
       openRequirement: (reqId, status) => openObject(reqId, null, status),
       renderTask: () => h(LinkedTask, {
         root, sessionId, sessionStatus, visible, projectKey, t, uiMemory,
-        openMain, showConversation, openRequirement: (reqId, status) => openObject(reqId, null, status), openWikiPage: (reqId, path) => openObject(reqId, path),
+        openMain, showConversation, openRequirement: (reqId, status, issueId) => openObject(reqId, null, status, issueId), openWikiPage: (reqId, path) => openObject(reqId, path),
       }),
     }) : h('p', null, t('noWorkspace')))
 }
@@ -328,7 +328,7 @@ function LinkedTask({ root, sessionId, sessionStatus, visible, projectKey, t, ui
 
   const switchHint = runView.switchHint ? t(runView.switchHint) : syncing ? t('switchSyncing') : ''
   const notices = h(React.Fragment, null,
-    switchHint && !loading && h('div', { className: 'pw-sidebar-notice', role: 'status' },
+    switchHint && !loading && (picking || !task || !runView.running && !runView.waiting) && h('div', { className: 'pw-sidebar-notice', role: 'status' },
       h('span', null, switchHint),
       runView.locked && !runView.running && !runView.waiting &&
         h('button', { className: 'pw-button pw-quiet', disabled: syncing, onClick: load }, t('retry'))),
@@ -346,7 +346,7 @@ function LinkedTask({ root, sessionId, sessionStatus, visible, projectKey, t, ui
   return h(React.Fragment, null,
     task && h('div', { hidden: picking }, h(LinkedTaskDetails, {
       key: task.reqId + '|' + task.id, task, req, runView, linkState, proposals, delivery, t, root, sessionId, projectKey, uiMemory,
-      busy, act, start, openRequirement: (reqId, status) => guardLeave(() => openRequirement(reqId, status)),
+      busy, act, start, openRequirement: (reqId, status, issueId) => guardLeave(() => openRequirement(reqId, status, issueId)),
       openWikiPage: (reqId, path) => guardLeave(() => openWikiPage(reqId, path)), showConversation: () => guardLeave(showConversation),
       readError, syncing, externalUpdate, leaveRef, guardLeave, toolbar, notices, reload: load,
     })),
@@ -411,16 +411,23 @@ function TaskPicker({ requirements, t, busy, loading, picking, missing, currentI
         h('select', { className: 'pw-select', value: reqId, onChange: event => { setReqId(event.target.value); setChoice('') } },
           h('option', { value: '' }, t('allRequirements')),
           requirements.map(req => h('option', { key: req.id, value: req.id }, req.title)))),
-      items.length ? h('div', { className: 'pw-choice-list', role: 'radiogroup', 'aria-label': t('pickTask') }, items.map(issue => {
-        const current = currentId === issue.id
-        return h('label', { key: issue.id, className: 'pw-choice', 'data-selected': choice === issue.id },
-          h('input', { type: 'radio', name: 'pw-task-choice', value: issue.id, checked: choice === issue.id, disabled: current || busy,
-            onChange: () => setChoice(issue.id) }),
-          h('span', { className: 'pw-choice-copy' },
-            h('strong', null, issue.title),
-            h('span', { className: 'pw-note' }, issue.requirementTitle, ' · ', t('st_' + issue.status), current && ' · ' + t('linkedTask')),
-            taskOverview(issue) && h('span', { className: 'pw-preview' }, taskOverview(issue))))
-      })) : h('p', { className: 'pw-note' }, t('noTaskChoices')),
+      items.length ? h('div', { className: 'pw-choice-list', role: 'radiogroup', 'aria-label': t('pickTask') },
+        requirements.map(requirement => {
+          const group = items.filter(issue => issue.reqId === requirement.id)
+          return group.length > 0 && h('fieldset', { key: requirement.id, className: 'pw-task-choice-group' },
+            h('legend', { className: 'pw-label' }, requirement.title),
+            group.map(issue => {
+              const current = currentId === issue.id
+              const selected = choice === issue.id
+              return h('label', { key: issue.id, className: 'pw-choice', 'data-selected': selected },
+                h('input', { type: 'radio', name: 'pw-task-choice', value: issue.id, checked: selected, disabled: current || busy,
+                  onChange: () => setChoice(issue.id) }),
+                h('span', { className: 'pw-choice-copy' },
+                  h('strong', null, issue.title),
+                  h('span', { className: 'pw-note' }, t('st_' + issue.status), current && ' · ' + t('linkedTask')),
+                  selected && taskOverview(issue) && h('span', { className: 'pw-preview' }, taskOverview(issue))))
+            }))
+        })) : h('p', { className: 'pw-note' }, t('noTaskChoices')),
       items.length > 0 && h('button', { className: 'pw-button primary', disabled: busy || !choice, onClick: () => onAttach(choice) },
         t(currentId ? 'pickNewTask' : 'linkTask')),
       development.length > 0 && h(Disclosure, { label: t('createAndLink') },
@@ -573,7 +580,8 @@ function LinkedTaskDetails({ task, req, runView, linkState, proposals, delivery,
     action = row(primary(runView.action, showConversation))
   } else if (available && task.status === 'in_review') {
     action = h('div', { className: 'pw-review-actions' },
-      row(primary('demoConfirm', () => confirm(task), !reviewable),
+      row(primary('reviewInWorkbench', () => openRequirement(task.reqId, req.status, task.id)),
+        quiet('demoConfirm', () => confirm(task), !reviewable),
         h('div', { className: 'pw-review-options' },
           quiet('reviseTask', () => setContinueEditing(value => !value), busy || assistRunning),
           quiet('deferDecision', () => { setContinueEditing(false); setNotice(t('deferred')) }))),
@@ -618,13 +626,13 @@ function LinkedTaskDetails({ task, req, runView, linkState, proposals, delivery,
         : h(React.Fragment, null,
           inactive && h('p', { className: 'pw-note' }, t(req?.pendingReopen ? 'errReopenPending' : 'errNotActive')),
           h(TaskReading, { task, requirement: deliveryReq, since: taskSince, t, sidebar: true, openWikiPage: path => openWikiPage(task.reqId, path),
-            resultActions: task.status === 'in_review' ? h(React.Fragment, null,
-              !inactive && h(AcceptanceAssist, { req, issue: task, root, sessionId, t, busy: busy || !available,
-                memory: uiMemory, onRunningChange: setAssistRunning, compact: true }),
-              action) : null },
-          !terminal && task.status !== 'in_review' && missingText && !runView.locked && h('p', { className: 'pw-note' }, missingText),
-          task.status !== 'in_review' && action,
-          linkState?.link?.unrecorded && h('p', { className: 'pw-note' }, t('demoUnrecorded'))),
+            running: runView.running || runView.waiting,
+            resultActions: task.status === 'in_review' ? action : null,
+            reviewTools: task.status === 'in_review' && !inactive && h(AcceptanceAssist, { req, issue: task, root, sessionId, t, busy: busy || !available,
+              memory: uiMemory, onRunningChange: setAssistRunning, compact: true }) },
+            !terminal && task.status !== 'in_review' && missingText && !runView.locked && h('p', { className: 'pw-note' }, missingText),
+            task.status !== 'in_review' && action),
+          linkState?.link?.unrecorded && h('p', { className: 'pw-note' }, t('demoUnrecorded')),
           externalUpdate && h('p', { className: 'pw-note', role: 'status' }, t('aiUpdated')),
           activeDelivery && h(Disclosure, { label: t('requirementDelivery') },
             deliveryReq.status === 'pending' && !deliveryDraftDirty ? h(DeliveryResult, { req: deliveryReq, t, compact: true, userFacing: true })
@@ -634,8 +642,10 @@ function LinkedTaskDetails({ task, req, runView, linkState, proposals, delivery,
       !terminal && proposals.length > 0 && h(Disclosure, { label: t('demoDrafts') },
         h(DraftSuggestions, { proposals, act, root, t, busy: busy || form.dirty, dismissMethod: 'proposal/dismiss', showHeading: false })),
       h('div', { hidden: form.editing && !terminal },
-        h(UpdateLog, { activity: task.activity, t, onAdd: !terminal && !inactive ? text => act('issue/addUpdate', { ...item, text: '人工操作：' + text }) : undefined,
-          userFacing: true, timeline: true, openWikiPage: path => openWikiPage(task.reqId, path) }))),
+        (task.activity?.length > 0 || (!terminal && !inactive)) && h(Disclosure, { label: t('progressRecords') },
+          h(UpdateLog, { activity: task.activity, t, onAdd: !terminal && !inactive
+            ? text => act('issue/addUpdate', { ...item, text: '人工操作：' + text }) : undefined,
+            userFacing: true, timeline: true, showTimelineHeading: false, openWikiPage: path => openWikiPage(task.reqId, path) })))),
     recording && h(TaskResultForm, { task, since: taskSince, t, busy, onClose: () => setRecording(false),
       onSave: params => available ? act('issue/update', { ...item, ...params }) : { ok: false, code: 'RUNNING' } }),
     manualReview && h(Modal, { title: t('confirmIssueTitle'), wide: true, onClose: () => { if (!busy) setManualReview(null) }, actions: [

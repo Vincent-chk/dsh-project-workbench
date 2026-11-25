@@ -1,6 +1,8 @@
 import React from 'react'
 import { devItems, blockedItems, failureItems, riskItems } from '../shell/nav-state.js'
 import { ListPage, boardLocator, dateText, listTable, listTitle, useListScroll } from '../shared/list.js'
+import { shortBlocker, shortRecordedText } from '../workbench-content.js'
+import { Disclosure, ReadText } from '../shared/ui.js'
 
 const h = React.createElement
 
@@ -20,15 +22,16 @@ export function DevPage({ wb }) {
         key: req.id,
         cells: [
           listTitle(req.title, req.id, () => openDetail({ reqId: req.id, issueId: null }, 'dev')),
-          activeCount > 0
-            ? h('span', { className: 'pw-list-value', title: progress == null ? undefined : Math.round(progress * 100) + '%' },
-              h('strong', null, doneCount), ' / ', activeCount)
-            : h('span', { className: 'pw-list-muted' }, t('noProgress')),
+          h(React.Fragment, null,
+            activeCount > 0
+              ? h('span', { className: 'pw-list-value', title: progress == null ? undefined : Math.round(progress * 100) + '%' },
+                h('strong', null, doneCount), ' / ', activeCount)
+              : h('span', { className: 'pw-list-muted' }, t('noProgress')),
+            cancelledCount > 0 && h('span', { className: 'pw-list-parent' }, t('cancelledCount').replace('{n}', String(cancelledCount)))),
           h('div', { className: 'pw-list-alerts' },
             blockedCount > 0 && h('span', { className: 'pw-istatus st-blocked' }, t('devBlocked').replace('{n}', String(blockedCount))),
             inReviewCount > 0 && h('span', { className: 'pw-istatus st-in_review' }, t('devInReview').replace('{n}', String(inReviewCount))),
-            (cancelledCount > 0 || (!blockedCount && !inReviewCount)) && h('span', { className: 'pw-list-muted' },
-              cancelledCount > 0 ? t('cancelledCount').replace('{n}', String(cancelledCount)) : t('listNoAlerts'))),
+            !blockedCount && !inReviewCount && h('span', { className: 'pw-list-muted' }, t('listNoAlerts'))),
           boardLocator(wb, req),
         ],
       }
@@ -58,13 +61,15 @@ export function BlockedPage({ wb }) {
     return !query || title.toLowerCase().includes(query.toLowerCase())
   })
   const total = blockedList.length + authList.length + failures.length + deliveryFailed.length + risks.length
-  const item = (key, title, reqTitle, reason, at, actions) => ({
+  const item = (key, title, reqTitle, reason, at, actions, evidence) => ({
     key,
     cells: [
       h(React.Fragment, null, h('strong', { className: 'pw-list-name' }, title),
         reqTitle && reqTitle !== title && h('span', { className: 'pw-list-parent' }, reqTitle)),
-      h('div', null, reason, at ? h('time', { className: 'pw-list-parent', dateTime: new Date(at).toISOString() },
-        dateText(new Date(at).toISOString())) : null),
+      h('div', null,
+        h('span', { className: 'pw-list-preview' }, reason),
+        at > 0 && h('time', { className: 'pw-list-parent', dateTime: new Date(at).toISOString() }, dateText(new Date(at).toISOString())),
+        evidence && h(Disclosure, { label: t('listRiskInTask') }, h(ReadText, { value: evidence }))),
       actions,
     ],
   })
@@ -102,15 +107,17 @@ export function BlockedPage({ wb }) {
         h('button', { className: 'pw-button', onClick: () => openDetail({ reqId: d.reqId, issueId: null }, 'dev') }, t('viewOriginalTask')))),
     ]),
     blockedList.length > 0 && section(t('blockedSection'), blockedList.map(b =>
-      item('b' + b.issueId, b.title, b.reqTitle, b.reason || t('taskNoReason'), b.at,
+      item('b' + b.issueId, b.title, b.reqTitle, b.reason ? shortBlocker(b.reason) || t('listBlockerInTask') : t('taskNoReason'), b.at,
         h('button', { className: 'pw-button', onClick: () => openDetail({ reqId: b.reqId, issueId: b.issueId }, 'dev') }, t('viewOriginalTask'))))),
     blocked?.proposals == null
       ? section(t('riskSection'), h('p', { className: 'pw-note' }, t('loading')))
       : risks.length > 0 && section(t('riskSection'), risks.map(p => {
         const req = requirements.find(r => r.id === p.target.reqId)
         const issue = req?.issues?.find(i => i.id === p.target.issueId)
-        return item('r' + p.id, issue?.title ?? req.title, req.title, p.reason, Date.parse(p.createdAt) || 0,
+        const reason = shortRecordedText(p.reason)
+        return item('r' + p.id, issue?.title ?? req.title, req.title,
+          reason || t('kind_' + p.kind), Date.parse(p.createdAt) || 0,
           h('button', { className: 'pw-button', onClick: () => issue ? locateTask(req.id, issue.id) : locateBoard(req) },
-            t(issue ? 'syncLocateTask' : 'syncLocateRequirement')))
+            t(issue ? 'syncLocateTask' : 'syncLocateRequirement')), reason ? null : p.reason)
       })))
 }

@@ -1,5 +1,5 @@
 import React from 'react'
-import { Modal } from '../shared/ui.js'
+import { Disclosure, Modal } from '../shared/ui.js'
 import { rpc } from '../api.js'
 import { discoveryReference } from '../discovery.js'
 
@@ -16,7 +16,7 @@ const imageExtensions = {
 export const prdEditorLocale = {
   zh: {
     prdEditTitle: '编辑 PRD', prdCreateTitle: '新建 PRD', prdTitleField: '文档名称', prdBodyField: '正文（Markdown）',
-    prdAddImage: '插入本地图片', prdImageHelp: '支持 PNG、JPEG、WebP、GIF，每张最多 2 MB。',
+    prdAddImage: '插入本地图片', prdChooseImage: '选择图片', prdImageHelp: '支持 PNG、JPEG、WebP、GIF，每张最多 2 MB。',
     prdImageInvalid: '请选择支持的图片格式，且单张不超过 2 MB。', prdImageReadError: '无法读取这张图片，请重新选择。',
     prdTitleRequired: '请输入文档名称。', prdLoadLatest: '读取最新版', prdSaveOverwrite: '覆盖保存',
     prdLatestForReview: '当前已保存的正文', prdDraftPreserved: '草稿已保留。请核对当前正文，再确认覆盖。',
@@ -24,7 +24,7 @@ export const prdEditorLocale = {
   },
   en: {
     prdEditTitle: 'Edit PRD', prdCreateTitle: 'New PRD', prdTitleField: 'Document name', prdBodyField: 'Body (Markdown)',
-    prdAddImage: 'Insert a local image', prdImageHelp: 'PNG, JPEG, WebP and GIF, up to 2 MB per image.',
+    prdAddImage: 'Insert a local image', prdChooseImage: 'Choose image', prdImageHelp: 'PNG, JPEG, WebP and GIF, up to 2 MB per image.',
     prdImageInvalid: 'Select a supported image of 2 MB or less.', prdImageReadError: 'Unable to read this image. Choose it again.',
     prdTitleRequired: 'Enter a document name.', prdLoadLatest: 'Load current version', prdSaveOverwrite: 'Overwrite',
     prdLatestForReview: 'Current saved text', prdDraftPreserved: 'Your draft is still here. Check the saved text before overwriting.',
@@ -145,26 +145,29 @@ export function PrdEditor({ root, id, reqId, generated, t, onSaved, onClose, uiM
 
   const conflicted = error?.code === 'PRD_CONFLICT'
   return h(Modal, {
-    onClose: close, title: t(id ? 'prdEditTitle' : 'prdCreateTitle'), wide: true,
+    onClose: close, title: t(id ? 'prdEditTitle' : 'prdCreateTitle'), wide: true, className: 'pw-prd-editor', manageFocus: true,
     actions: [
       draft && drafts[key] && button('discard', t('prdDiscardEditor'), { disabled: busy, onClick: () => { delete drafts[key]; onClose() } }),
       button('close', t('prdCloseEditor'), { disabled: busy, onClick: () => close() }),
       button('save', t(id ? 'prdSaveOverwrite' : 'prdSaveNew'), { className: 'pw-button primary', disabled: busy || !draft || conflicted, onClick: save }),
     ],
   },
-  h('style', null, '.pw-prd-edit-content .pw-textarea{min-height:160px}.pw-prd-edit-content pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:210px;overflow:auto}'),
+  h('style', null, '.pw-prd-edit-content pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:210px;overflow:auto}'),
   h('div', { className: 'pw-prd-edit-content' },
-  generated && h('p', { className: 'pw-note' },
-    t('discoveryPrdLinked') + ' · ' + generated.requirements.join(' / '), h('br'),
-    t('discoveryPrdSource') + ' · ' + discoveryReference(t, generated.requirements, generated.sources)),
+  generated && h(React.Fragment, null,
+    h('p', { className: 'pw-note' }, t('discoveryPrdLinked') + ' · ' + generated.requirements.join(' / ')),
+    h(Disclosure, { label: t('discoveryPrdSource') }, h('p', { className: 'pw-note' },
+      discoveryReference(t, generated.requirements, generated.sources)))),
   draft && h('form', { onSubmit: save },
     h('label', { className: 'pw-field' }, h('span', null, t('prdTitleField')),
-      h('input', { className: 'pw-input', disabled: busy, value: draft.title, onChange: event => remember({ title: event.target.value }) })),
+      h('input', { className: 'pw-input', 'data-modal-initial-focus': true, disabled: busy, value: draft.title, onChange: event => remember({ title: event.target.value }) })),
     h('label', { className: 'pw-field' }, h('span', null, t('prdBodyField')),
       h('textarea', { className: 'pw-textarea', rows: 10, disabled: busy, value: draft.body, onChange: event => remember({ body: event.target.value }) })),
-    h('label', { className: 'pw-field' }, h('span', null, t('prdAddImage')),
-      h('input', { type: 'file', accept: Object.keys(imageExtensions).join(','), disabled: busy || conflicted, onChange: insertImage }),
-      h('small', { className: 'pw-note' }, t('prdImageHelp')))),
+    h(Disclosure, { label: t('prdAddImage') },
+      h('label', { className: 'pw-field' },
+        h('small', { className: 'pw-note' }, t('prdImageHelp')),
+        h('input', { type: 'file', 'aria-label': t('prdChooseImage'),
+          accept: Object.keys(imageExtensions).join(','), disabled: busy || conflicted, onChange: insertImage })))),
   !draft && !error && h('p', { role: 'status' }, t('loading')),
   error && h('p', { role: 'alert', className: 'pw-error' }, error.message,
     conflicted && button('reload', t('prdLoadLatest'), { disabled: busy, onClick: loadLatest }),

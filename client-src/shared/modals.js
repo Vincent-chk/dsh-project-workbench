@@ -10,12 +10,12 @@ import { DeliveryResult, ManualDelivery } from '../detail/requirement-content.js
 import { taskResult } from '../workbench-content.js'
 
 const h = React.createElement
-const { useEffect, useState } = React
+const { useEffect, useRef, useState } = React
 
 // 关键操作弹窗：原因收集、送审/验收确认、打回与重开（含部分成功接续）、
 // 人工交付提交、草稿删除。提交中禁止重复操作，失败保留输入与真实状态。
 export function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, reopenState, requirements, newDraft, changeNewDraft, createReq, clearNewDraft, locatePrdLink, openReady }) {
-  const [value, setValue] = useState('')
+  const [value, setValue] = useState(() => modal.initialReason ?? '')
   const [checked, setChecked] = useState([])
   const [newTask, setNewTask] = useState(issueDraftFrom)
   const [addingTask, setAddingTask] = useState(false)
@@ -23,6 +23,7 @@ export function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, r
   const [reviewReq, setReviewReq] = useState(modal.req)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  const submitting = useRef(false)
   const [deliveryFailed, setDeliveryFailed] = useState(false)
   useEffect(() => {
     if (modal.kind !== 'submitDelivery') return
@@ -41,13 +42,14 @@ export function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, r
   const liveReq = modal.req && requirements
     ? (requirements.find(r => r.id === modal.req.id) ?? modal.req)
     : modal.req
-  const cancel = () => { if (!busy) close() }
+  const cancel = () => { if (!busy && !submitting.current) close() }
   const run = async action => {
-    if (busy) return
+    if (busy || submitting.current) return
+    submitting.current = true
     setBusy(true); setError(null)
     const res = await action()
     if (res.ok) close(true)
-    else { setError(res); setBusy(false) }
+    else { submitting.current = false; setError(res); setBusy(false) }
   }
   const errorView = h(ErrorDetails, { error, t, showRaw: false })
   const taskForm = { draft: newTask, change: (name, value) => { setError(null); setNewTask(draft => ({ ...draft, [name]: value })) } }
@@ -85,13 +87,14 @@ export function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, r
   }
   if (modal.kind === 'reason') {
     const submit = () => { if (value.trim()) return run(() => modal.onOk(value.trim())) }
-    return h(Modal, { title: modal.title ?? t('reasonTitle'), onClose: cancel, actions: [
+    return h(Modal, { title: modal.title ?? t('reasonTitle'), onClose: cancel, manageFocus: !!modal.confirmLabel, actions: [
       h('button', { className: 'pw-button', disabled: busy, onClick: cancel }, t('cancel')),
-      h('button', { className: 'pw-button primary', disabled: busy || !value.trim(), onClick: submit }, t('ok')),
+      h('button', { className: 'pw-button primary', disabled: busy || !value.trim(), onClick: submit }, modal.confirmLabel ?? t('ok')),
     ] }, modal.body && h('p', null, modal.body),
     modal.suggestion && h('button', { type: 'button', className: 'pw-button pw-quiet', disabled: busy,
       onClick: () => setValue(modal.suggestion) }, t('aiReviewUseSuggestion')),
-    h('input', { className: 'pw-input', autoFocus: true, readOnly: busy, 'aria-label': t('reasonTitle'), placeholder: t('reasonPlaceholder'), value,
+    h('input', { className: 'pw-input', autoFocus: !modal.confirmLabel, 'data-modal-initial-focus': '', readOnly: busy,
+      'aria-label': t('reasonTitle'), placeholder: t('reasonPlaceholder'), value,
       onChange: e => setValue(e.target.value), onKeyDown: e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit() } }),
     errorView)
   }
@@ -146,7 +149,8 @@ export function ReasonModal({ modal, t, setModal, mutate, root, trashWithUndo, r
       h('button', { className: 'pw-button primary', disabled: busy || (issue && (issue.status !== 'in_review' || !taskResult(issue, reviewReq?.deliveryStartedAt).summary || !String(effectiveEvidence(issue)).trim())),
         onClick: () => run(issue ? confirm : confirmRequirement) }, t(issue ? 'taskAccept' : 'acceptRequirement')),
     ] }, h('p', null, issue?.title ?? reviewReq.title),
-    issue ? h(TaskResult, { task: issue, since: reviewReq?.deliveryStartedAt, t, userFacing: true }) : h(DeliveryResult, { req: reviewReq, t, userFacing: true }),
+    issue ? h(TaskResult, { task: issue, since: reviewReq?.deliveryStartedAt, t, userFacing: true })
+      : h(DeliveryResult, { req: reviewReq, t, userFacing: true, openSnapshot: true }),
     errorView)
   }
   if (modal.kind === 'reopenRequirement') {

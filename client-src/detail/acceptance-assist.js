@@ -11,6 +11,7 @@ export const acceptanceAssistLocale = {
     acceptanceVerify: 'AI 辅助验收', acceptanceGuide: '生成实操验收步骤',
     acceptanceHelpDetails: '使用说明', acceptanceCheckReport: '查看 AI 验收报告',
     acceptanceGuideSteps: '实操验收步骤', acceptanceGuideExpected: '正常应看到',
+    acceptanceOpenGuide: '查看实操步骤（{n} 步待核对）',
     acceptanceGuideNotNeeded: '无需实操。请按任务完成标准核对测试和验证记录。',
     acceptanceGuideUnknown: '暂未找到可核对的用户操作入口。',
     acceptanceRunHint: 'AI 验收会尝试运行检查命令，可能消耗模型额度。',
@@ -39,6 +40,7 @@ export const acceptanceAssistLocale = {
     acceptanceVerify: 'Ask AI to check', acceptanceGuide: 'Create a hands-on acceptance guide',
     acceptanceHelpDetails: 'How it works', acceptanceCheckReport: 'View the AI check report',
     acceptanceGuideSteps: 'Hands-on acceptance steps', acceptanceGuideExpected: 'Expected result',
+    acceptanceOpenGuide: 'View hands-on steps ({n} to verify)',
     acceptanceGuideNotNeeded: 'No hands-on steps needed. Review the tests and verification records against the task criteria.',
     acceptanceGuideUnknown: 'No user-facing action could be verified from the available information.',
     acceptanceRunHint: 'AI checks may run commands and use model credits.',
@@ -126,14 +128,15 @@ export function AcceptanceAssist({ req, issue, root, sessionId, t, busy = false,
             t(notNeeded ? 'acceptanceGuideNotNeeded' : 'acceptanceGuideUnknown')))
       }
       const sources = result.sources ?? []
-      return h('section', { className: 'pw-reading-block pw-assist-report', 'aria-label': t('acceptanceGuideSteps') },
-        staleNotice,
+      const insufficient = sources.length < result.sourcesRequested && h('p', { className: 'pw-note' }, t('acceptanceSourcesInsufficient'))
+      const guide = h('section', { className: 'pw-reading-block pw-assist-report', 'aria-label': t('acceptanceGuideSteps') },
+        !compact && staleNotice,
         h('h4', null, t('acceptanceGuideSteps')),
         h('ol', { className: 'pw-reading-list pw-guide-steps' }, result.steps.map(({ action, expected }, index) =>
           h('li', { key: index },
             h('span', null, action),
             h('p', { className: 'pw-note' }, t('acceptanceGuideExpected'), ' · ', expected)))),
-        sources.length < result.sourcesRequested && h('p', { className: 'pw-note' }, t('acceptanceSourcesInsufficient')),
+        !compact && insufficient,
         h('details', { className: 'pw-disclosure pw-assist-disclosure' },
           h('summary', null, t('acceptanceSources')),
           sources.map((source, index) => h('div', { key: index, className: 'pw-reading-block' },
@@ -142,6 +145,11 @@ export function AcceptanceAssist({ req, issue, root, sessionId, t, busy = false,
           h('p', { className: 'pw-note' }, t('acceptanceSourcesScope')),
           h('p', { className: 'pw-note' }, t('acceptanceSourceLimit')),
           result.childId && h('p', { className: 'pw-note' }, t('acceptanceSession'), '：', result.childId)))
+      return compact
+        ? h(React.Fragment, null, staleNotice, insufficient,
+          h('details', { className: 'pw-disclosure pw-assist-disclosure' },
+            h('summary', null, t('acceptanceOpenGuide').replace('{n}', String(result.steps.length))), guide))
+        : guide
     }
     const commands = Array.isArray(result.commands) ? result.commands : []
     const report = h('section', { className: 'pw-reading-block pw-assist-report', 'aria-label': t('acceptanceVerify') },

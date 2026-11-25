@@ -1,10 +1,10 @@
 import { PreparationActions } from '../preparation.js'
 import React from 'react'
-import { aiReviewReports, canCreateIssue, changesReviewedRequirement, requirementOverview } from '../../core/state.js'
+import { aiReviewReports, canCreateIssue, changesReviewedRequirement, requirementOverview, startBlockers } from '../../core/state.js'
 import { rpc } from '../api.js'
 import { DiscoveryRecords, useDiscoveryRecords } from '../discovery.js'
 import { reqDraftKey, reqDraftFrom, issueDraftFrom, issueDraftKey, draftOf, sameDraft } from '../project-state.js'
-import { isRequirementSplit, progressRecords, requirementLogEntries, requirementResult, reviewRecords } from '../workbench-content.js'
+import { isRequirementSplit, progressRecords, requirementLogEntries, requirementResult, reviewRecords, shortRecordedText } from '../workbench-content.js'
 import { ISSUE_MOVES, sortedTasks } from '../shell/nav-state.js'
 import { Disclosure, ErrorDetails, ReadText } from '../shared/ui.js'
 import { DraftSuggestions } from './task-content.js'
@@ -75,6 +75,7 @@ function TaskSuggestionReview({ review, req, t, onOpenIssue, hasDrafts, hasLegac
   const unresolved = items.find(item => item.status === 'gap') ?? items.find(item => item.status === 'unknown')
   const assigned = items.find(item => item.status === 'assigned' && item.needsWork && item.taskIds?.length) ??
     items.find(item => item.status === 'assigned' && item.taskIds?.length)
+  const shortQuestion = shortRecordedText(review?.question)
   const taskLinks = item => h('div', { className: 'pw-actions' }, item.taskIds?.map(id => {
     const task = req.issues?.find(task => task.id === id)
     if (!task) return null
@@ -90,11 +91,12 @@ function TaskSuggestionReview({ review, req, t, onOpenIssue, hasDrafts, hasLegac
       unresolved.taskIds?.length > 0 && taskLinks(unresolved)),
     assigned && h(React.Fragment, null,
       h(ReadText, { value: assigned.detail, preview: true }), taskLinks(assigned)),
-    review?.question && h(ReadText, { value: review.question }),
+    shortQuestion && h(ReadText, { value: shortQuestion }),
     review && !hasDrafts && h('p', { className: 'pw-text' },
       t(items.length && !review.question && items.every(item => ['verified', 'assigned'].includes(item.status)) ? 'splitNoNew' : 'splitNoDrafts')),
-    items.length > 0 && h(Disclosure, { label: t('splitDetails') },
-      h('ul', { className: 'pw-reading-list' }, items.map(item => h('li', { key: item.id },
+    (items.length > 0 || review?.question && !shortQuestion) && h(Disclosure, { label: t('splitDetails') },
+      review?.question && !shortQuestion && h(ReadText, { value: review.question }),
+      items.length > 0 && h('ul', { className: 'pw-reading-list' }, items.map(item => h('li', { key: item.id },
         h('strong', null, t(splitLabels[item.status]), ' · ', item.requirement),
         h(ReadText, { value: item.detail }),
         item.taskIds?.length > 0 && taskLinks(item),
@@ -119,17 +121,20 @@ function TaskSuggestionReview({ review, req, t, onOpenIssue, hasDrafts, hasLegac
         (hasLegacy || error) && h('button', { type: 'button', className: 'pw-button pw-quiet', disabled: pending, onClick: () => onReview() }, t('splitRetry'))))
 }
 
-export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenIssue, onCreateTask, projectKey, rootRef, onDirty, busy, sessionId, setModal, uiMemory, onReorderTask, onStartTask, onApprove, onReject, onMove, initialPrdId, initialDelivery, focusTarget, renderPrds, restorePrds, onClosePrds, modalActive, openDiscovery, openPreparation }) {
+export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenIssue, onCreateTask, projectKey, rootRef, onDirty, busy, sessionId, setModal, uiMemory, onReorderTask, onStartTask, onApprove, onReject, onMove, initialPrdId, initialDelivery, focusTarget, renderPrds, restorePrds, onClosePrds, modalActive, openDiscovery, openPreparation, PreparationModal, reviewReturn, onReviewReturnHandled, onOpenReport, preparationFocus, onPreparationFocusHandled }) {
   const discovery = useDiscoveryRecords(root, req.id)
   const layoutKey = reqDraftKey(projectKey, req.id)
   const form = useWorkItemDraft(layoutKey, req, reqDraftFrom, onDirty, uiMemory)
   const [arranging, setArranging] = useState(false)
-  const [linear, setLinear] = useState(false)
+  const [linear, setLinear] = useState(() => !!reviewReturn?.ordered)
   const [managePrds, setManagePrds] = useState(false)
   const [addProgress, setAddProgress] = useState(false)
   const [order, setOrder] = useState(() => savedRequirementOrder(layoutKey, uiMemory.requirementOrders))
-  const [drawer, setDrawer] = useState(() => initialPrdId || restorePrds ? { id: 'prds', trigger: 'pw-req-read-prds',
-    focusId: initialPrdId ? 'pw-prd-open-full' : undefined } : null)
+  const [drawer, setDrawer] = useState(() => {
+    if (reviewReturn?.drawer) return { id: reviewReturn.drawer, trigger: 'pw-req-read-' + reviewReturn.drawer, focusId: reviewReturn.trigger }
+    return initialPrdId || restorePrds ? { id: 'prds', trigger: 'pw-req-read-prds',
+      focusId: initialPrdId ? 'pw-prd-open-full' : undefined } : null
+  })
   const taskFilters = uiMemory.requirementTaskFilters ??= {}
   const [taskFilter, setTaskFilter] = useState(() => taskFilters[layoutKey] ?? '')
   const changeFilter = next => {
@@ -177,6 +182,31 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
       setFocus({ block: 'delivery' })
     }
   }, [initialPrdId, initialDelivery, restorePrds])
+  useEffect(() => {
+    if (!reviewReturn) return
+    onReviewReturnHandled?.()
+    if (reviewReturn.drawer || !reviewReturn.trigger) return
+    const restore = () => {
+      const element = document.getElementById(reviewReturn.trigger)
+      if (!element) return false
+      const block = element.closest('details.pw-requirement-block')
+      if (block) block.open = true
+      element.focus({ preventScroll: true })
+      return true
+    }
+    if (restore()) return
+    const observer = new MutationObserver(() => { if (restore()) observer.disconnect() })
+    observer.observe(document.body, { childList: true, subtree: true })
+    return () => observer.disconnect()
+  // Run once on the reading page's return; the route then consumes the position.
+  }, [])
+  useEffect(() => {
+    if (!preparationFocus) return
+    setDrawer(null)
+    setLinear(false)
+    setArranging(false)
+    setManagePrds(false)
+  }, [preparationFocus])
   useEffect(() => {
     if (focusTarget?.startsWith('pw-task-') || focusTarget === 'pw-suggest-' + req.id) {
       setFocus({ block: 'tasks', elementId: focusTarget })
@@ -307,27 +337,28 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
   const developmentSummary = progressRecords(req.activity, t, 'requirement').find(entry => !entry.event)?.text.split('\n')[0]
   const lastAcceptance = decisions.find(record => record.kind === 'acceptance')
   const delivery = requirementResult(req)
-  const deliverySummary = delivery.summary.split(/\r?\n/)[0] || (lastAcceptance
+  const deliverySummary = shortRecordedText(delivery.summary) || (lastAcceptance
     ? t(lastAcceptance.decision === 'approved' ? 'deliveryAccepted' : 'deliveryReturned')
-    : t(delivery.previousSummary || delivery.previousCancelImpact ? 'previousResult' : 'reqNoDelivery'))
+    : t(delivery.summary ? 'reqDeliverySubmitted' : delivery.previousSummary || delivery.previousCancelImpact ? 'previousResult' : 'reqNoDelivery'))
   const entries = requirementLogEntries(req, t, reports)
   const openRecord = (block, group, marker) => {
     const id = 'pw-requirement-record-' + group + '-' + marker
     if (useOrderedLayout) setFocus({ block, elementId: id })
     else setDrawer({ id: block, trigger: 'pw-req-read-log', focusId: id })
   }
-  const reviewProps = { req, root, t, busy, sessionId, onApprove, onReject, onReportSnapshot: setReportSnapshot }
+  const openReport = (marker, trigger, drawer) => onOpenReport?.(marker, { trigger, drawer, ordered: useOrderedLayout })
+  const reviewProps = { req, root, t, busy, sessionId, onApprove, onReject, onReportSnapshot: setReportSnapshot, onOpenReport: openReport }
   const addDevelopmentNote = canEdit ? text => mutate('requirement/addUpdate', { root, id: req.id, text }) : undefined
   const blocks = {
     basic: {
-      label: t('reqBasic'), summary: requirementOverview(req).split(/\r?\n/)[0],
+      label: t('reqBasic'), summary: shortRecordedText(req.goal) || shortRecordedText(requirementOverview(req)),
       body: editing ? h('form', { noValidate: true, onSubmit: e => { e.preventDefault(); saveForm() } },
         h(RequirementFields, { form, t, busy, req }),
         attempted && h(ErrorDetails, { error: requirementFormError(form.draft), t, showRaw: false }),
         h('div', { className: 'pw-actions' },
           h('button', { type: 'submit', className: 'pw-button primary', disabled: busy }, t('save')),
           h('button', { type: 'button', className: 'pw-button', disabled: busy, onClick: form.finish }, t('cancel'))))
-        : h(React.Fragment, null, h(RequirementOverview, { req, t }), mode === 'organize' && drafts),
+        : h(React.Fragment, null, h(RequirementOverview, { req, t, compact: !useOrderedLayout }), mode === 'organize' && drafts),
     },
     discovery: {
       label: t('discoveryRecords'),
@@ -371,7 +402,7 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
     log: {
       label: t('reqLog'), summary: entries[0]?.summary ?? t('requirementLogEmpty'),
       body: h(RequirementLog, { entries, t, onOpenIssue,
-        onOpenReport: marker => openRecord('review', 'report', marker),
+        onOpenReport: (marker, trigger) => openReport(marker, trigger, useOrderedLayout ? undefined : 'log'),
         onOpenReview: marker => openRecord('review', 'review', marker),
         onOpenAcceptance: marker => openRecord('delivery', 'delivery', marker) }),
     },
@@ -387,7 +418,8 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
       reportSnapshot.state === 'unavailable' && h('div', { className: 'pw-actions', role: 'status' },
         h('span', { className: 'pw-note' }, t('errUnreadable')),
         h('button', { type: 'button', className: 'pw-button pw-quiet', onClick: reportSnapshot.retry }, t('retryRead'))),
-      h(RequirementReviewHistory, { reports, t }), h(RequirementReviewDecisions, { req, t }),
+      !!reports.length && h(RequirementReviewHistory, { reports, t, onOpenReport: (marker, trigger) => openReport(marker, trigger, 'review') }),
+      h(RequirementReviewDecisions, { req, t }),
       !reviewCount && reportSnapshot.state !== 'unavailable' && h('p', { className: 'pw-note' }, reviewSummary)),
     development: h(RequirementDevelopment, { req, t }),
     delivery: mainBlock === 'delivery' ? h(React.Fragment, null,
@@ -402,7 +434,7 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
     const block = blocks[id]
     const summary = ['discovery', 'prds', 'review', 'tasks'].includes(id) ? block.summary : undefined
     return h(ReadingLink, {
-      key: id, id: 'pw-req-read-' + id, label: block.label, summary,
+      key: id, id: 'pw-req-read-' + id, label: id === 'basic' ? t('reqInformation') : block.label, summary,
       onClick: event => showDrawer(id, event.currentTarget),
     })
   })
@@ -411,12 +443,19 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
     ready: ['in_progress', 'startDev'],
     in_progress: ['pending', 'submit'],
   }[req.status])
-  const transitionButton = transition && h('button', {
-    type: 'button', className: 'pw-button' + (req.status === 'in_progress' ? '' : ' primary'),
-    disabled: busy, onClick: () => onMove(req, transition[0]),
-  }, t(transition[1]))
+  const unplanned = req.status === 'ready' && (!tasks.length || tasks.some(task => startBlockers(task).length))
+  const unfinished = req.status === 'in_progress' ? tasks.filter(task => !['done', 'cancelled'].includes(task.status)).length : 0
+  const transitionHint = req.status === 'in_progress'
+    ? !tasks.length ? t('errNoTasks') : unfinished ? t('reqDeliveryUnfinished').replace('{n}', String(unfinished)) : ''
+    : ''
+  const transitionButton = transition && !unplanned && h(React.Fragment, null,
+    transitionHint && h('span', { id: 'pw-req-transition-hint', className: 'pw-note', role: 'status' }, transitionHint),
+    h('button', {
+      type: 'button', className: 'pw-button' + (req.status === 'in_progress' ? '' : ' primary'),
+      disabled: busy, 'aria-describedby': transitionHint ? 'pw-req-transition-hint' : undefined, onClick: () => onMove(req, transition[0]),
+    }, t(transition[1])))
   const activeDrawer = !editing && !managePrds && !useOrderedLayout && drawer && {
-    title: blocks[drawer.id].label, key: drawer.id,
+    title: drawer.id === 'basic' ? t('reqInformation') : blocks[drawer.id].label, key: drawer.id,
     scrollKey: drawer.id === 'prds' ? 'prds:' + (initialPrdId ?? '') : drawer.id,
     body: readOnlyBodies[drawer.id], trigger: drawer.trigger, focusId: drawer.focusId,
   }
@@ -467,8 +506,9 @@ export function DetailPanel({ req, t, root, mutate, moveIssue, onDelete, onOpenI
             req.status === 'backlog' && !editing && h('button', { className: 'pw-button', disabled: busy, onClick: organize }, t('aiOrganize')),
             canDelete && !editing && h('button', { className: 'pw-button danger', disabled: busy, onClick: onDelete }, t('delete')))))),
     !editing && !arranging && !managePrds && openPreparation && h(PreparationActions, {
-      req, root, t, busy, hasDiscoverySession: !!discovery.result?.data?.sessionId,
-      open: (kind, input) => openPreparation(req.id, kind, input),
+      req, root, t, busy, PreparationModal, hasDiscoverySession: !!discovery.result?.data?.sessionId,
+      open: (kind, input) => openPreparation(req.id, kind, input), focusRequest: preparationFocus,
+      onFocusHandled: onPreparationFocusHandled,
     }),
     detailContent)
   return h(ReadingLayout, { t, rail: regular && rail, drawer: activeDrawer, onClose: closeDrawer, modalActive,
@@ -487,6 +527,7 @@ export function IssueSidebar({ req, t, moveIssue, onOpenIssue, onCreateTask, bus
   const done = tasks.filter(task => task.status === 'done').length
   const cancelled = tasks.filter(task => task.status === 'cancelled').length
   const effective = tasks.length - cancelled
+  const emptyPlan = planning && !tasks.length
   const flags = [['blocked', 'devBlocked'], ['in_review', 'devInReview']]
     .map(([status, label]) => [status, label, tasks.filter(task => task.status === status).length])
   return h('section', { className: 'pw-req-tasks', 'aria-label': t('reqTasks') },
@@ -502,25 +543,29 @@ export function IssueSidebar({ req, t, moveIssue, onOpenIssue, onCreateTask, bus
         }, t(label).replace('{n}', String(count)))),
         cancelled > 0 && h('span', { className: 'pw-note' }, t('cancelledCount').replace('{n}', String(cancelled))))),
     h('div', { className: 'pw-req-task-head' },
-      h('h3', { id: 'pw-req-task-heading', tabIndex: -1 }, t('reqTasks'), ' ', h('span', { className: 'pw-count' }, String(tasks.length))),
+      h('h3', { id: 'pw-req-task-heading', tabIndex: -1 }, t(emptyPlan ? 'reqPlanFirstTask' : 'reqTasks'),
+        tasks.length > 0 && h('span', { className: 'pw-count' }, ' ', String(tasks.length))),
       !locked && h('div', { className: 'pw-actions' },
-        h('button', { type: 'button', className: 'pw-button', disabled: busy, onClick: onCreateTask }, t('newTask')),
+        h('button', { type: 'button', className: 'pw-button' + (emptyPlan ? ' primary' : ''), disabled: busy, onClick: onCreateTask }, t('newTask')),
         onSuggest && h('button', { type: 'button', id: 'pw-suggest-' + req.id, className: 'pw-button pw-quiet', disabled: busy, onClick: onSuggest }, t('aiSplit')),
         tasks.length > 1 && onReorderTask && h('button', {
           type: 'button', className: 'pw-button pw-quiet', disabled: busy, onClick: () => setSorting(!sorting), 'aria-pressed': sorting,
         }, t(sorting ? 'reqFinishOrder' : 'reqTaskOrder')))),
-    planning && h('p', { className: 'pw-note' }, t('planTasksHint')),
     suggestionReview,
-    !visible.length && h('p', { className: 'pw-note', role: 'status' }, t(filter ? 'noResults' : 'reqNoTasks')),
+    !visible.length && !emptyPlan && h('p', { className: 'pw-note', role: 'status' }, t(filter ? 'noResults' : 'reqNoTasks')),
     filter && !sorting && h('button', { type: 'button', className: 'pw-button pw-quiet', onClick: () => onFilter?.('') }, t('reqClearTaskFilter')),
     !!visible.length && h('table', { className: 'pw-req-task-table' },
       h('thead', null, h('tr', null,
         h('th', { scope: 'col' }, t('issueTitle')),
         h('th', { scope: 'col' }, t('reqTaskStatus')),
         showOperations && h('th', { scope: 'col' }, t('reqTaskOperations')))),
-      h('tbody', null, visible.map((task, index) => h('tr', { key: task.id },
+      h('tbody', null, visible.map((task, index) => {
+        const missing = planning ? startBlockers(task) : []
+        return h('tr', { key: task.id },
         h('td', null,
-          h('button', { type: 'button', id: 'pw-task-' + task.id, className: 'pw-issue-title', onClick: () => onOpenIssue(task.id) }, task.title)),
+          h('button', { type: 'button', id: 'pw-task-' + task.id, className: 'pw-issue-title', onClick: () => onOpenIssue(task.id) }, task.title),
+          missing.length > 0 && h('div', { className: 'pw-note' }, t('reqPlanMissing').replace('{fields}', () => missing.map(field =>
+            t(({ title: 'issueTitle', problemOverview: 'taskOverviewField', acceptance: 'taskCriteriaField' })[field])).join(t('fieldSeparator'))))),
         h('td', null, readOnly
           ? h('span', { className: 'pw-istatus st-' + task.status }, t('st_' + task.status))
           : h(IssueStatusSelect, { req, issue: task, t, moveIssue, busy })),
@@ -535,13 +580,16 @@ export function IssueSidebar({ req, t, moveIssue, onOpenIssue, onCreateTask, bus
               'aria-label': `${t('taskGoToAcceptance')} · ${task.title}`, onClick: () => onOpenIssue(task.id, true) }, t('taskGoToAcceptance'))
             : onStartTask && ['todo', 'doing', 'blocked'].includes(task.status) &&
               h('button', { type: 'button', className: 'pw-button pw-quiet pw-startbtn', disabled: busy, onClick: () => onStartTask(task.id) },
-                t(task.status === 'todo' ? 'startTask' : 'demoContinue'))))))),
+                t(task.status === 'todo' ? 'startTask' : 'demoContinue'))))
+      }))),
     children)
 }
 
 export const requirementDetailCss = `
 .pw-req-drawer-actions{margin-block-end:8px}
 .pw-req-head-actions{justify-content:flex-end;max-width:100%}
+.pw-review-history{padding:0;max-height:none}
+.pw-review-history>.pw-update{justify-content:space-between;align-items:center;flex-wrap:wrap}
 .pw-req-lead{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;color:var(--dsw-alias-label-secondary);max-width:55em;margin:0 0 16px}
 .pw-req-progress{padding:13px 14px;margin:0 0 18px;border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:var(--dsw-alias-bg-base)}
 .pw-req-progress-heading{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 12px}

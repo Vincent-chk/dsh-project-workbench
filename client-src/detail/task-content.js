@@ -1,6 +1,6 @@
 import React from 'react'
 import { taskOverview } from '../../core/state.js'
-import { activityEntry, cancellationReason, draftFieldLabel, progressRecords, readingBlocks, taskProgressRecords, taskResult } from '../workbench-content.js'
+import { activityEntry, cancellationReason, draftFieldLabel, progressRecords, readingBlocks, shortBlocker, shortRecordedText, taskFollowUp, taskLimitPreview, taskProgressRecords, taskResult } from '../workbench-content.js'
 import { issueDraftFrom, taskContentPatch, taskFormError } from '../project-state.js'
 import { TaskFields } from '../forms/task-form.js'
 import { Disclosure, ErrorDetails, ReadText } from '../shared/ui.js'
@@ -9,7 +9,7 @@ const h = React.createElement
 const { useState } = React
 
 export function UpdateLog({ activity, onAdd, t, kind = 'issue', showRecords = true, userFacing = false, reviews, timeline, openWikiPage,
-  onReadProgress, initialProgress, showTimelineHeading = true, initiallyEditing = false }) {
+  onReadProgress, initialProgress, showTimelineHeading = true, initiallyEditing = false, showPreview = true }) {
   const [text, setText] = useState('')
   const [detail, setDetail] = useState('')
   const [busy, setBusy] = useState(false)
@@ -58,7 +58,7 @@ export function UpdateLog({ activity, onAdd, t, kind = 'issue', showRecords = tr
     const earlier = records.filter(entry => entry !== latest)
     const preview = latest?.text.split(/\r?\n/).find(line => line.trim())
     if (onReadProgress) return h('section', { className: 'pw-task-progress-preview', 'aria-label': t('progressRecords') },
-      latest && h('div', null,
+      showPreview && latest && h('div', null,
         h('h3', { className: 'pw-reading-label' }, t('latestProgress')),
         h('p', { className: 'pw-text pw-preview' }, preview)),
       h('div', { className: 'pw-actions' },
@@ -103,9 +103,10 @@ function ProgressTimeline({ records, t, openWikiPage, onAdd, children, initialPr
       } },
     h('summary', null,
       entry.date && h('time', { dateTime: entry.at }, entry.date),
-      h('span', { className: 'pw-preview' }, entry.summary)),
+      h('span', { className: 'pw-preview pw-progress-summary' }, entry.summary)),
     h('div', { className: 'pw-progress-detail' },
       entry.date && h('p', { className: 'pw-note' }, t('progressRecordedAt'), ' ', entry.date),
+      !entry.event && detail !== entry.summary && h(ReadingText, { value: entry.summary }),
       h(ReadingText, { value: detail }),
       links.length > 0 && h(TaskReferences, { refs: [...new Set(links)], openWikiPage })))
   })
@@ -118,7 +119,7 @@ function ProgressTimeline({ records, t, openWikiPage, onAdd, children, initialPr
         if (olderVisible) setExpanded(current => new Set([...current].filter(id => !older.some(entry => entry.id === id))))
         setShowOlder(!olderVisible)
       } }, t(olderVisible ? 'hideOldTaskProgress' : 'oldTaskProgress')),
-    olderVisible && rows.slice(3), children?.type !== 'button' && children)
+    olderVisible && rows.slice(3), (!showTimelineHeading || children?.type !== 'button') && children)
 }
 
 export function ReadingText({ label, value, className }) {
@@ -133,93 +134,94 @@ export function ReadingText({ label, value, className }) {
           tag === 'ol' ? line.text : line)))))
 }
 
-export function Verification({ verification, t }) {
+export function Verification({ verification, t, onReadFailure }) {
   const { passed, failed, incomplete, unconfirmedChanges, hasManualEvidence } = verification
-  return h('div', { className: 'pw-reading-verification' }, h('strong', null, t('verify')),
-    failed > 0 && h('p', { className: 'pw-text pw-error' }, t('checksFailed').replace('{n}', String(failed))),
-    incomplete > 0 && h('p', { className: 'pw-text pw-error' }, t('checksIncomplete')),
-    unconfirmedChanges > 0 && h('p', { className: 'pw-text pw-error' }, t('unconfirmedChanges')),
+  const failedLabel = t('checksFailed').replace('{n}', String(failed))
+  return h('div', { className: 'pw-reading-verification' }, h('strong', null, t('taskReviewChecks')),
+    failed > 0 && (onReadFailure
+      ? h('button', { type: 'button', className: 'pw-button pw-quiet pw-failed-checks', onClick: onReadFailure }, failedLabel)
+      : h('p', { className: 'pw-text pw-error' }, failedLabel)),
+    incomplete > 0 && h('p', { className: 'pw-text' }, t('taskReviewIncomplete').replace('{n}', String(incomplete))),
+    unconfirmedChanges > 0 && h('p', { className: 'pw-text' }, t('taskReviewUnverified').replace('{n}', String(unconfirmedChanges))),
     passed > 0 && h('p', { className: 'pw-text' }, t('checksPassed').replace('{n}', String(passed))),
-    !passed && !failed && !incomplete && !hasManualEvidence && h('p', { className: 'pw-text' }, t('noChecks')),
+    !passed && !failed && !incomplete && !unconfirmedChanges && !hasManualEvidence && h('p', { className: 'pw-text' }, t('noChecks')),
     hasManualEvidence && h('p', { className: 'pw-text' }, t('manualEvidence')))
 }
 
 export function hasTaskVerificationRecords(task, result) {
-  return !!(result.fullSummary || result.fullLimits || task.evidence?.trim() || task.objective?.trim())
+  return !!(result.fullSummary || result.fullLimits || task.evidence?.trim() || task.objective?.trim() || task.acceptance?.trim())
 }
 
-export function TaskVerificationRecords({ task, t, since }) {
+export function TaskVerificationRecords({ task, t, since, focusFailedId, showCriteria = true }) {
   const result = taskResult(task, since)
   const roundStart = Math.max(Number(since) || 0, Number(task.deliveryStartedAt) || 0, Number(task.requirementDeliveryStartedAt) || 0)
+  const inScope = roundStart <= Math.max(Number(task.deliveryStartedAt) || 0, Number(task.requirementDeliveryStartedAt) || 0)
+  const checks = inScope ? task.verificationChecks ?? [] : []
+  const records = task.objective?.split(/\r?\n(?=- (?:改动文件|执行命令|待核实)：)/) ?? []
+  const groups = ['failed', 'incomplete', 'passed']
+  const followUp = taskFollowUp(task, since)
+  const reading = (label, value) => value?.trim() && h(Disclosure, { label: t(label) }, h(ReadingText, { value }))
   return h('section', { className: 'pw-task-evidence', 'aria-label': t('verify') },
-    h(ReadingText, { label: t(result.previousSummary ? 'previousResultUnverified' : 'fullResult'), value: result.fullSummary }),
-    h(ReadingText, { label: t(result.unverifiedLimits ? 'previousLimits' : 'demoLimits'), value: result.fullLimits }),
-    h(ReadingText, { label: t((Number(task.evidenceAt) || 0) < roundStart ? 'taskPreviousEvidence' : 'demoEvidence'), value: task.evidence }),
-    h(ReadingText, { label: t('taskObjectiveRecords'), value: task.objective }),
+    groups.map(status => {
+      const entries = checks.filter(check => check.status === status)
+      if (!entries.length) return null
+      return h('section', { className: 'pw-task-check-group', key: status, 'aria-label': t('taskCheck_' + status) },
+        h('h3', { className: 'pw-reading-label', id: status === 'failed' ? focusFailedId : undefined,
+          'data-failed-checks': status === 'failed' ? '' : undefined,
+          tabIndex: status === 'failed' ? -1 : undefined }, t('taskCheck_' + status)),
+        entries.map(({ at, command, outcome, recordIndex }) =>
+          h('details', { className: 'pw-progress-item', key: recordIndex },
+            h('summary', null,
+              at && h('time', { dateTime: at }, at.replace('T', ' ').replace(/(?:\.\d+)?Z$/, ' UTC')),
+              h('span', { className: 'pw-preview' }, command.replace(/\s+/g, ' '), ' · ', t('taskCheck_' + status))),
+            h('div', { className: 'pw-progress-detail' },
+              h('pre', { className: 'pw-text' }, records[recordIndex] || [command, outcome].filter(Boolean).join('\n'))))))
+    }),
+    followUp && h(Disclosure, { label: t('taskCheckFollowUp') + ' · ' + followUp.date },
+      h(ReadingText, { value: followUp.body })),
+    reading((Number(task.evidenceAt) || 0) < roundStart ? 'taskPreviousEvidence' : 'demoEvidence', task.evidence),
+    reading(result.previousSummary ? 'previousResultUnverified' : 'fullResult', result.fullSummary),
+    reading(result.unverifiedLimits ? 'previousLimits' : 'demoLimits', result.fullLimits),
+    showCriteria && reading('requirementCriteria', task.acceptance),
+    reading('taskObjectiveRecords', task.objective),
     !hasTaskVerificationRecords(task, result) && h('p', { className: 'pw-note' }, t('taskNoVerificationRecords')))
 }
 
-export function TaskResult({ task, t, children, since, userFacing = false, showAcceptance = true, showSummary = true, onReadEvidence, evidenceOpen, reviewTools }) {
+export function TaskResult({ task, t, children, since, userFacing = false, showAcceptance = true, onReadEvidence, evidenceOpen, reviewTools }) {
   const result = taskResult(task, since)
   const reviewing = task.status === 'in_review'
   if (userFacing) {
-    const summary = result.recordedSummary
-    const earlier = (result.previousSummary || result.earlierSummary).replace(/\r?\n\r?\n\[AI 补充\] /g, '\n\n')
-    const criteria = showAcceptance && h(ReadingText, {
-      label: t('requirementCriteria'), value: task.acceptance?.trim() || t('missingCriteria'), className: 'pw-reading-criteria',
-    })
-    if (reviewTools) {
-      const { passed, failed, incomplete, unconfirmedChanges, hasManualEvidence } = result.verification
-      const checks = [
-        failed > 0 && t('checksFailed').replace('{n}', String(failed)),
-        incomplete > 0 && t('taskReviewIncomplete').replace('{n}', String(incomplete)),
-        unconfirmedChanges > 0 && t('taskReviewUnverified').replace('{n}', String(unconfirmedChanges)),
-        passed > 0 && t('checksPassed').replace('{n}', String(passed)),
-      ].filter(Boolean)
-      return h('section', { className: 'pw-reading pw-reading-result pw-task-acceptance', 'aria-label': t('demoResult') },
-        h('div', { className: 'pw-task-review-compare' },
-          criteria,
-          h(ReadingText, { label: t('demoResult'), value: summary || t(result.previousSummary ? 'taskReviewOldResult' : 'demoNoResult') })),
-        h(ReadingText, { label: t('demoLimits'), value: result.limits, className: 'pw-reading-reason pw-reading-warning' }),
-        h('div', { className: 'pw-task-review-checks' },
-          h('div', null,
-            h('h3', { className: 'pw-reading-label' }, t('taskReviewChecks')),
-            h('p', { className: 'pw-note' }, checks.join(' · ') || t(hasManualEvidence ? 'manualEvidence' : 'noChecks'))),
-          hasTaskVerificationRecords(task, result) && h('button', { type: 'button', className: 'pw-button', onClick: onReadEvidence,
-            'aria-expanded': evidenceOpen }, t('taskOpenRecords'), h('span', { className: 'pw-reading-chevron', 'aria-hidden': true }, '›'))),
-        reviewTools)
+    const shortSummary = shortRecordedText(result.recordedSummary)
+    const summary = shortSummary ||
+      t(result.recordedSummary ? 'taskRecordedResult' : result.previousSummary ? 'previousResultUnverified' : 'demoNoResult')
+    const limits = taskLimitPreview(task, result, since)
+    const hasRecords = hasTaskVerificationRecords(task, result)
+    const readFailure = event => {
+      if (onReadEvidence) return onReadEvidence(event, true)
+      const reader = event.currentTarget.closest('.pw-task-acceptance')?.querySelector('.pw-task-inline-evidence')
+      if (!reader) return
+      reader.open = true
+      const target = reader.querySelector('[data-failed-checks]') || reader.querySelector('summary')
+      target?.focus()
     }
-    if (onReadEvidence) return h('section', { className: 'pw-reading pw-reading-result pw-task-acceptance', 'aria-label': t('demoResult') },
-      h(ReadingText, { label: t('demoResult'), value: summary || t('demoNoResult'), className: 'pw-reading-lead' }),
-      h('div', { className: 'pw-task-verification-pair' },
-        criteria,
-        h('div', { className: 'pw-task-verification' },
-          h(Verification, { verification: result.verification, t }),
-          hasTaskVerificationRecords(task, result) &&
-            h('button', { type: 'button', className: 'pw-button pw-quiet', onClick: onReadEvidence }, t('verifyRecords')))),
-      (summary && !result.summary || !summary && result.previousSummary) &&
-        h('p', { className: 'pw-note' }, t(summary ? 'resultUnverified' : 'previousResultUnverified')),
-      h(ReadingText, {
-        label: t('demoLimits'), value: result.limits || t(result.unverifiedLimits ? 'limitsUnverified' : 'noLimits'),
-        className: result.limits || result.unverifiedLimits ? 'pw-reading-reason pw-reading-warning' : '',
-      }),
-      children)
-    return h('section', { className: 'pw-reading pw-reading-result' + (showSummary ? '' : ' pw-sidebar-review'),
-      'aria-label': t(showSummary ? 'demoResult' : 'sidebarReviewDetails') },
-      showSummary && h(ReadingText, { label: t('demoResult'), value: summary || t('demoNoResult'), className: 'pw-reading-lead' }),
-      criteria,
-      h(Verification, { verification: result.verification, t }),
-      result.verification.hasManualEvidence && h(ReadingText, { label: t('demoEvidence'), value: task.evidence }),
-      task.hasObjective && !result.verification.hasManualEvidence && result.summary && h('p', { className: 'pw-note pw-evidence-note' }, t('useRecordedEvidence')),
-      summary && !result.summary && h('p', { className: 'pw-note' }, t('resultUnverified')),
-      h(ReadingText, { label: t('demoLimits'), value: result.limits || t(result.unverifiedLimits ? 'limitsUnverified' : 'noLimits') }),
-      earlier && !showSummary && h('p', { className: 'pw-note' }, t('previousResultUnverified')),
-      earlier && showSummary && h(Disclosure, { label: t('previousResultUnverified') },
-        h(ReadingText, { value: earlier }),
-        result.unverifiedLimits && h(ReadingText, { label: t('previousLimits'), value: result.unverifiedLimits })),
-      (!earlier || !showSummary) && result.unverifiedLimits && h(Disclosure, { label: t('previousLimits') },
-        h(ReadingText, { value: result.unverifiedLimits })),
-      children)
+    return h('section', { className: 'pw-reading pw-reading-result pw-task-acceptance', 'aria-label': t('demoResult'),
+      id: reviewing && onReadEvidence ? 'pw-task-acceptance' : undefined, tabIndex: reviewing && onReadEvidence ? -1 : undefined },
+      h(ReadingText, { label: t('demoResult'), value: summary, className: 'pw-reading-lead' }),
+      shortSummary && !result.summary && h('p', { className: 'pw-note' }, t('resultUnverified')),
+      h(Verification, { verification: result.verification, t, onReadFailure: hasRecords && readFailure }),
+      limits.text
+        ? h('div', { className: 'pw-task-limits' },
+          h(ReadingText, { label: t('demoLimits'), value: limits.text }),
+          limits.date && h('time', { className: 'pw-note' }, limits.date))
+        : (result.limits || result.unverifiedLimits) && h('p', { className: 'pw-note' },
+          t(result.limits ? 'taskReadLimits' : 'limitsUnverified')),
+      children,
+      hasRecords && (onReadEvidence
+        ? h('button', { type: 'button', className: 'pw-button pw-quiet pw-task-read-evidence', onClick: onReadEvidence,
+          'aria-expanded': evidenceOpen }, t('taskOpenRecords'), h('span', { className: 'pw-reading-chevron', 'aria-hidden': true }, '›'))
+        : h('details', { className: 'pw-disclosure pw-task-inline-evidence' },
+          h('summary', null, t('taskOpenRecords')), h(TaskVerificationRecords, { task, t, since, showCriteria: showAcceptance }))),
+      reviewTools)
   }
   const showResult = reviewing || !!result.summary
   return h(React.Fragment, null,
@@ -252,52 +254,47 @@ export function TaskReferences({ refs, openWikiPage }) {
 }
 
 export function TaskReading({ task, requirement, t, openWikiPage, onAdd, sidebar = false, resultActions, children, since, onReadProgress, onReadEvidence,
-  evidenceOpen, reviewTools, hidePriorResult }) {
+  evidenceOpen, reviewTools, hidePriorResult, running }) {
   const resultFirst = ['in_review', 'done'].includes(task.status)
+  const blocked = task.status === 'blocked'
+  const cancelled = task.status === 'cancelled'
   const result = taskResult(task, since)
   const hasResult = result.fullSummary || result.fullLimits || result.verification.failed ||
     result.verification.incomplete || result.verification.unconfirmedChanges
-  if (sidebar) {
-    const overview = taskOverview(task)
-    const description = task.description?.trim()
-    const supplementary = description !== overview ? description : ''
-    const scope = requirement?.scope?.trim()
-    const exclusions = requirement?.q_out?.trim()
-    return h('div', { className: 'pw-reading' },
-      task.status === 'blocked' && h(ReadingText, {
-        label: t('blockedReason'), value: task.blocked_reason?.trim() || t('taskNoReason'), className: 'pw-reading-reason pw-reading-warning',
-      }),
-      task.status === 'cancelled' && h(ReadingText, {
-        label: t('taskCancelReason'), value: cancellationReason(task) || t('taskNoReason'), className: 'pw-reading-reason',
-      }),
-      h(ReadingText, { label: t('sidebarTaskDescription'), value: overview || t('taskMissing'), className: 'pw-reading-lead' }),
-      h(ReadingText, { label: t('sidebarFinding'), value: task.rootCause?.trim() || t('sidebarNotRecorded'),
-        className: task.rootCause?.trim() ? undefined : 'pw-sidebar-empty-field' }),
-      h(ReadingText, { label: t('taskSteps'), value: task.triggerPath }),
-      requirement && h('section', { className: 'pw-reading-block pw-reading-divider' },
-        h('h3', { className: 'pw-reading-label' }, t('sidebarRequirementScope')),
-        h(ReadingText, { value: scope || (!exclusions && t('sidebarNotRecorded')) }),
-        h(ReadingText, { label: t('q_out'), value: exclusions })),
-      !resultFirst && h(ReadingText, { label: t('requirementCriteria'), value: task.acceptance, className: 'pw-reading-criteria' }),
-      resultFirst && h(TaskResult, { task, t, since, userFacing: true, showSummary: false }, resultActions),
-      !resultFirst && task.status !== 'cancelled' && !!hasResult && h(TaskResult, { task, t, since, userFacing: true, showAcceptance: false, showSummary: false }),
-      children,
-      (supplementary || task.refs?.length > 0) && h(Disclosure, { label: t('taskAdditional') },
-        h(ReadingText, { label: t('taskSupplement'), value: supplementary }),
-        task.refs?.length > 0 && h(TaskReferences, { refs: task.refs, openWikiPage })))
-  }
-  const progress = h(UpdateLog, { activity: task.activity, t, onAdd: ['done', 'cancelled'].includes(task.status) ? null : onAdd, userFacing: true, onReadProgress })
-  return h('div', { className: 'pw-reading pw-task-reading' },
-    task.status === 'blocked' && h(ReadingText, {
-      label: t('blockedReason'), value: task.blocked_reason?.trim() || t('taskNoReason'), className: 'pw-reading-reason pw-reading-warning',
+  const reason = blocked ? task.blocked_reason?.trim() : cancelled ? cancellationReason(task) : ''
+  const reasonPreview = (blocked ? shortBlocker(reason) : shortRecordedText(reason)) || t(reason ? 'taskReadReason' : 'taskNoReason')
+  const overview = taskOverview(task)
+  const description = task.description?.trim()
+  const supplementary = description !== overview ? description : ''
+  const scope = requirement?.scope?.trim()
+  const exclusions = requirement?.q_out?.trim()
+  const context = sidebar && (overview || task.rootCause?.trim() || task.triggerPath?.trim() || scope || exclusions ||
+    task.acceptance?.trim() || supplementary || task.refs?.length || reason)
+  const terminal = ['done', 'cancelled'].includes(task.status)
+  const progress = !sidebar && !terminal && h(UpdateLog, { activity: task.activity, t, onAdd, userFacing: true, onReadProgress, showPreview: !blocked })
+  return h('div', { className: sidebar ? 'pw-reading' : 'pw-reading pw-task-reading' },
+    (blocked || cancelled) && h(ReadingText, {
+      label: t(blocked ? 'blockedReason' : 'taskCancelReason'), value: reasonPreview, className: 'pw-reading-reason' + (blocked ? ' pw-reading-warning' : ''),
     }),
-    task.status === 'cancelled' && h(ReadingText, {
-      label: t('taskCancelReason'), value: cancellationReason(task) || t('taskNoReason'), className: 'pw-reading-reason',
-    }),
+    sidebar && !resultFirst && !blocked && !cancelled && !running && overview &&
+      h('p', { className: 'pw-text pw-preview pw-task-current-goal' }, overview),
     resultFirst && h(TaskResult, { task, t, since, userFacing: true, onReadEvidence, evidenceOpen, reviewTools }, resultActions),
-    !resultFirst && h(ReadingText, { label: t('requirementCriteria'), value: task.acceptance?.trim() || t('missingCriteria'), className: 'pw-reading-criteria' }),
-    !resultFirst && task.status !== 'cancelled' && !hidePriorResult && !!hasResult && h(TaskResult, { task, t, since, userFacing: true, showAcceptance: false, onReadEvidence }),
     children,
+    !sidebar && !resultFirst && !blocked && !cancelled && !!shortRecordedText(task.acceptance, 160) &&
+      h(ReadingText, { label: t('requirementCriteria'), value: shortRecordedText(task.acceptance, 160), className: 'pw-reading-criteria' }),
+    !resultFirst && !cancelled && !hidePriorResult && !!hasResult &&
+      h(Disclosure, { label: t('previousResult') },
+        h(TaskResult, { task, t, since, userFacing: true, onReadEvidence })),
+    context && h(Disclosure, { label: t('taskInfo') },
+      reason && reason !== reasonPreview && h(ReadingText, { label: t(blocked ? 'blockedReason' : 'taskCancelReason'), value: reason }),
+      h(ReadingText, { label: t('sidebarTaskDescription'), value: overview }),
+      task.rootCause?.trim() && h(ReadingText, { label: t('sidebarFinding'), value: task.rootCause }),
+      h(ReadingText, { label: t('taskSteps'), value: task.triggerPath }),
+      h(ReadingText, { label: t('sidebarRequirementScope'), value: scope }),
+      h(ReadingText, { label: t('q_out'), value: exclusions }),
+      h(ReadingText, { label: t('requirementCriteria'), value: task.acceptance }),
+      h(ReadingText, { label: t('taskSupplement'), value: supplementary }),
+      task.refs?.length > 0 && h(TaskReferences, { refs: task.refs, openWikiPage })),
     progress)
 }
 

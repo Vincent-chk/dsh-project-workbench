@@ -201,10 +201,11 @@ test('permission reminders merge linked sessions and open the session actually w
 
   // A blocked task and its authorization are merged into one reminder. Its
   // primary action must still open the session that needs authorization.
-  const mergedHome = { reminders: [{ kind: 'blocked', kinds: ['blocked', 'awaitingAuth'], reqId: 'r', issueId: 'i', title: '待授权任务', reasons: ['任务被阻塞', '等待授权'], waitingSince: Date.now() }], counts: {} }
+  const mergedHome = { reminders: [{ kind: 'blocked', kinds: ['blocked', 'awaitingAuth'], reqId: 'r', issueId: 'i', title: '待授权任务', reasons: ['任务被阻塞', '等待授权'], waitingSince: Date.now(), waitingKind: 'blocked' }], counts: {} }
   nodes = all(HomePage({ wb: { ...common, home: mergedHome } }))
   assert.equal(nodes.filter(x => x === '待授权任务').length, 1)
-  assert.ok(nodes.includes('任务被阻塞、等待授权'))
+  assert.ok(nodes.includes('任务被阻塞'))
+  assert.ok(nodes.some(node => node?.props?.className === 'pw-note pw-home-wait' && all(node).includes('blockedWaitWithUnknownAuth')))
   nodes.find(x => x?.type === 'button' && all(x.props.children).includes('homeGoHandle')).props.onClick()
   assert.deepEqual(calls.at(-1), ['i', 'older'])
 

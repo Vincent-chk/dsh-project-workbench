@@ -16,6 +16,7 @@ export const discoveryLocale = {
     discoverySave: '保存为第{n}版', discoverySaved: '已保存第{n}版', discoveryReturn: '查看需求详情',
     discoveryQuestions: 'Grill Me 问题', discoveryNoQuestions: 'Grill Me 的提问会显示在这里。',
     discoveryAnswered: '已回复', discoveryRound: '第{n}轮',
+    discoveryAnsweredCount: '已回复 {n} 题', discoveryWaitingCount: '还有 {n} 题待回复',
     discoveryWait: '请在主会话完成当前回复或待办操作后再整理。', discoverySummaryTitle: '整理需求',
     discoveryWaitForQuestion: '请等 Grill Me 在主会话完成首次提问。',
     discoveryNeedDiscussion: '请在主会话补充实质答复，等 AI 给出深化建议后再整理。',
@@ -35,6 +36,7 @@ export const discoveryLocale = {
     discoverySave: 'Save as version {n}', discoverySaved: 'Version {n} saved', discoveryReturn: 'View requirement',
     discoveryQuestions: 'Grill Me questions', discoveryNoQuestions: 'Questions from Grill Me will appear here.',
     discoveryAnswered: 'Answered', discoveryRound: 'Round {n}',
+    discoveryAnsweredCount: '{n} answered', discoveryWaitingCount: '{n} more to answer',
     discoveryWait: 'Wait for the reply or handle the pending action in the conversation.', discoverySummaryTitle: 'Summarize requirement',
     discoveryWaitForQuestion: 'Wait for Grill Me to finish asking its first questions in the conversation.',
     discoveryNeedDiscussion: 'Answer in the conversation and wait for the AI’s recommendation before summarizing.',
@@ -108,7 +110,7 @@ export function DiscoverySession({ root, sessionId, sessionStatus, visible, t, u
   if (!result) return visible && h('p', { role: 'status', className: 'pw-note' }, t('loading'))
   if (!result.ok) return h(ErrorDetails, { error: result, t })
   const { requirement: req, questions, preparation } = result.data
-  if (preparation) return h(PreparationSession, { key: sessionId, initial: preparation, root, sessionId, sessionBusy, t, openRequirement })
+  if (preparation) return h(PreparationSession, { key: sessionId, initial: preparation, root, sessionId, sessionBusy, t, openRequirement, DiscoveryModal })
   return req ? h(DiscoverySummary, {
     req, root, sessionId, sessionBusy, t, uiMemory, openRequirement, questions, DiscoveryModal,
   }) : renderTask()
@@ -191,7 +193,10 @@ function DiscoverySummary({ req, root, sessionId, sessionBusy, questions, t, uiM
     setFailure(null)
     const res = await rpc('discovery/save', { root, reqId: req.id, sessionId, previewId: preview.previewId, markdown: preview.markdown })
     action.current = false
-    if (res.ok) remember(null)
+    if (res.ok) {
+      remember(null)
+      window.dispatchEvent(new CustomEvent('pw-preparation-changed', { detail: { root, reqId: req.id } }))
+    }
     if (!live.current) return
     if (res.ok) {
       setPreviewOpen(false)
@@ -208,15 +213,17 @@ function DiscoverySummary({ req, root, sessionId, sessionBusy, questions, t, uiM
   const waiting = inPool && !preview && sessionBusy
   const counts = new Map()
   for (const { number } of questions) counts.set(number, (counts.get(number) ?? 0) + 1)
+  const [current, ...pending] = questions.filter(row => !row.answered)
+  const answered = questions.filter(row => row.answered)
+  const questionRow = row => h(QuestionRow, { key: row.id, row, showRound: counts.get(row.number) > 1, t })
 
   return h('section', { className: 'pw-discovery-pane', 'aria-label': t('discoveryRecords') },
     h('header', { className: 'pw-discovery-header' },
       h('h3', null, req.title),
       h('button', { type: 'button', className: 'pw-button pw-quiet', onClick: () => openRequirement(req.id, req.status) }, t('discoveryReturn'))),
-    h('div', { className: 'pw-discovery-qa', role: 'region', 'aria-label': t('discoveryQuestions'), tabIndex: 0 },
-      h('h4', null, t('discoveryQuestions')),
-      questions.length ? questions.map(row => h(QuestionRow, { key: row.id, row, showRound: counts.get(row.number) > 1, t }))
-        : h('p', { className: 'pw-note' }, t('discoveryNoQuestions'))),
+    h('section', { className: 'pw-discovery-current', 'aria-label': t('discoveryQuestions') },
+      current && questionRow(current),
+      !questions.length && h('p', { className: 'pw-note' }, t('discoveryNoQuestions'))),
     h('footer', { className: 'pw-discovery-footer' },
       (inPool || preview) && h('button', { type: 'button', className: 'pw-button primary', 'aria-haspopup': 'dialog',
         disabled: !!busy || waiting, onClick: prepare }, t('discoverySummarize')),
@@ -224,6 +231,9 @@ function DiscoverySummary({ req, root, sessionId, sessionBusy, questions, t, uiM
       !inPool && h('p', { className: 'pw-note' }, t('discoveryPool')),
       !previewOpen && h(ErrorDetails, { error: failure, t }),
       notice && h('p', { role: 'status', className: 'pw-note' }, notice)),
+    (pending.length > 0 || answered.length > 0) && h('div', { className: 'pw-discovery-history' },
+      pending.length > 0 && h(Disclosure, { label: t('discoveryWaitingCount').replace('{n}', pending.length) }, pending.map(questionRow)),
+      answered.length > 0 && h(Disclosure, { label: t('discoveryAnsweredCount').replace('{n}', answered.length) }, answered.map(questionRow))),
     previewOpen && preview && h(DiscoveryModal, {
       open: true, title: t('discoverySummaryTitle'), description: req.title, onClose: closePreview, closeLabel: t('discoveryClose'),
       className: 'pw-discovery-dialog', contentClassName: 'pw-discovery-dialog-content',

@@ -33,8 +33,8 @@ async function internalComponent(file, name) {
   new Function('module', 'exports', 'require', result.outputFiles[0].text)(mod, mod.exports, require)
   return mod.exports[name]
 }
-function hookHost() {
-  let state = [], cursor = 0
+function hookHost(initial = []) {
+  let state = [...initial], cursor = 0
   const api = {
     Fragment: Symbol('fragment'),
     createElement(type, props, ...children) { return { type, props: { ...props, children } } },
@@ -346,4 +346,69 @@ test('human delivery and acceptance reject an incomplete task scan even when the
   shown = await ctx.view()
   res = await call('requirement/move', { root: ctx.root, id: ctx.reqId, to: 'completed', fileHash: shown.hash, expectFingerprint: store.deliveryFingerprint(shown) })
   assert.equal(res.ok, true)
+})
+
+test('missing review materials stay next to the return action and the saved opinion only opens by marker', async t => {
+  const req = { id: 'r', title: '导出签到名单', status: 'reviewing' }
+  const opinion = '此前的长评审报告。\n'.repeat(40)
+  const report = { marker: 'old-report', opinion }
+  const details = { status: 'reviewing', state: 'done', hasPrd: true, hasReview: false, stale: true,
+    missingPreparation: ['discovery', 'prototype'], reports: [report] }
+  const host = hookHost([details])
+  globalThis.__stage5React = host.api
+  t.after(() => { delete globalThis.__stage5React })
+  const RequirementReview = await component(fileURLToPath(new URL('../client-src/detail/requirement-review.js', import.meta.url)), 'RequirementReview')
+  const returns = []
+  const opens = []
+  const props = { req, t: key => key === 'aiReviewReturnReason' ? '补齐评审材料：{items}。' : key === 'fieldSeparator' ? '、' : key,
+    onReject: options => returns.push(options), onApprove: () => assert.fail('missing materials cannot approve'),
+    onOpenReport: (...args) => opens.push(args), recentOnly: true }
+  const button = label => node => node.type === 'button' && node.props.children.includes(label)
+  const tree = host.render(RequirementReview, props)
+  assert.ok(find(tree, node => node.props.children.includes('aiReviewCannotApprove')))
+  assert.equal(find(tree, button('approveReview')), null)
+  assert.equal(find(tree, node => node.props.value === opinion), null)
+  find(tree, button('aiReviewReturnToPool')).props.onClick()
+  assert.deepEqual(returns, [{ missingKind: 'discovery', initialReason: '补齐评审材料：prepDiscovery、prepPrototype。', triggerId: 'pw-req-review-return-r' }])
+  find(tree, button('aiReviewOpen')).props.onClick()
+  assert.deepEqual(opens, [['old-report', 'pw-req-current-report-r']])
+  const History = await component(fileURLToPath(new URL('../client-src/detail/requirement-review.js', import.meta.url)), 'RequirementReviewHistory')
+  const archive = host.render(History, {
+    ...props, reports: [
+      { ...report, opinion: '建议：推进是长句里的判断。\n' + opinion },
+      { marker: 'known-report', opinion: '建议：先验证\n\n' + opinion },
+    ],
+  })
+  assert.equal(findAll(archive, node => node.props.children.includes('aiReviewReportSaved')).length, 1)
+  assert.equal(findAll(archive, node => node.props.children.includes('aiReviewAiAdvice · aiReviewVerifyFirst')).length, 1)
+})
+
+test('the review return dialog prefills the missing materials and keeps edits on failed submission', async t => {
+  const host = hookHost()
+  globalThis.__stage5React = host.api
+  t.after(() => { delete globalThis.__stage5React })
+  const ReasonModal = await component(fileURLToPath(new URL('../client-src/shared/modals.js', import.meta.url)), 'ReasonModal')
+  const reason = '补齐评审材料：需求深挖、流程图与原型。'
+  const submitted = []
+  const focus = []
+  const options = { kind: 'reason', initialReason: reason, confirmLabel: 'aiReviewReturnConfirm',
+    onOk: async value => { submitted.push(value); return submitted.length === 1 ? { ok: false, code: 'READ_FAILED' } : { ok: true } },
+    restoreFocus: saved => focus.push(saved) }
+  const props = { modal: options, setModal() {}, t: key => key }
+  let tree = host.render(ReasonModal, props)
+  const input = node => node.type === 'input'
+  assert.equal(find(tree, input).props.value, reason)
+  const updated = reason + ' 请覆盖报名取消的情况。'
+  find(tree, input).props.onChange({ target: { value: updated } })
+  tree = host.render(ReasonModal, props)
+  const confirm = node => node.type === 'button' && node.props.children.includes('aiReviewReturnConfirm')
+  const submit = find(tree, confirm).props.onClick
+  await Promise.all([submit(), submit()])
+  assert.deepEqual(submitted, [updated])
+  assert.deepEqual(focus, [])
+  tree = host.render(ReasonModal, props)
+  assert.equal(find(tree, input).props.value, updated)
+  await find(tree, confirm).props.onClick()
+  assert.deepEqual(submitted, [updated, updated])
+  assert.deepEqual(focus, [true])
 })

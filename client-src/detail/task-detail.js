@@ -4,7 +4,7 @@ import { issueDraftKey, issueDraftFrom, taskContentPatch, taskFormError } from '
 import { ReadingLayout, ReadingLink } from '../shared/reading-drawer.js'
 import { ReadingText, TaskReading, TaskReferences, TaskVerificationRecords, UpdateLog, hasTaskVerificationRecords } from './task-content.js'
 import { AcceptanceAssist } from './acceptance-assist.js'
-import { progressRecords, taskProgressRecords, taskResult, taskReworkReason } from '../workbench-content.js'
+import { cancellationReason, draftFieldLabel, progressRecords, shortRecordedText, taskProgressRecords, taskResult, taskReworkReason } from '../workbench-content.js'
 import { TaskForm, TaskResultForm } from '../forms/task-form.js'
 import { useWorkItemDraft } from './requirement-detail.js'
 
@@ -14,7 +14,11 @@ const prdTrigger = 'pw-task-prds'
 
 export const taskDetailLocale = {
   zh: {
-    taskInfo: '任务信息', taskOpenInfo: '查看详情',
+    taskInfo: '任务信息', taskOpenInfo: '查看详情', taskCurrentGoal: '当前目标',
+    taskRecordedResult: '已记录结果，待核对', taskReadLimits: '有已记录的限制，请核对验证记录。',
+    taskReadReason: '已记录原因，请查看任务信息。',
+    taskCheck_failed: '未通过的检查', taskCheck_incomplete: '待核实的检查', taskCheck_passed: '已通过的检查', taskCheckFollowUp: '补充验证记录',
+    taskDecision: '人工决定', taskPriorOutcome: '返回意见',
     taskInfoEmpty: '尚未记录操作步骤、根因或补充说明。',
     taskReadProgress: '查看完整进展', taskPreviousEvidence: '此前的人工验证记录', taskObjectiveRecords: '文件变更与命令记录',
     taskNoVerificationRecords: '暂无验证记录', taskReviewRecords: '验证记录', taskOpenRecords: '打开验证记录',
@@ -31,7 +35,11 @@ export const taskDetailLocale = {
     taskReworkReady: '本轮已有新的结果。核对后可重新提交验收。',
   },
   en: {
-    taskInfo: 'Task information', taskOpenInfo: 'View details',
+    taskInfo: 'Task information', taskOpenInfo: 'View details', taskCurrentGoal: 'Current goal',
+    taskRecordedResult: 'Result recorded. Review it before deciding.', taskReadLimits: 'Review the known limits in the verification records.',
+    taskReadReason: 'The reason is recorded in Task information.',
+    taskCheck_failed: 'Failed checks', taskCheck_incomplete: 'Checks to verify', taskCheck_passed: 'Passed checks', taskCheckFollowUp: 'Follow-up verification',
+    taskDecision: 'Decision', taskPriorOutcome: 'Return feedback',
     taskInfoEmpty: 'No steps, root cause, or additional notes have been recorded.',
     taskReadProgress: 'Read full progress', taskPreviousEvidence: 'Previous manual verification record', taskObjectiveRecords: 'File changes and command records',
     taskNoVerificationRecords: 'No verification records yet', taskReviewRecords: 'Verification records', taskOpenRecords: 'Open verification records',
@@ -89,6 +97,8 @@ export function IssueDetail({ issue, req, t, root, mutate, openWikiPage, openTas
   const supplementary = description !== overview ? description : ''
   const hasExtraInfo = !!(issue.triggerPath?.trim() || issue.rootCause?.trim() || supplementary || issue.refs?.length)
   const infoOpen = drawerView?.kind === 'info'
+  const showInfoFirst = ['todo', 'doing'].includes(issue.status)
+  const taskReason = issue.status === 'blocked' ? issue.blocked_reason : issue.status === 'cancelled' ? cancellationReason(issue) : ''
   const planning = req.status === 'ready'
   const inactive = req.status !== 'in_progress' || !!req.pendingReopen
   const mayRecord = !inactive && ['todo', 'doing', 'blocked'].includes(issue.status)
@@ -99,9 +109,9 @@ export function IssueDetail({ issue, req, t, root, mutate, openWikiPage, openTas
   const reworkReason = mayRecord && taskReworkReason(issue)
   const missing = startBlockers(issue)
   const runLocked = !!runFact && (['starting', 'running'].includes(runFact.runState) || runFact.sessionRunning)
-  const showDrawer = (kind, trigger, initialProgress) => {
+  const showDrawer = (kind, trigger, initialProgress, focusId) => {
     if (drawerView?.kind === 'prds' && kind !== 'prds') onClosePrds?.()
-    setDrawerView(kind ? { kind, trigger, initialProgress } : null)
+    setDrawerView(kind ? { kind, trigger, initialProgress, focusId } : null)
   }
   const closeDrawer = () => showDrawer(null)
   const begin = (focus = 'title') => { closeDrawer(); setFormFocus(focus); setFormError(null); form.begin() }
@@ -117,11 +127,10 @@ export function IssueDetail({ issue, req, t, root, mutate, openWikiPage, openTas
     if (res.ok && rootRef.current === root) { setSupplement(''); setSupplementing(false); setNotice(t('supplementSaved')) }
   }
   const reviewNotice = runLocked ? 'runRunning' : assistRunning ? 'taskReviewAssistRunning' : !reviewReady ? 'taskReviewNeedsResult' : null
-  const reviewStep = reviewing && h('section', { className: 'pw-task-review-step', 'aria-labelledby': 'pw-task-acceptance' },
+  const showTaskMissing = mayRecord && missing.length > 0 && !runLocked
+  const reviewStep = reviewing && h('section', { className: 'pw-task-review-step', 'aria-labelledby': 'pw-task-decision' },
     h('div', { className: 'pw-task-review-head' },
-      h('div', null,
-        h('h3', { id: 'pw-task-acceptance', tabIndex: -1 }, t('taskReviewTitle')),
-        h('p', { className: 'pw-note' }, t('taskReviewInstruction'))),
+      h('h3', { id: 'pw-task-decision', tabIndex: -1 }, t('taskDecision')),
       h('div', { className: 'pw-actions' },
         h('button', { id: 'pw-task-accept', type: 'button', className: 'pw-button primary', disabled: busy || !!reviewNotice,
           'aria-describedby': reviewNotice ? 'pw-task-review-notice' : undefined,
@@ -130,11 +139,11 @@ export function IssueDetail({ issue, req, t, root, mutate, openWikiPage, openTas
           onClick: () => onMoveIssue('doing', 'pw-task-reject') }, t('taskReject')))),
     reviewNotice && h('p', { id: 'pw-task-review-notice', className: 'pw-note pw-task-review-notice', role: 'status' }, t(reviewNotice)))
   const actions = h('div', { className: 'pw-actions' },
-    mayRecord &&
-      h('button', { className: 'pw-button' + (reworkReason && reviewReady ? '' : ' primary'), disabled: busy || runLocked, title: runLocked ? t('runRunning') : undefined, onClick: startWork },
-        t(missing.length ? 'completeTaskInfo' : issue.status === 'todo' ? 'startTask' : 'demoContinue')),
     issue.status === 'blocked' && !inactive &&
-      h('button', { className: 'pw-button', disabled: busy, onClick: () => setSupplementing(v => !v) }, t('supplement')),
+      h('button', { className: 'pw-button primary', disabled: busy, onClick: () => setSupplementing(v => !v) }, t('supplement')),
+    mayRecord &&
+      h('button', { className: 'pw-button' + (issue.status === 'blocked' || reworkReason && reviewReady ? '' : ' primary'), disabled: busy || runLocked, title: runLocked ? t('runRunning') : undefined, onClick: startWork },
+        t(missing.length ? 'completeTaskInfo' : issue.status === 'todo' ? 'startTask' : 'demoContinue')),
     mayRecord && (reworkReason ? reviewReady : hasResult) && h('button', { className: 'pw-button' + (reworkReason ? ' primary' : ''), disabled: busy || runLocked,
       onClick: () => mutate('issue/move', { root, reqId: req.id, id: issue.id, to: 'in_review', fileHash: issue.hash }) }, t('submitTaskAcceptance')),
     !planning && h('button', { className: 'pw-button', disabled: busy, onClick: () => openTask(issue.id) }, t('openTaskSession')),
@@ -144,7 +153,17 @@ export function IssueDetail({ issue, req, t, root, mutate, openWikiPage, openTas
     const entry = index >= 0 ? taskProgressRecords(issue.activity, t)[index] : null
     showDrawer('progress', event.currentTarget, entry?.id)
   }
-  const readEvidence = event => drawerView?.kind === 'evidence' ? closeDrawer() : showDrawer('evidence', event.currentTarget)
+  const readEvidence = (event, failure = false) => {
+    const focusId = failure && 'pw-task-failed-checks'
+    const open = drawerView?.kind === 'evidence'
+    if (open && !failure) return closeDrawer()
+    if (open && drawerView.focusId === focusId) {
+      const target = event.currentTarget.ownerDocument?.getElementById(focusId)
+      target?.focus()
+      return
+    }
+    showDrawer('evidence', event.currentTarget, undefined, focusId)
+  }
   const rail = editing ? null : h(React.Fragment, null,
     renderPrds && h(ReadingLink, { id: prdTrigger, label: t('reqRelatedPrds'), summary: prdSummary, expanded: drawerView?.kind === 'prds',
       onClick: event => showDrawer('prds', event.currentTarget) }),
@@ -157,6 +176,8 @@ export function IssueDetail({ issue, req, t, root, mutate, openWikiPage, openTas
       key: kind, trigger, title: t('taskInfo'),
       body: h('section', { className: 'pw-task-info-body', tabIndex: 0, 'aria-label': t('taskInfo') },
         h(ReadingText, { label: t('taskOverviewField'), value: overview || t('taskMissing') }),
+        h(ReadingText, { label: t('requirementCriteria'), value: issue.acceptance }),
+        h(ReadingText, { label: t(issue.status === 'blocked' ? 'blockedReason' : 'taskCancelReason'), value: taskReason }),
         h(ReadingText, { label: t('taskSteps'), value: issue.triggerPath }),
         h(ReadingText, { label: t('taskCause'), value: issue.rootCause }),
         h(ReadingText, { label: t('taskSupplement'), value: supplementary }),
@@ -169,13 +190,22 @@ export function IssueDetail({ issue, req, t, root, mutate, openWikiPage, openTas
       key: kind, scrollKey: initialPrdId, trigger, title: t('reqRelatedPrds'),
       focusId: drawerView.returnFocus ? 'pw-prd-open-full' : undefined, body: renderPrds(setPrdSummary, { readOnly: true }),
     }
-    if (kind === 'evidence') drawer = { key: kind, trigger, title: t('taskReviewRecords'), body: h(TaskVerificationRecords, { task: issue, t, since: req.deliveryStartedAt }) }
+    if (kind === 'evidence') drawer = { key: kind, trigger, focusId: drawerView.focusId, title: t('taskReviewRecords'),
+      body: h(TaskVerificationRecords, { task: issue, t, since: req.deliveryStartedAt, focusFailedId: 'pw-task-failed-checks' }) }
     if (kind === 'progress') drawer = {
       key: kind, trigger, title: t('progressRecords'), focusId: initialProgress && 'pw-task-current-progress',
       body: h(UpdateLog, { key: initialProgress, activity: issue.activity, t, timeline: true, userFacing: true,
         openWikiPage, initialProgress, showTimelineHeading: false }),
     }
   }
+  const info = !editing && h('section', { className: 'pw-task-info' + (showInfoFirst ? '' : ' pw-task-info-secondary'), 'aria-labelledby': 'pw-task-info-heading' },
+        h('div', { className: 'pw-task-info-head' },
+          h('h3', { id: 'pw-task-info-heading', className: 'pw-reading-label' }, t('taskInfo')),
+          h('button', {
+            type: 'button', className: 'pw-button', 'aria-expanded': infoOpen,
+            onClick: event => infoOpen ? closeDrawer() : showDrawer('info', event.currentTarget),
+          }, t('taskOpenInfo'), h('span', { className: 'pw-reading-chevron', 'aria-hidden': true }, '›'))),
+        showInfoFirst && h('p', { className: 'pw-text pw-preview' }, overview || t('taskMissing')))
   const scrollKey = `${projectKey}:${issue.id}` + (reviewing ? `:review:${issue.inReviewAt || issue.deliveryStartedAt || 0}` : '')
   return h(ReadingLayout, { t, rail, drawer, onClose: closeDrawer, scrollMemory, scrollKey, modalActive: modalActive || recording },
     !editing && drawerView?.kind !== 'prds' && renderPrds?.(setPrdSummary, { summaryOnly: true }),
@@ -184,37 +214,33 @@ export function IssueDetail({ issue, req, t, root, mutate, openWikiPage, openTas
         h('div', { className: 'pw-read-title' }, h('h2', { id: 'pw-task-title', tabIndex: -1, 'aria-describedby': 'pw-task-status' }, issue.title),
           h('span', { id: 'pw-task-status', className: 'pw-count pw-read-status', 'data-status': issue.status }, t('st_' + issue.status))),
         !editing && !terminal && h('button', { className: 'pw-button', onClick: () => begin() }, t('edit'))),
-      !editing && h('section', { className: 'pw-task-info', 'aria-labelledby': 'pw-task-info-heading' },
-        h('div', { className: 'pw-task-info-head' },
-          h('h3', { id: 'pw-task-info-heading', className: 'pw-reading-label' }, t('taskInfo')),
-          h('button', {
-            type: 'button', className: 'pw-button', 'aria-expanded': infoOpen,
-            onClick: event => infoOpen ? closeDrawer() : showDrawer('info', event.currentTarget),
-          }, t('taskOpenInfo'), h('span', { className: 'pw-reading-chevron', 'aria-hidden': true }, '›'))),
-        h('p', { className: 'pw-text pw-preview' }, overview || t('taskMissing'))),
+      showInfoFirst && info,
       notice && h('p', { className: 'pw-note', role: 'status' }, notice),
       runLocked && !editing && !reviewing && h('p', { className: 'pw-note', role: 'status' }, t('runRunning')),
       editing ? h(TaskForm, { form: { ...form, change: (...args) => { setFormError(null); form.change(...args) } }, t, busy, focus: formFocus, error: formError, onSave: save, onCancel: form.finish })
         : h(React.Fragment, null,
-          reviewStep,
           reworkReason && h('section', { className: 'pw-task-review-step', 'aria-labelledby': 'pw-task-rework' },
             h('h3', { id: 'pw-task-rework', tabIndex: -1 }, t('taskRejected')),
-            h('p', { className: 'pw-text' }, reworkReason),
+            shortRecordedText(reworkReason) ? h('p', { className: 'pw-text' }, reworkReason)
+              : h('details', { className: 'pw-disclosure' }, h('summary', null, t('taskPriorOutcome')), h(ReadingText, { value: reworkReason })),
             h('p', { className: 'pw-note' }, t(reviewReady ? 'taskReworkReady' : 'taskReworkNext')),
             actions),
           h(TaskReading, { task: issue, since: req.deliveryStartedAt, t,
-            hidePriorResult: !!reworkReason && !hasResult, evidenceOpen: drawerView?.kind === 'evidence',
+            resultActions: reviewStep, hidePriorResult: !!reworkReason && !hasResult, evidenceOpen: drawerView?.kind === 'evidence',
             reviewTools: reviewing && h(AcceptanceAssist, { req, issue, root, t, compact: true, showInstructions: false,
               busy: busy || runLocked, memory: uiMemory, onRunningChange: setAssistRunning }),
             onReadProgress: readProgress, onReadEvidence: readEvidence,
             onAdd: terminal || inactive ? undefined : text => mutate('issue/addUpdate', { root, reqId: req.id, id: issue.id, text }) },
             inactive && h('p', { className: 'pw-note' }, t(planning ? 'planTasksHint' : req.pendingReopen ? 'errReopenPending' : 'errNotActive')),
+            showTaskMissing && h('p', { className: 'pw-note' }, t('errRequiredFields').replace('{fields}',
+              missing.map(field => field === 'title' ? t('issueTitle') : draftFieldLabel(field, t)).join(t('fieldSeparator')))),
             !reworkReason && actions,
             supplementing && h('form', { className: 'pw-progress-form', onSubmit: saveSupplement },
               h('textarea', { className: 'pw-textarea', autoFocus: true, rows: 3, 'aria-label': t('supplement'), placeholder: t('supplementPlaceholder'), value: supplement, onChange: e => setSupplement(e.target.value) }),
               h('div', { className: 'pw-actions' },
                 h('button', { type: 'submit', className: 'pw-button', disabled: busy || !supplement.trim() }, t('saveSupplement')),
-                h('button', { type: 'button', className: 'pw-button pw-quiet', disabled: busy, onClick: () => setSupplementing(false) }, t('cancel')))))),
+                h('button', { type: 'button', className: 'pw-button pw-quiet', disabled: busy, onClick: () => setSupplementing(false) }, t('cancel'))))),
+          !showInfoFirst && info),
       recording && h(TaskResultForm, { task: issue, since: req.deliveryStartedAt, t, busy, onClose: () => setRecording(false),
         onSave: params => mutate('issue/update', { root, reqId: req.id, id: issue.id, ...params }, { inlineError: true }) })))
 }
@@ -224,6 +250,7 @@ export const taskDetailCss = `
 .pw-task-info-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px 12px}
 .pw-task-info-head .pw-reading-label,.pw-task-info .pw-preview{margin:0}
 .pw-task-info .pw-preview{line-height:1.5}
+.pw-task-info-secondary{margin-block:14px 0;padding-block:10px 0;border-block-start:1px solid var(--dsw-alias-border-l3);border-block-end:0}
 .pw-task-info-head .pw-reading-chevron{margin-inline-start:6px}
 .pw-task-info-body{line-height:1.6}
 .pw-task-info-body:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:3px}
@@ -231,35 +258,33 @@ export const taskDetailCss = `
 .pw-task-reading>.pw-reading-block,.pw-task-acceptance>.pw-reading-block,.pw-task-progress-preview{max-inline-size:46em}
 .pw-issue-page .pw-task-acceptance{max-width:none;gap:14px}
 .pw-task-review-step{display:grid;gap:8px;padding:12px 14px;margin-block-end:16px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base)}
-.pw-task-review-head,.pw-task-review-checks{display:flex;align-items:center;justify-content:space-between;gap:8px 16px;flex-wrap:wrap}
-.pw-task-review-head>div:first-child{flex:1 1 240px}
-.pw-task-review-step h3{margin:0;font-size:1.08em}
+.pw-task-review-head{display:flex;align-items:center;justify-content:space-between;gap:8px 16px;flex-wrap:wrap}
+.pw-task-review-step h3{margin:0;font-size:1em}
 .pw-task-review-step :is(.pw-note,.pw-text){margin:0;line-height:1.55;overflow-wrap:anywhere}
-.pw-task-review-step .pw-note,.pw-task-review-checks .pw-note{color:var(--dsw-alias-label-secondary)}
+.pw-task-review-step .pw-note{color:var(--dsw-alias-label-secondary)}
 .pw-task-review-step .pw-task-review-notice{color:var(--dsw-alias-label-primary);border-block-start:1px solid var(--dsw-alias-border-l3);padding-block-start:8px}
-.pw-task-review-step .pw-button,.pw-task-review-checks .pw-button{min-height:34px;max-width:100%;overflow-wrap:anywhere}
-.pw-task-review-compare{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}
-.pw-task-review-compare>.pw-reading-block{min-width:0;padding:10px 14px;border:1px solid var(--dsw-alias-border-l3);border-radius:8px}
-.pw-task-review-checks{border-block-start:1px solid var(--dsw-alias-border-l3);padding-block-start:10px}
-.pw-task-review-checks .pw-note{margin:0}
-.pw-task-review-checks .pw-reading-chevron{margin-inline-start:6px}
+.pw-task-review-step .pw-button{min-height:34px;max-width:100%;overflow-wrap:anywhere}
+.pw-task-acceptance .pw-reading-verification{display:flex;align-items:center;gap:5px 12px;flex-wrap:wrap}
+.pw-task-acceptance .pw-reading-verification strong{flex-basis:100%}
+.pw-reading-verification .pw-failed-checks{padding-inline:0;color:var(--dsw-alias-danger-primary,#e55654);text-decoration:underline;text-underline-offset:3px}
+.pw-task-limits{padding-inline-start:10px;border-inline-start:2px solid var(--dsw-alias-border-l2)}
+.pw-task-limits>.pw-note{font-size:.82em}
+.pw-task-read-evidence{justify-self:start}
+.pw-task-read-evidence .pw-reading-chevron{margin-inline-start:6px}
+.pw-task-choice-group{display:grid;min-inline-size:0;margin:0 0 6px;padding:0;border:0}
+.pw-task-choice-group legend{max-inline-size:100%;padding:0 4px;overflow-wrap:anywhere}
+.pw-task-current-goal{margin:0}
 .pw-task-acceptance .pw-acceptance-assist{border-block-start:1px solid var(--dsw-alias-border-l3);padding-block-start:10px;overflow-wrap:anywhere}
 .pw-task-acceptance .pw-assist-actions>.pw-button{flex:0 1 auto}
 .pw-task-acceptance .pw-assist-hint{margin:2px 0 0;color:var(--dsw-alias-label-secondary);font-size:.86em;line-height:1.4}
 .pw-task-acceptance .pw-assist-actions+.pw-assist-hint{margin-block-start:6px}
-.pw-task-verification-pair{display:grid;gap:12px;align-items:start;grid-template-columns:minmax(0,1fr)}
-.pw-task-verification-pair>*{min-inline-size:0}
-.pw-task-verification{padding-block:7px}
-.pw-task-verification>.pw-quiet{padding-inline:0;color:var(--dsw-alias-brand-primary);margin-top:3px}
-@container (min-width:545px){
-  .pw-task-verification-pair:has(.pw-reading-criteria){grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px}
-  .pw-task-verification-pair:has(.pw-reading-criteria)>.pw-task-verification{padding-inline-start:16px;border-inline-start:1px solid var(--dsw-alias-border-l3)}
-}
-@container (min-width:475px){.pw-task-review-compare{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}}
 .pw-task-progress-preview{padding-block-start:10px;border-block-start:1px solid var(--dsw-alias-border-l3)}
 .pw-task-progress-preview .pw-text{margin:0 0 6px}
 .pw-task-progress-preview .pw-actions>.pw-quiet{padding-inline:7px}
-.pw-task-progress-records .pw-progress-item[open] summary .pw-preview{display:block}
+.pw-progress-item summary .pw-progress-summary{-webkit-line-clamp:1}
+.pw-task-evidence .pw-progress-item{border-block-end:1px solid var(--dsw-alias-border-l3)}
+.pw-task-evidence .pw-progress-item pre{font-family:var(--dsw-alias-font-mono,monospace)}
+.pw-task-check-group h3:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
 .pw-task-evidence,.pw-task-info-body{display:grid;gap:12px;min-width:0}
 :is(.pw-task-evidence,.pw-task-info-body) :is(.pw-reading-block,.pw-text){margin-block:0}
 .pw-task-evidence .pw-text{white-space:pre-wrap;overflow-wrap:anywhere}

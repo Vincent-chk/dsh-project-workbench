@@ -3,6 +3,36 @@ import { aiReviewReports } from '../core/state.js'
 // Presentation only. The full saved text is available for the detail view.
 const textOf = value => typeof value === 'string' ? value.trim() : ''
 
+export function shortRecordedText(value, maxLength = 100) {
+  const text = textOf(value)
+  return text.length <= maxLength && !/[\r\n]/.test(text) ? text : ''
+}
+
+export function shortBlocker(value) {
+  const reason = textOf(value)
+  const missing = reason.split(/[。！？；\n]|\.\s/).map(sentence =>
+    sentence.match(/(?:^|[，,])\s*((?:(?:目前|当前|仍|还)?(?:缺少|缺失|缺|等待|待补齐)|(?:waiting for|missing|blocked by)\b).+)$/i)?.[1])
+    .find(Boolean)
+  return shortRecordedText(missing, 85) || shortRecordedText(reason, 85)
+}
+
+export function taskFollowUp(task, since) {
+  const roundStart = Math.max(Number(since) || 0, Number(task.deliveryStartedAt) || 0, Number(task.requirementDeliveryStartedAt) || 0)
+  return (task.activity ?? []).map(line => activityParts(line, 'issue'))
+    .find(entry => !entry.states && Date.parse(entry.at) >= roundStart &&
+      /^(?:\[AI\]\s*|人工操作：\s*)?(?:补充.{0,30}(?:实机|测试|验证)|复验|实机验收[：:]|(?:Follow-up|Retest):)/i.test(entry.body))
+}
+
+export function taskLimitPreview(task, result, since) {
+  const latest = taskFollowUp(task, since)
+  const limitation = latest?.body.split(/[。！？；\n]/).map(part => part.split(/[，,]/)[0].trim())
+    .find(part => part.length <= 65 && !/(?:^|\S)已(?:解决|通过)/.test(part) &&
+      /(?:仍待核实|待核实|未实测|尚未测试|仍未验证|not (?:yet )?(?:tested|verified))$/i.test(part))
+  return limitation
+    ? { text: limitation, date: latest.date }
+    : { text: shortRecordedText(result.limits, 85), date: '' }
+}
+
 export function taskResult(issue, since = issue?.deliveryStartedAt) {
   const roundStart = Math.max(Number(since) || 0, Number(issue?.deliveryStartedAt) || 0, Number(issue?.requirementDeliveryStartedAt) || 0)
   const fullSummary = textOf(issue?.resultSummary) || textOf(issue?.result?.split(/^###[ \t]+(?:摘要|客观记录|已知限制)/m)[0])
@@ -374,7 +404,7 @@ export function taskProgressRecords(activity, t) {
     const { at, states } = activityParts(raw, 'issue')
     const [first, ...detail] = entry.text.split(/\r?\n/)
     const summary = states ? `${t('st_' + states[1])} → ${t('st_' + states[2])}` : first
-    return { id: JSON.stringify([raw, occurrence]), date: entry.date, at, summary, detail: detail.join('\n').trim() || entry.text }
+    return { id: JSON.stringify([raw, occurrence]), date: entry.date, at, summary, event: entry.event, detail: detail.join('\n').trim() || entry.text }
   }).reverse()
 }
 

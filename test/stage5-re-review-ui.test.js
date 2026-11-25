@@ -201,7 +201,7 @@ test('task table opens the selected acceptance without changing its status', asy
   assert.equal(find(tree, button('taskGoToAcceptance')), null)
 })
 
-test('every task page previews its overview under the title and opens fuller information in the reading drawer', async t => {
+test('only active task pages preview the overview, and all task states can open fuller information', async t => {
   const h = host(); globalThis.__roundReact = h.api
   t.after(() => { delete globalThis.__roundReact })
   const IssueDetail = await component('../client-src/detail/task-detail.js', 'IssueDetail')
@@ -211,10 +211,10 @@ test('every task page previews its overview under the title and opens fuller inf
   for (const status of ['todo', 'doing', 'blocked', 'in_review', 'done', 'cancelled']) {
     let tree = h.render(IssueDetail, { ...base, issue: { ...issue, status } })
     const page = find(tree, node => node.props?.['aria-label'] === 'issueDetail')
-    const [header, info] = page.props.children
-    assert.equal(header.type, 'header', status)
-    assert.equal(info.props['aria-labelledby'], 'pw-task-info-heading', status)
-    assert.ok(find(info, node => node.type === 'p' && node.props.children.includes(issue.problemOverview)), status)
+    assert.equal(page.props.children[0].type, 'header', status)
+    const info = find(page, node => node.props?.['aria-labelledby'] === 'pw-task-info-heading')
+    const hasPreview = !!find(info, node => node.type === 'p' && node.props.children.includes(issue.problemOverview))
+    assert.equal(hasPreview, ['todo', 'doing'].includes(status), status)
     assert.equal(find(page, node => node.props?.value === issue.rootCause), null, status)
     const trigger = {}
     const openInfo = find(info, button('taskOpenInfo'))
@@ -234,7 +234,7 @@ test('every task page previews its overview under the title and opens fuller inf
     tree.props.onClose()
   }
 
-  const legacy = { ...newTask, problemOverview: '', description: '仅有旧说明', rootCause: '根因' }
+  const legacy = { ...newTask, status: 'doing', problemOverview: '', description: '仅有旧说明', rootCause: '根因' }
   let tree = h.render(IssueDetail, { ...base, issue: legacy })
   assert.ok(find(tree, node => node.type === 'p' && node.props.children.includes(legacy.description)))
   find(tree, button('taskOpenInfo')).props.onClick({ currentTarget: {} })
@@ -255,9 +255,12 @@ test('task review prominently exposes decisions and assistance while retaining e
   t.after(() => { delete globalThis.__roundReact })
   const IssueDetail = await component('../client-src/detail/task-detail.js', 'IssueDetail')
   const moves = []
+  const failedRecord = '- 执行命令：npm test（结果 error，会话 s 第 1 条，2026-11-25T02:00:00.000Z）\n  输出：失败记录'
   const issue = { ...newTask, knownLimits: '刷新后仍待核实', knownLimitsAt: 201, evidence: '以前的验证', evidenceAt: 100,
-    objective: '本轮测试命令的完整记录', objectiveAt: 201, requirementDeliveryStartedAt: 200,
-    verification: { passed: 3, failed: 0, incomplete: 1, unconfirmedChanges: 0, hasManualEvidence: false } }
+    objective: failedRecord, objectiveAt: 201, requirementDeliveryStartedAt: 200,
+    verification: { passed: 3, failed: 1, incomplete: 1, unconfirmedChanges: 0, hasManualEvidence: false },
+    verificationChecks: [{ status: 'failed', command: 'npm test', at: '2026-11-25T02:00:00.000Z', recordIndex: 0 }],
+    activity: ['2026-11-25T10:30:00+08:00 补充 Safari 实机验收：已补测恢复路径。真实设备休眠未实测，恢复重算有自动化覆盖。'] }
   const props = { issue, req, t: x => x, root: '/tmp/test', projectKey: 'p', uiMemory: { drafts: {} }, rootRef: { current: '/tmp/test' },
     onMoveIssue: (...args) => moves.push(args) }
   const renderResult = tree => {
@@ -267,35 +270,49 @@ test('task review prominently exposes decisions and assistance while retaining e
   }
   let tree = h.render(IssueDetail, props)
   let result = renderResult(tree)
-  const comparison = find(result, node => node.props?.className === 'pw-task-review-compare')
-  assert.ok(find(comparison, node => node.props?.label === 'requirementCriteria' && node.props.value === '标准'))
-  assert.ok(find(comparison, node => node.props?.label === 'demoResult' && node.props.value === '本轮摘要'))
-  assert.match(JSON.stringify(result), /taskReviewIncomplete · checksPassed/)
-  assert.ok(find(result, named('AcceptanceAssist')).props.compact)
-  assert.equal(find(result, named('AcceptanceAssist')).props.showInstructions, false)
-  assert.ok(find(result, node => node.props?.label === 'demoLimits' && node.props.value === '刷新后仍待核实'))
-  assert.equal(find(result, node => node.props?.value === '本轮测试命令的完整记录'), null)
-  assert.equal(find(tree, button('taskAccept')).props.disabled, false)
-  find(tree, button('taskReject')).props.onClick()
-  find(tree, button('taskAccept')).props.onClick()
+  assert.ok(find(result, node => node.props?.label === 'demoResult' && node.props.value === '本轮摘要'))
+  assert.equal(find(result, node => node.props?.label === 'requirementCriteria'), null)
+  const children = result.props.children.flat().filter(Boolean)
+  const checks = children.find(named('Verification'))
+  const decisions = children.find(node => node.props?.['aria-labelledby'] === 'pw-task-decision')
+  const assists = children.find(named('AcceptanceAssist'))
+  assert.ok(children.indexOf(checks) < children.indexOf(decisions))
+  assert.ok(children.indexOf(decisions) < children.indexOf(assists))
+  assert.match(JSON.stringify(checks.type(checks.props)), /taskReviewIncomplete.*checksPassed/)
+  assert.ok(assists.props.compact)
+  assert.equal(assists.props.showInstructions, false)
+  assert.ok(find(result, node => node.props?.label === 'demoLimits' && node.props.value === '真实设备休眠未实测'))
+  assert.doesNotMatch(JSON.stringify(children.filter(child => child !== assists)), /失败记录|已补测恢复路径/)
+  assert.equal(find(result, button('taskAccept')).props.disabled, false)
+  find(result, button('taskReject')).props.onClick()
+  find(result, button('taskAccept')).props.onClick()
   assert.deepEqual(moves, [['doing', 'pw-task-reject'], ['done', 'pw-task-accept']])
   const trigger = {}
-  find(result, button('taskOpenRecords')).props.onClick({ currentTarget: trigger })
+  find(checks.type(checks.props), button('checksFailed')).props.onClick({ currentTarget: trigger })
   tree = h.render(IssueDetail, props)
   const { drawer } = tree.props
   assert.equal(drawer.trigger, trigger)
+  assert.equal(drawer.focusId, 'pw-task-failed-checks')
   assert.equal(find(renderResult(tree), button('taskOpenRecords')).props['aria-expanded'], true)
   const evidence = drawer.body.type(drawer.body.props)
-  assert.ok(find(evidence, node => node.props?.label === 'taskPreviousEvidence' && node.props.value === '以前的验证'))
-  assert.ok(find(evidence, node => node.props?.label === 'taskObjectiveRecords' && node.props.value === '本轮测试命令的完整记录'))
+  const failed = find(evidence, node => node.props?.['aria-label'] === 'taskCheck_failed')
+  assert.ok(find(failed, node => node.props?.id === drawer.focusId))
+  const details = find(failed, node => node.type === 'details')
+  assert.match(JSON.stringify(details.props.children[0]), /npm test|2026-11-25/)
+  assert.match(JSON.stringify(details.props.children[1]), /失败记录/)
+  assert.ok(find(evidence, node => node.props?.label?.startsWith('taskCheckFollowUp')))
+  assert.ok(find(find(evidence, node => node.props?.label === 'taskPreviousEvidence'), node => node.props?.value === '以前的验证'))
+  assert.ok(find(find(evidence, node => node.props?.label === 'requirementCriteria'), node => node.props?.value === '标准'))
+  assert.ok(find(find(evidence, node => node.props?.label === 'taskObjectiveRecords'), node => node.props?.value === failedRecord))
   tree.props.onClose()
   tree = h.render(IssueDetail, { ...props, issue: oldTask })
+  result = renderResult(tree)
   assert.equal(tree.props.drawer, null)
-  assert.equal(find(tree, button('taskAccept')).props.disabled, true)
-  assert.ok(find(tree, node => node.props?.role === 'status' && node.props.children.includes('taskReviewNeedsResult')))
-  assert.equal(find(tree, button('taskReject')).props.disabled, false)
+  assert.equal(find(result, button('taskAccept')).props.disabled, true)
+  assert.ok(find(result, node => node.props?.role === 'status' && node.props.children.includes('taskReviewNeedsResult')))
+  assert.equal(find(result, button('taskReject')).props.disabled, false)
   tree = h.render(IssueDetail, { ...props, runFact: { sessionRunning: true } })
-  for (const action of ['taskAccept', 'taskReject']) assert.equal(find(tree, button(action)).props.disabled, true)
+  for (const action of ['taskAccept', 'taskReject']) assert.equal(find(renderResult(tree), button(action)).props.disabled, true)
 })
 
 test('rejecting acceptance records the feedback against the reviewed snapshot and leaves the next action on the task', async t => {
@@ -322,7 +339,7 @@ test('rejecting acceptance records the feedback against the reviewed snapshot an
     rootRef: { current: '/tmp/test' }, onStartTask: (...args) => calls.push(args) }
   tree = detail.render(IssueDetail, detailProps)
   const rework = find(tree, node => node.props?.['aria-labelledby'] === 'pw-task-rework')
-  assert.ok(find(rework, node => node.props?.children.includes(reason)))
+  assert.ok(find(find(rework, node => node.type === 'details'), node => node.props?.value === reason))
   assert.ok(find(rework, node => node.props?.children.includes('taskReworkNext')))
   assert.equal(find(rework, button('submitTaskAcceptance')), null)
   find(rework, button('demoContinue')).props.onClick()
@@ -392,7 +409,7 @@ test('sidebar confirmation does not treat the retained task old result as curren
   assert.equal(find(reading.props.resultActions, button('demoConfirm')).props.disabled, false)
 })
 
-test('sidebar reading shows saved task context and parent scope before the result', async t => {
+test('sidebar shows the result and decision before optional task context', async t => {
   const h = host(); globalThis.__roundReact = h.api
   t.after(() => { delete globalThis.__roundReact })
   const TaskReading = await component('../client-src/detail/task-content.js', 'TaskReading')
@@ -401,54 +418,42 @@ test('sidebar reading shows saved task context and parent scope before the resul
   const requirement = { ...req, scope: '当前范围', q_out: '不包括的内容' }
   let tree = h.render(TaskReading, { task, requirement, t: x => x, sidebar: true, resultActions: actions })
   const children = tree.props.children.flat().filter(Boolean)
-  const field = label => children.find(node => node.type?.name === 'ReadingText' && node.props.label === label)
-  assert.equal(field('sidebarTaskDescription').props.value, '问题')
-  assert.equal(field('sidebarFinding').props.value, '已知情况')
-  assert.equal(field('taskSteps').props.value, '实际步骤')
-  const scope = children.find(node => node.type === 'section')
-  assert.ok(find(scope, node => node.props?.value === '当前范围'))
-  assert.ok(find(scope, node => node.props?.label === 'q_out' && node.props.value === '不包括的内容'))
+  const context = children.find(node => node.props?.label === 'taskInfo')
   const result = children.find(named('TaskResult'))
-  assert.ok(children.indexOf(scope) < children.indexOf(result))
-  assert.equal(result.props.children[0], actions)
-  assert.equal(result.props.showSummary, false)
+  assert.ok(children.indexOf(result) < children.indexOf(context))
+  for (const [label, value] of [
+    ['sidebarTaskDescription', '问题'], ['sidebarFinding', '已知情况'], ['taskSteps', '实际步骤'], ['sidebarRequirementScope', '当前范围'],
+    ['q_out', '不包括的内容'], ['requirementCriteria', '标准'], ['taskSupplement', '旧的补充说明'],
+  ]) assert.ok(find(context, node => node.props?.label === label && node.props.value === value), label)
   const review = result.type(result.props)
-  assert.equal(review.props['aria-label'], 'sidebarReviewDetails')
-  assert.equal(find(review, node => node.props?.label === 'demoResult'), null)
-  assert.equal(find(review, node => node.props?.label === 'requirementCriteria').props.value, '标准')
+  assert.equal(review.props['aria-label'], 'demoResult')
+  assert.ok(find(review, node => node.props?.label === 'demoResult' && node.props?.value === '本轮摘要'))
+  assert.equal(find(review, node => node.props?.label === 'requirementCriteria'), null)
   assert.ok(find(review, named('Verification')))
-  assert.ok(find(review, node => node.props?.label === 'demoLimits'))
   assert.ok(find(review, button('confirm')))
-  const normalReview = result.type({ ...result.props, showSummary: true })
-  assert.ok(find(normalReview, node => node.props?.label === 'demoResult' && node.props.value === '本轮摘要'))
-  assert.ok(find(tree, node => node.props?.label === 'taskSupplement' && node.props.value === '旧的补充说明'))
   assert.equal(find(tree, named('UpdateLog')), null)
 
   const staleReading = h.render(TaskReading, { task: { ...oldTask, knownLimits: '旧限制' }, requirement, t: x => x, sidebar: true, since: 200 })
   const staleResult = find(staleReading, named('TaskResult'))
   const staleReview = staleResult.type(staleResult.props)
-  assert.ok(find(staleReview, node => node.type === 'p' && node.props.children.includes('previousResultUnverified')))
-  const oldLimits = find(staleReview, node => node.props?.label === 'previousLimits')
-  assert.ok(find(oldLimits, node => node.props?.value === '旧限制'))
+  assert.ok(find(staleReview, node => node.props?.value === 'previousResultUnverified'))
   assert.equal(find(staleReview, node => node.props?.value === '旧摘要'), null)
+  const staleEvidence = find(staleReview, named('TaskVerificationRecords'))
+  assert.ok(find(staleEvidence.type(staleEvidence.props), node => node.props?.label === 'previousLimits'))
 
-  tree = h.render(TaskReading, { task: { ...task, problemOverview: '', rootCause: '' }, requirement: { id: 'r' }, t: x => x, sidebar: true })
-  assert.equal(find(tree, node => node.props?.label === 'sidebarTaskDescription').props.value, '旧的补充说明')
-  assert.equal(find(tree, node => node.props?.label === 'sidebarFinding').props.value, 'sidebarNotRecorded')
-  assert.ok(find(find(tree, node => node.type === 'section'), node => node.props?.value === 'sidebarNotRecorded'))
-  assert.equal(find(tree, node => node.props?.label === 'taskSupplement').props.value, '')
-  tree = h.render(TaskReading, { task, requirement: { id: 'r', q_out: '旧范围外内容' }, t: x => x, sidebar: true })
-  const oldScope = find(tree, node => node.type === 'section')
-  assert.ok(find(oldScope, node => node.props?.label === 'q_out' && node.props.value === '旧范围外内容'))
-  assert.equal(find(oldScope, node => node.props?.value === 'sidebarNotRecorded'), null)
+  tree = h.render(TaskReading, { task: { ...task, status: 'doing', problemOverview: '', rootCause: '' },
+    requirement: { id: 'r', q_out: '旧范围外内容' }, t: x => x, sidebar: true })
+  assert.ok(find(tree, node => node.type === 'p' && node.props.children.includes('旧的补充说明')))
+  assert.equal(find(tree, node => node.props?.label === 'sidebarFinding' || node.props?.value === 'sidebarNotRecorded'), null)
+  assert.ok(find(tree, node => node.props?.label === 'q_out' && node.props?.value === '旧范围外内容'))
 })
 
-test('sidebar progress remains last after delivery and suggestions, including while editing', async t => {
+test('sidebar progress is folded after delivery and suggestions and hidden while editing', async t => {
   const h = host(); globalThis.__roundReact = h.api
   t.after(() => { delete globalThis.__roundReact })
   const LinkedTaskDetails = await component('../client-src/rightbar/task-pane.js', 'LinkedTaskDetails', true)
   const requirement = { ...req, status: 'pending', scope: '范围' }
-  const props = { task: { ...newTask, status: 'doing' }, req: requirement, runView: { locked: false }, linkState: { link: {} },
+  const props = { task: { ...newTask, status: 'doing', activity: ['已核对实现步骤'] }, req: requirement, runView: { locked: false }, linkState: { link: {} },
     proposals: [{ id: 'p' }], delivery: null, t: x => x, root: '/tmp/test', sessionId: 's', projectKey: 'p',
     uiMemory: { drafts: {} }, busy: false, leaveRef: { current: null }, toolbar: () => null, notices: null }
   let tree = h.render(LinkedTaskDetails, props)
@@ -458,12 +463,14 @@ test('sidebar progress remains last after delivery and suggestions, including wh
   assert.ok(find(section, node => node.props?.label === 'demoDrafts'))
   let last = section.props.children.at(-1)
   assert.equal(last.props.hidden, false)
-  assert.equal(last.props.children[0].type.name, 'UpdateLog')
-  assert.equal(last.props.children[0].props.timeline, true)
+  const history = find(last, node => node.props?.label === 'progressRecords')
+  assert.equal(history.type.name, 'Disclosure')
+  assert.equal(history.props.open, undefined)
+  assert.equal(find(history, named('UpdateLog')).props.timeline, true)
   find(tree, button('edit')).props.onClick()
   tree = h.render(LinkedTaskDetails, props)
   section = find(tree, node => node.type === 'section' && node.props['aria-label'] === 'issueDetail')
   last = section.props.children.at(-1)
   assert.equal(last.props.hidden, true)
-  assert.equal(last.props.children[0].type.name, 'UpdateLog')
+  assert.ok(find(last, named('UpdateLog')))
 })

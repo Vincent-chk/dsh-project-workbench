@@ -53,6 +53,17 @@ function textOf(tree) {
   return (tree.props?.children ?? []).flat(Infinity).map(textOf).join(' ')
 }
 
+function confirmUpdate(render) {
+  const confirm = all(render(), node => node.props.manageFocus && node.props.title === 'wikiUpdate')[0]
+  return all(confirm, node => node.type === 'button' && textOf(node) === 'wikiUpdate')[0].props.onClick()
+}
+
+async function updateWiki(render) {
+  const update = all(render(), node => node.type === 'button' && textOf(node) === 'wikiUpdate')[0]
+  await update.props.onClick()
+  return confirmUpdate(render)
+}
+
 test('an old checkpoint does not block a fresh update or hide current status and errors', async t => {
   const root = await mkdtemp(join(tmpdir(), 'pw-wiki-checkpoint-ui-'))
   t.after(() => rm(root, { recursive: true, force: true }))
@@ -91,10 +102,15 @@ test('an old checkpoint does not block a fresh update or hide current status and
   assert.doesNotMatch(textOf(current.tree), /wikiCheckpointUnsafe|wikiDone/)
   const update = all(current.tree, node => node.type === 'button' && textOf(node) === 'wikiUpdate')[0]
   assert.equal(Boolean(update.props.disabled), false)
+  assert.doesNotMatch(textOf(current.tree), /wikiRebuildNotice/)
   await update.props.onClick()
+  const renderCurrent = () => current.host.render(current.component, props)
+  assert.match(textOf(renderCurrent()), /wikiRebuildNotice/)
+  assert.equal(attempts, 0)
+  await confirmUpdate(renderCurrent)
   assert.match(textOf(current.host.render(current.component, props)), /generationNeedsSession/)
   startResponse = { ok: true, data: { started: true } }
-  await all(current.host.render(current.component, props), node => node.type === 'button' && textOf(node) === 'wikiUpdate')[0].props.onClick()
+  await updateWiki(renderCurrent)
   assert.equal(attempts, 2)
   assert.match(textOf(current.host.render(current.component, props)), /wikiGenerating/)
   current.host.unmount()
@@ -190,7 +206,7 @@ test('interrupted wiki shows the last completed date without masking an active H
         ['WIKI_EXTERNAL_CHANGE', 'wikiExternalChangeBlocked'],
       ]) {
         startError = code
-        await button.props.onClick()
+        await updateWiki(() => host.render(mod.exports.WikiView, props))
         const afterFailure = host.render(mod.exports.WikiView, props)
         const banner = all(afterFailure, node => node.props.role === 'alert' && node.props.className === 'pw-banner pw-error')[0]
         assert.equal(textOf(banner), message)
@@ -379,7 +395,7 @@ test('wiki reader identifies an earlier saved view after an external change', as
   const rendered = textOf(initial)
   assert.match(rendered, /wikiExternalChangeView/)
   assert.doesNotMatch(rendered, /wikiShowingPrevious|wikiDone|wikiLastUpdate/)
-  await all(initial, node => node.type === 'button' && textOf(node) === 'wikiUpdate')[0].props.onClick()
+  await updateWiki(() => host.render(mod.exports.WikiView, props))
   assert.match(textOf(host.render(mod.exports.WikiView, props)), /wikiExternalChangeBlocked/)
   host.unmount()
 })
@@ -410,7 +426,7 @@ test('an external completed Wiki is read and updated through the ordinary contro
   tree = render()
   assert.match(textOf(tree), /External current page/)
   assert.match(textOf(tree), /External source/)
-  await all(tree, node => node.type === 'button' && textOf(node) === 'wikiUpdate')[0].props.onClick()
+  await updateWiki(() => host.render(mod.exports.WikiView, props))
   assert.deepEqual(requests, [{ root: '/isolated', sessionId: 'session' }])
   host.unmount()
 })
@@ -440,7 +456,7 @@ test('wiki reader does not retain a success message after a read failure', async
   const rendered = textOf(host.render(mod.exports.WikiView, props))
   assert.match(rendered, /wikiSavedViewUnreadable/)
   assert.doesNotMatch(rendered, /wikiDone/)
-  await all(host.render(mod.exports.WikiView, props), node => node.type === 'button' && textOf(node) === 'wikiUpdate')[0].props.onClick()
+  await updateWiki(() => host.render(mod.exports.WikiView, props))
   const afterUpdate = textOf(host.render(mod.exports.WikiView, props))
   assert.match(afterUpdate, /wikiSavedViewUnreadable/)
   assert.match(afterUpdate, /wikiExternalChangeBlocked/)
@@ -559,7 +575,7 @@ test('leaving a Wiki page and switching projects reconnects to the original back
   }
 
   let view = await mount('/project-a')
-  await all(view.render(), node => node.type === 'button' && textOf(node) === 'wikiUpdate')[0].props.onClick()
+  await updateWiki(view.render)
   assert.equal(jobs.get('/project-a'), 'running')
   assert.match(textOf(view.render()), /wikiGenerating/)
   assert.equal(timers.size, 1)

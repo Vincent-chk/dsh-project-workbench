@@ -1,6 +1,6 @@
 import React from 'react'
 import { pendingItems, recordItems } from '../shell/nav-state.js'
-import { requirementResult, reviewRecords } from '../workbench-content.js'
+import { requirementResult, reviewRecords, shortRecordedText, taskResult } from '../workbench-content.js'
 import { ListPage, boardLocator, dateText, firstLine, listTitle } from '../shared/list.js'
 
 const h = React.createElement
@@ -17,19 +17,34 @@ export function PendingPage({ wb }) {
       const result = requirementResult(req)
       const d = req.derived ?? {}
       const returned = reviewRecords(req.reviews).some(record => record.kind === 'acceptance' && record.decision === 'returned')
+      const tasks = (req.issues ?? []).filter(task => task.status !== 'cancelled')
+      const confirmed = tasks.filter(task => task.status === 'done')
+      const titles = confirmed.map(task => shortRecordedText(task.title, 45)).filter(Boolean)
+      const taskNames = titles.length === confirmed.length && titles.length <= 3
+        ? shortRecordedText(titles.join(t('fieldSeparator')))
+        : ''
+      const needsChecking = tasks.filter(task => {
+        const current = taskResult(task, req.deliveryStartedAt)
+        const verification = current.verification
+        return current.limits || verification.failed > 0 || verification.incomplete > 0 || verification.unconfirmedChanges > 0
+      }).length
       return {
         key: req.id,
         cells: [
           h(React.Fragment, null,
             listTitle(req.title, req.id, () => openDetail({ reqId: req.id, issueId: null }, 'pending')),
             dateText(req.updated) && h('span', { className: 'pw-list-parent pw-list-value' }, t('submittedAt'), ' ', dateText(req.updated))),
-          h('span', { className: 'pw-list-preview' }, firstLine(result.summary) || t('missingDeliverySummary')),
+          h('span', { className: 'pw-list-preview' }, result.summary
+            ? shortRecordedText(result.summary) || taskNames || t('listDeliveryReady')
+            : t('missingDeliverySummary')),
           h('div', { className: 'pw-list-alerts' },
             !result.summary && result.previousSummary && h('span', { className: 'pw-list-muted' }, t('previousResult')),
+            h('span', { className: 'pw-list-muted pw-list-value' }, t('listDeliveryConfirmed')
+              .replace('{total}', String(tasks.length)).replace('{done}', String(confirmed.length))),
+            needsChecking > 0 && h('span', { className: 'pw-istatus st-in_review' },
+              t('listDeliveryNeedsChecking').replace('{n}', String(needsChecking))),
             d.cancelledCount > 0 && h('span', { className: 'pw-list-muted' }, t('cancelledCount').replace('{n}', String(d.cancelledCount))),
-            returned && h('span', { className: 'pw-istatus st-blocked' }, t('wasReturned')),
-            h('span', { className: 'pw-list-muted' }, t('taskCount')
-              .replace('{total}', String((req.issues ?? []).length)).replace('{done}', String(d.doneCount ?? 0)))),
+            returned && h('span', { className: 'pw-istatus st-blocked' }, t('wasReturned'))),
           boardLocator(wb, req),
         ],
       }
@@ -61,7 +76,7 @@ export function RecordsPage({ wb }) {
           listTitle(record.reqTitle, key, () => openDetail({ record: { reqId: record.reqId, marker: record.marker, round: record.round } }, 'records')),
           h('span', { className: 'pw-istatus ' + (approved ? 'st-done' : 'st-blocked') }, t(approved ? 'deliveryAccepted' : 'deliveryReturned')),
           h('span', { className: 'pw-list-muted pw-list-value' }, dateText(record.at) || '—'),
-          h('span', { className: 'pw-list-preview' }, firstLine(record.opinion || record.summary) || t('noOpinion')),
+          h('span', { className: 'pw-list-preview' }, firstLine(record.opinion) || '—'),
         ],
       }
     },

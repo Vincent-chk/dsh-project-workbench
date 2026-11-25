@@ -9,12 +9,24 @@ export const listLocale = {
     listEffectiveProgress: 'Done / active tasks', listAttention: 'Needs attention', listReason: 'Reason',
     listDelivery: 'Delivery summary', listOpinion: 'Decision notes', listDocument: 'Document', listRevision: 'Revision',
     listReorder: 'Change order', listFinishReorder: 'Done reordering', listNoAlerts: 'No alerts',
+    listCurrentReview: 'This review', listReviewUnavailable: 'Status unavailable', listReviewPending: 'Awaiting review',
+    listReviewStale: 'Materials updated', listReviewDecision: 'Awaiting your decision',
+    listReviewMissing: 'Missing preparation', listReviewRunning: 'AI review running', listReviewRetry: 'Review needs attention',
+    listDeliveryReady: 'Delivery submitted', listDeliveryConfirmed: '{done}/{total} tasks confirmed',
+    listDeliveryNeedsChecking: '{n} task results to check', listBlockerInTask: 'Blocked · view details',
+    listRiskInTask: 'View risk note', reqReadonlySnapshot: 'Read-only snapshot',
   },
   zh: {
     listRequirement: '需求', listTask: '任务', listActions: '操作', listPriority: '顺位',
     listEffectiveProgress: '已完成 / 有效任务', listAttention: '需要关注', listReason: '原因',
     listDelivery: '交付摘要', listOpinion: '决定意见', listDocument: '文档名称', listRevision: '修订号',
     listReorder: '调整顺位', listFinishReorder: '结束排序', listNoAlerts: '暂无异常',
+    listCurrentReview: '本轮评审', listReviewUnavailable: '暂无法读取状态', listReviewPending: '待评审',
+    listReviewStale: '资料已更新', listReviewDecision: '待人工决定',
+    listReviewMissing: '材料待补齐', listReviewRunning: 'AI 评审中', listReviewRetry: '评审待处理',
+    listDeliveryReady: '交付已提交', listDeliveryConfirmed: '{done}/{total} 项任务已确认',
+    listDeliveryNeedsChecking: '{n} 项任务结果待核对', listBlockerInTask: '任务阻塞 · 详情见原任务',
+    listRiskInTask: '查看风险说明', reqReadonlySnapshot: '只读快照',
   },
 }
 
@@ -52,7 +64,7 @@ export function listTitle(title, id, onClick) {
 }
 
 export function boardLocator(wb, req) {
-  return h('button', { type: 'button', className: 'pw-button pw-quiet', onClick: () => wb.locateBoard(req) }, wb.t('locateBoard'))
+  return h('button', { type: 'button', className: 'pw-button pw-quiet pw-list-locate', onClick: () => wb.locateBoard(req) }, wb.t('locateBoard'))
 }
 
 // 加载和错误提示由各页提供，只有读取成功的列表才显示空数据或无匹配。
@@ -87,6 +99,8 @@ export const listCss = `
 .pw-list-table tbody tr:last-child td{border-bottom:0}
 .pw-list-table th:first-child{width:30%}
 .pw-list-table-actions th:last-child{width:1%;min-width:6em}
+.pw-list-table-actions td:last-child{min-width:6em}
+.pw-list-table-actions .pw-list-locate{white-space:nowrap;overflow-wrap:normal}
 .pw-list-table td:first-child{padding-block:1px}
 .pw-list-table td .pw-istatus,.pw-list-table td .pw-flag{display:inline-flex;width:max-content;max-width:100%;white-space:normal}
 .pw-list-table td .pw-istatus{pointer-events:none}
@@ -98,7 +112,6 @@ export const listCss = `
 .pw-list-muted,.pw-list-preview,.pw-list-parent{color:var(--dsw-alias-label-secondary)}
 .pw-list-parent{display:block;margin-block:2px 7px;font-size:12px}
 .pw-list-preview{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.pw-list-review-note{-webkit-line-clamp:1}
 .pw-list-alerts,.pw-list-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .pw-list-actions .pw-button{min-height:32px}
 .pw-list-actions .pw-orderbtn{min-height:32px;min-width:32px}
